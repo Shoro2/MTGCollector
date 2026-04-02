@@ -15,6 +15,14 @@
 	// Edit modal state
 	let editItem = $state<Record<string, unknown> | null>(null);
 	let editQuantity = $state(1);
+
+	// Keep editItem in sync when data refreshes (e.g. after tag toggle)
+	$effect(() => {
+		if (editItem) {
+			const updated = data.items.find((i) => i.id === editItem!.id);
+			if (updated) editItem = updated;
+		}
+	});
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);
 	let editNotes = $state('');
