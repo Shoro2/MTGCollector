@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
-import { mkdirSync, createWriteStream, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, createWriteStream, existsSync, unlinkSync, readFileSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { createReadStream } from 'node:fs';
 
@@ -155,7 +155,7 @@ function importCards(filePath: string) {
 
 	console.log('Reading JSON file...');
 	// Read and parse in chunks - the file can be very large
-	const fileContent = require('node:fs').readFileSync(filePath, 'utf-8');
+	const fileContent = readFileSync(filePath, 'utf-8');
 	const allCards: ScryfallCard[] = JSON.parse(fileContent);
 
 	// Filter to English cards only
