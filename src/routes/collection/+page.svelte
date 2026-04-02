@@ -99,6 +99,12 @@
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">My Collection</h1>
+		<a
+			href="/collection/import"
+			class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
+		>
+			Import from Moxfield
+		</a>
 	</div>
 
 	<!-- Stats -->
