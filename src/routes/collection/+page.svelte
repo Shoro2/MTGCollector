@@ -6,7 +6,8 @@
 
 	let { data }: { data: PageData } = $props();
 
-	let search = $state(data.filters.search);
+	let search = $state('');
+	$effect(() => { search = data.filters.search; });
 	let newTagName = $state('');
 	let newTagColor = $state('#3b82f6');
 	let showTagForm = $state(false);

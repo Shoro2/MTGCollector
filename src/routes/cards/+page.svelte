@@ -6,15 +6,27 @@
 
 	let { data }: { data: PageData } = $props();
 
-	let query = $state(data.filters.query);
-	let selectedColors = $state<string[]>(data.filters.colors);
-	let colorMode = $state(data.filters.colorMode);
-	let type = $state(data.filters.type);
-	let setCode = $state(data.filters.setCode);
-	let rarity = $state(data.filters.rarity);
-	let cmcMin = $state(data.filters.cmcMin || '');
-	let cmcMax = $state(data.filters.cmcMax || '');
-	let legality = $state(data.filters.legality);
+	let query = $state('');
+	let selectedColors = $state<string[]>([]);
+	let colorMode = $state('include');
+	let type = $state('');
+	let setCode = $state('');
+	let rarity = $state('');
+	let cmcMin = $state('');
+	let cmcMax = $state('');
+	let legality = $state('');
+
+	$effect(() => {
+		query = data.filters.query;
+		selectedColors = data.filters.colors;
+		colorMode = data.filters.colorMode;
+		type = data.filters.type;
+		setCode = data.filters.setCode;
+		rarity = data.filters.rarity;
+		cmcMin = data.filters.cmcMin || '';
+		cmcMax = data.filters.cmcMax || '';
+		legality = data.filters.legality;
+	});
 	let showFilters = $state(false);
 
 	const colors = [
@@ -111,7 +123,7 @@
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] space-y-4">
 			<!-- Colors -->
 			<div>
-				<label class="block text-sm text-[var(--color-text-muted)] mb-2">Colors</label>
+				<span class="block text-sm text-[var(--color-text-muted)] mb-2">Colors</span>
 				<div class="flex gap-2 items-center">
 					{#each colors as color}
 						<button
@@ -134,8 +146,8 @@
 			<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 				<!-- Type -->
 				<div>
-					<label class="block text-sm text-[var(--color-text-muted)] mb-1">Type</label>
-					<select bind:value={type} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-type" class="block text-sm text-[var(--color-text-muted)] mb-1">Type</label>
+					<select id="filter-type" bind:value={type} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
 						<option value="">All Types</option>
 						{#each types as t}
 							<option value={t}>{t}</option>
@@ -145,8 +157,8 @@
 
 				<!-- Set -->
 				<div>
-					<label class="block text-sm text-[var(--color-text-muted)] mb-1">Set</label>
-					<select bind:value={setCode} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-set" class="block text-sm text-[var(--color-text-muted)] mb-1">Set</label>
+					<select id="filter-set" bind:value={setCode} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
 						<option value="">All Sets</option>
 						{#each data.sets as s}
 							<option value={s.set_code}>{s.set_name}</option>
@@ -156,8 +168,8 @@
 
 				<!-- Rarity -->
 				<div>
-					<label class="block text-sm text-[var(--color-text-muted)] mb-1">Rarity</label>
-					<select bind:value={rarity} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-rarity" class="block text-sm text-[var(--color-text-muted)] mb-1">Rarity</label>
+					<select id="filter-rarity" bind:value={rarity} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
 						<option value="">All Rarities</option>
 						{#each rarities as r}
 							<option value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
@@ -167,8 +179,8 @@
 
 				<!-- Legality -->
 				<div>
-					<label class="block text-sm text-[var(--color-text-muted)] mb-1">Legal in</label>
-					<select bind:value={legality} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-legality" class="block text-sm text-[var(--color-text-muted)] mb-1">Legal in</label>
+					<select id="filter-legality" bind:value={legality} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
 						<option value="">Any Format</option>
 						{#each legalities as l}
 							<option value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
@@ -179,7 +191,7 @@
 
 			<!-- CMC Range -->
 			<div class="flex gap-4 items-center">
-				<label class="text-sm text-[var(--color-text-muted)]">CMC</label>
+				<span class="text-sm text-[var(--color-text-muted)]">CMC</span>
 				<input
 					type="number"
 					bind:value={cmcMin}

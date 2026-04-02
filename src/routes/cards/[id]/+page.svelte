@@ -184,12 +184,12 @@
 					<div class="bg-[var(--color-bg)] rounded p-4 mb-3 space-y-3">
 						<div class="grid grid-cols-3 gap-3">
 							<div>
-								<label class="block text-xs text-[var(--color-text-muted)] mb-1">Quantity</label>
-								<input type="number" bind:value={addQuantity} min="1" class="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1" />
+								<label for="add-qty" class="block text-xs text-[var(--color-text-muted)] mb-1">Quantity</label>
+								<input id="add-qty" type="number" bind:value={addQuantity} min="1" class="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1" />
 							</div>
 							<div>
-								<label class="block text-xs text-[var(--color-text-muted)] mb-1">Condition</label>
-								<select bind:value={addCondition} class="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1">
+								<label for="add-condition" class="block text-xs text-[var(--color-text-muted)] mb-1">Condition</label>
+								<select id="add-condition" bind:value={addCondition} class="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1">
 									<option value="near_mint">Near Mint</option>
 									<option value="lightly_played">Lightly Played</option>
 									<option value="moderately_played">Moderately Played</option>
