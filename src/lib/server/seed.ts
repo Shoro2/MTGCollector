@@ -284,17 +284,16 @@ function importCards(filePath: string) {
 	`);
 
 	console.log('Building full-text search index...');
+	sqlite.exec(`DROP TABLE IF EXISTS cards_fts`);
 	sqlite.exec(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
+		CREATE VIRTUAL TABLE cards_fts USING fts5(
+			card_id,
 			name,
 			type_line,
-			oracle_text,
-			content='cards',
-			content_rowid='rowid'
+			oracle_text
 		);
-		DELETE FROM cards_fts;
-		INSERT INTO cards_fts(rowid, name, type_line, oracle_text)
-			SELECT rowid, name, COALESCE(type_line, ''), COALESCE(oracle_text, '') FROM cards;
+		INSERT INTO cards_fts(card_id, name, type_line, oracle_text)
+			SELECT id, name, COALESCE(type_line, ''), COALESCE(oracle_text, '') FROM cards;
 	`);
 
 	const count = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };

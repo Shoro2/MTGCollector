@@ -99,11 +99,10 @@ export function initDb() {
 		CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
 
 		CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
+			card_id,
 			name,
 			type_line,
-			oracle_text,
-			content='cards',
-			content_rowid='rowid'
+			oracle_text
 		);
 	`);
 }
