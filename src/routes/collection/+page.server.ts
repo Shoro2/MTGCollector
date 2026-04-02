@@ -1,0 +1,89 @@
+import { sqlite } from '$lib/server/db';
+
+export async function load({ url }) {
+	const tagFilter = url.searchParams.get('tag');
+	const search = url.searchParams.get('q') || '';
+	const sortBy = url.searchParams.get('sort') || 'added_at';
+	const sortDir = url.searchParams.get('dir') || 'desc';
+	const page = parseInt(url.searchParams.get('page') || '1');
+	const pageSize = 40;
+	const offset = (page - 1) * pageSize;
+
+	const conditions: string[] = [];
+	const params: (string | number)[] = [];
+
+	if (search) {
+		conditions.push('c.name LIKE ?');
+		params.push(`%${search}%`);
+	}
+
+	if (tagFilter) {
+		conditions.push(`cc.id IN (SELECT collection_card_id FROM collection_card_tags WHERE tag_id = ?)`);
+		params.push(parseInt(tagFilter));
+	}
+
+	const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+	const validSorts: Record<string, string> = {
+		name: 'c.name',
+		added_at: 'cc.added_at',
+		price: 'c.price_eur',
+		quantity: 'cc.quantity',
+		set_name: 'c.set_name'
+	};
+	const orderColumn = validSorts[sortBy] || 'cc.added_at';
+	const orderDir = sortDir === 'asc' ? 'ASC' : 'DESC';
+
+	const countResult = sqlite
+		.prepare(
+			`SELECT COUNT(*) as count FROM collection_cards cc JOIN cards c ON cc.card_id = c.id ${whereClause}`
+		)
+		.get(...params) as { count: number };
+
+	const items = sqlite
+		.prepare(
+			`SELECT cc.*, c.name, c.set_name, c.set_code, c.collector_number, c.image_uri, c.local_image_path,
+				c.mana_cost, c.type_line, c.rarity, c.price_eur, c.price_eur_foil
+			FROM collection_cards cc
+			JOIN cards c ON cc.card_id = c.id
+			${whereClause}
+			ORDER BY ${orderColumn} ${orderDir}
+			LIMIT ? OFFSET ?`
+		)
+		.all(...params, pageSize, offset) as Array<Record<string, unknown>>;
+
+	// Get tags for each collection card
+	const itemsWithTags = items.map((item) => {
+		const cardTags = sqlite
+			.prepare(
+				`SELECT t.* FROM tags t JOIN collection_card_tags cct ON t.id = cct.tag_id WHERE cct.collection_card_id = ?`
+			)
+			.all(item.id) as Array<Record<string, unknown>>;
+		return { ...item, tags: cardTags } as Record<string, unknown> & { tags: Array<Record<string, unknown>> };
+	});
+
+	// Get all tags
+	const allTags = sqlite.prepare('SELECT * FROM tags ORDER BY name').all() as Array<Record<string, unknown>>;
+
+	// Get collection stats
+	const stats = sqlite
+		.prepare(
+			`SELECT
+				COUNT(*) as uniqueCards,
+				COALESCE(SUM(cc.quantity), 0) as totalCards,
+				COALESCE(SUM(CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END * cc.quantity), 0) as totalValue
+			FROM collection_cards cc JOIN cards c ON cc.card_id = c.id`
+		)
+		.get() as { uniqueCards: number; totalCards: number; totalValue: number };
+
+	return {
+		items: itemsWithTags,
+		totalItems: countResult.count,
+		page,
+		pageSize,
+		totalPages: Math.ceil(countResult.count / pageSize),
+		tags: allTags,
+		stats,
+		filters: { search, tagFilter, sortBy, sortDir }
+	};
+}

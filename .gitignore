@@ -1,0 +1,12 @@
+node_modules/
+.svelte-kit/
+build/
+dist/
+data/
+static/card-images/
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+vite.config.ts.timestamp-*
