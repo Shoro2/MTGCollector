@@ -13,23 +13,16 @@
 	let showTagForm = $state(false);
 
 	// Edit modal state
-	let editItem = $state<Record<string, unknown> | null>(null);
+	let editItemId = $state<number | null>(null);
+	let editItem = $derived(editItemId !== null ? data.items.find((i) => i.id === editItemId) ?? null : null);
 	let editQuantity = $state(1);
-
-	// Keep editItem in sync when data refreshes (e.g. after tag toggle)
-	$effect(() => {
-		if (editItem) {
-			const updated = data.items.find((i) => i.id === editItem!.id);
-			if (updated) editItem = updated;
-		}
-	});
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);
 	let editNotes = $state('');
 	let saving = $state(false);
 
 	function openEdit(item: Record<string, unknown>) {
-		editItem = item;
+		editItemId = item.id as number;
 		editQuantity = item.quantity as number;
 		editCondition = item.condition as string;
 		editFoil = !!(item.foil as number);
@@ -37,7 +30,7 @@
 	}
 
 	function closeEdit() {
-		editItem = null;
+		editItemId = null;
 	}
 
 	async function saveEdit() {
