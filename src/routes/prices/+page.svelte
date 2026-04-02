@@ -10,6 +10,44 @@
 	let cardChartCanvas = $state<HTMLCanvasElement>(null!);
 	let valueChart: Chart | null = null;
 	let cardChart: Chart | null = null;
+	let updating = $state(false);
+	let updateMessage = $state('');
+
+	async function triggerPriceUpdate() {
+		updating = true;
+		updateMessage = '';
+		const res = await fetch('/api/prices', { method: 'POST' });
+		const result = await res.json();
+		if (result.success) {
+			updateMessage = 'Price update started. This downloads ~500MB and may take a few minutes...';
+			// Poll for completion
+			const poll = setInterval(async () => {
+				const status = await fetch('/api/prices').then((r) => r.json());
+				if (!status.inProgress) {
+					clearInterval(poll);
+					updating = false;
+					updateMessage = 'Prices updated successfully!';
+					// Reload page to show new data
+					window.location.reload();
+				}
+			}, 5000);
+		} else {
+			updateMessage = result.message;
+			updating = false;
+		}
+	}
+
+	function formatLastUpdate(dateStr: string | null): string {
+		if (!dateStr) return 'Never';
+		const d = new Date(dateStr);
+		const now = new Date();
+		const diffMs = now.getTime() - d.getTime();
+		const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+		if (diffH < 1) return 'Less than an hour ago';
+		if (diffH < 24) return `${diffH} hours ago`;
+		const diffD = Math.floor(diffH / 24);
+		return `${diffD} day${diffD > 1 ? 's' : ''} ago (${d.toLocaleDateString()})`;
+	}
 
 	onMount(() => {
 		Chart.register(...registerables);
@@ -82,7 +120,27 @@
 </script>
 
 <div class="space-y-8">
-	<h1 class="text-2xl font-bold">Price Tracking</h1>
+	<div class="flex items-center justify-between">
+		<h1 class="text-2xl font-bold">Price Tracking</h1>
+		<div class="flex items-center gap-3">
+			<span class="text-sm text-[var(--color-text-muted)]">
+				Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
+			</span>
+			<button
+				onclick={triggerPriceUpdate}
+				disabled={updating || data.priceStatus.inProgress}
+				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+			>
+				{updating || data.priceStatus.inProgress ? 'Updating...' : 'Update Prices'}
+			</button>
+		</div>
+	</div>
+
+	{#if updateMessage}
+		<div class="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
+			{updateMessage}
+		</div>
+	{/if}
 
 	<!-- Stats -->
 	<div class="grid grid-cols-3 gap-4">
@@ -108,8 +166,8 @@
 		</div>
 	{:else}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
-			<p>No price history yet. Price data is recorded when you import cards.</p>
-			<p class="text-sm mt-1">Run <code class="bg-[var(--color-bg)] px-2 py-0.5 rounded">npm run import-cards</code> periodically to update prices.</p>
+			<p>No price history yet.</p>
+			<p class="text-sm mt-1">Prices update automatically once per day, or click "Update Prices" above.</p>
 		</div>
 	{/if}
 

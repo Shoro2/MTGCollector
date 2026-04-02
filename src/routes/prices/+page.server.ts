@@ -1,4 +1,5 @@
 import { sqlite } from '$lib/server/db';
+import { getPriceUpdateStatus } from '$lib/server/price-updater';
 
 export async function load({ url }) {
 	const cardId = url.searchParams.get('card');
@@ -52,5 +53,7 @@ export async function load({ url }) {
 		)
 		.get() as { totalValue: number; uniqueCards: number; totalCards: number };
 
-	return { valueHistory, topCards, cardPriceHistory, selectedCard, stats };
+	const priceStatus = getPriceUpdateStatus();
+
+	return { valueHistory, topCards, cardPriceHistory, selectedCard, stats, priceStatus };
 }
