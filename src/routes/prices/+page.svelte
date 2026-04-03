@@ -48,6 +48,12 @@
 		return { percent: 0, direction: '—', color: 'text-[var(--color-text-muted)]' };
 	}
 
+	let totalChange = $derived(
+		data.stats.totalPurchaseValue > 0
+			? ((data.stats.totalValue - data.stats.totalPurchaseValue) / data.stats.totalPurchaseValue) * 100
+			: null
+	);
+
 	let updatedToday = $derived(
 		data.priceStatus.lastUpdate
 			? new Date(data.priceStatus.lastUpdate).toDateString() === new Date().toDateString()
@@ -160,7 +166,6 @@
 	{/if}
 
 	<!-- Stats -->
-	{@const totalChange = data.stats.totalPurchaseValue > 0 ? ((data.stats.totalValue - data.stats.totalPurchaseValue) / data.stats.totalPurchaseValue) * 100 : null}
 	<div class="grid grid-cols-4 gap-4">
 		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
 			<p class="text-sm text-[var(--color-text-muted)]">Collection Value</p>
