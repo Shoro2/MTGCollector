@@ -31,7 +31,7 @@ export async function load({ url, locals }) {
 	const validSorts: Record<string, string> = {
 		name: 'c.name',
 		added_at: 'cc.added_at',
-		price: 'c.price_eur',
+		price: 'CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END',
 		quantity: 'cc.quantity',
 		set_name: 'c.set_name'
 	};
