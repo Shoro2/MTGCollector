@@ -31,3 +31,16 @@ export async function DELETE({ request }) {
 	sqlite.prepare('DELETE FROM collection_cards WHERE id = ?').run(id);
 	return json({ success: true });
 }
+
+export async function PATCH() {
+	const result = sqlite
+		.prepare(
+			`UPDATE collection_cards SET purchase_price = (
+				SELECT CASE WHEN collection_cards.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END
+				FROM cards c WHERE c.id = collection_cards.card_id
+			) WHERE purchase_price IS NULL`
+		)
+		.run();
+
+	return json({ success: true, updated: result.changes });
+}

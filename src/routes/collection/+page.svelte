@@ -11,6 +11,7 @@
 	let newTagName = $state('');
 	let newTagColor = $state('#3b82f6');
 	let showTagForm = $state(false);
+	let fillingPrices = $state(false);
 
 	// Edit modal state
 	let editItemId = $state<number | null>(null);
@@ -131,6 +132,13 @@
 				tagId
 			})
 		});
+		await invalidateAll();
+	}
+
+	async function fillPurchasePrices() {
+		fillingPrices = true;
+		await fetch('/collection', { method: 'PATCH' });
+		fillingPrices = false;
 		await invalidateAll();
 	}
 
@@ -356,12 +364,21 @@
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">My Collection</h1>
-		<a
-			href="/collection/import"
-			class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
-		>
-			Import from Moxfield
-		</a>
+		<div class="flex gap-2">
+			<button
+				onclick={fillPurchasePrices}
+				disabled={fillingPrices}
+				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors disabled:opacity-50"
+			>
+				{fillingPrices ? 'Setting...' : 'Set missing purchase prices'}
+			</button>
+			<a
+				href="/collection/import"
+				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
+			>
+				Import from Moxfield
+			</a>
+		</div>
 	</div>
 
 	<!-- Stats -->
