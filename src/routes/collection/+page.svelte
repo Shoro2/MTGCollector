@@ -480,7 +480,7 @@
 					<!-- Thumbnail -->
 					<div class="flex-shrink-0">
 						{#if imgSrc}
-							<CardPreview src={imgSrc} alt={item.name as string} scale={4}>
+							<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
 								<img src={imgSrc} alt={item.name as string} class="w-16 h-22 object-cover rounded" loading="lazy" />
 							</CardPreview>
 						{:else}
