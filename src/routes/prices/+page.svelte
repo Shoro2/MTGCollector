@@ -38,6 +38,16 @@
 		}
 	}
 
+	function priceChange(card: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
+		const purchasePrice = card.purchase_price as number | null;
+		const currentPrice = card.price as number | null;
+		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
+		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
+		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };
+		if (percent < 0) return { percent, direction: '▼', color: 'text-red-400' };
+		return { percent: 0, direction: '—', color: 'text-[var(--color-text-muted)]' };
+	}
+
 	let updatedToday = $derived(
 		data.priceStatus.lastUpdate
 			? new Date(data.priceStatus.lastUpdate).toDateString() === new Date().toDateString()
@@ -220,7 +230,14 @@
 								{card.set_name} &middot; {card.quantity}x {#if card.foil}<span class="text-[var(--color-accent)]">FOIL</span>{/if}
 							</p>
 						</div>
-						<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
+						<div class="text-right flex-shrink-0">
+							<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
+							{#if priceChange(card)}
+								<p class="text-xs {priceChange(card)!.color}">
+									{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
+								</p>
+							{/if}
+						</div>
 					</a>
 				{/each}
 			</div>
