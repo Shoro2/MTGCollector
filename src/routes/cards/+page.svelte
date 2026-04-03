@@ -62,6 +62,7 @@
 		if (cmcMin) params.set('cmcMin', cmcMin);
 		if (cmcMax) params.set('cmcMax', cmcMax);
 		if (legality) params.set('legality', legality);
+		if (data.filters.unique) params.set('unique', '1');
 		goto(`/cards?${params.toString()}`);
 	}
 
@@ -91,7 +92,7 @@
 			params.set('unique', '1');
 		}
 		params.delete('page');
-		goto(`/cards?${params.toString()}`);
+		goto(`/cards?${params.toString()}`, { invalidateAll: true });
 	}
 
 	function clearFilters() {
