@@ -97,14 +97,14 @@ export async function load({ url }) {
 	}
 
 	// Unique mode: only show newest printing per oracle_id
-	if (unique) {
-		conditions.push(`cards.id IN (SELECT id FROM cards AS c2 WHERE c2.oracle_id = cards.oracle_id ORDER BY c2.released_at DESC LIMIT 1)`);
-	}
+	const uniqueJoin = unique
+		? `INNER JOIN (SELECT MAX(id) as id FROM cards GROUP BY oracle_id) unique_cards ON cards.id = unique_cards.id`
+		: '';
 
 	const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
 	// Get total count
-	const countSql = `SELECT COUNT(*) as count FROM cards ${whereClause}`;
+	const countSql = `SELECT COUNT(*) as count FROM cards ${uniqueJoin} ${whereClause}`;
 	const countResult = sqlite.prepare(countSql).get(...params) as { count: number };
 	const totalCards = countResult.count;
 
@@ -124,7 +124,7 @@ export async function load({ url }) {
 	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
 	// Get paginated results
-	const resultSql = `SELECT * FROM cards ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
+	const resultSql = `SELECT cards.* FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get all unique sets for the filter dropdown
