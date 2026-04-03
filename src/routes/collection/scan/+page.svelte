@@ -203,8 +203,8 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
-				// Crop bottom 5% for set/number info (just the collector line)
-				const bottomY = Math.floor(cardH * 0.95);
+				// Crop bottom 8% for set/number info (collector info lines)
+				const bottomY = Math.floor(cardH * 0.92);
 				const bottomH = cardH - bottomY;
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, cardW, bottomH));
 
