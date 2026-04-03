@@ -1,11 +1,12 @@
 import { sqlite } from './db.js';
-import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 const dataDir = join(process.cwd(), 'data');
 const priceDataPath = join(dataDir, 'scryfall-prices-temp.json');
+const lastBulkUpdatePath = join(dataDir, 'last-bulk-update.txt');
 
 let updateInProgress = false;
 
@@ -17,29 +18,46 @@ interface ScryfallPriceCard {
 	};
 }
 
-/** Check if prices need updating (last snapshot is from a previous day) */
-export function pricesNeedUpdate(): boolean {
-	const lastSnapshot = sqlite
-		.prepare('SELECT recorded_at FROM price_history ORDER BY recorded_at DESC LIMIT 1')
-		.get() as { recorded_at: string } | undefined;
+/** Get the last known Scryfall bulk data updated_at timestamp */
+function getLastBulkUpdate(): string | null {
+	try {
+		if (existsSync(lastBulkUpdatePath)) {
+			return readFileSync(lastBulkUpdatePath, 'utf-8').trim();
+		}
+	} catch { /* ignore */ }
+	return null;
+}
 
-	if (!lastSnapshot) return true;
+/** Check if Scryfall has newer data than what we last downloaded */
+export async function pricesNeedUpdate(): Promise<boolean> {
+	try {
+		const res = await fetch('https://api.scryfall.com/bulk-data');
+		if (!res.ok) return false;
+		const bulkData = await res.json();
+		const defaultCards = bulkData.data.find((d: { type: string }) => d.type === 'default_cards');
+		if (!defaultCards) return false;
 
-	const lastDate = lastSnapshot.recorded_at.substring(0, 10); // "YYYY-MM-DD"
-	const today = new Date().toISOString().substring(0, 10);
+		const remoteUpdatedAt = defaultCards.updated_at;
+		const lastKnown = getLastBulkUpdate();
 
-	return lastDate !== today;
+		if (!lastKnown) return true;
+		return remoteUpdatedAt !== lastKnown;
+	} catch (err) {
+		console.error('[price-updater] Failed to check for updates:', (err as Error).message);
+		return false;
+	}
 }
 
 /** Get status info about the price updater */
-export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress: boolean } {
+export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress: boolean; lastBulkUpdate: string | null } {
 	const lastSnapshot = sqlite
 		.prepare('SELECT recorded_at FROM price_history ORDER BY recorded_at DESC LIMIT 1')
 		.get() as { recorded_at: string } | undefined;
 
 	return {
 		lastUpdate: lastSnapshot?.recorded_at ?? null,
-		inProgress: updateInProgress
+		inProgress: updateInProgress,
+		lastBulkUpdate: getLastBulkUpdate()
 	};
 }
 
@@ -53,7 +71,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 	console.log('[price-updater] Starting price update...');
 
 	try {
-		// 1. Download bulk data
+		// 1. Check bulk data metadata and download
 		const bulkResponse = await fetch('https://api.scryfall.com/bulk-data');
 		if (!bulkResponse.ok) throw new Error(`Bulk data API failed: ${bulkResponse.status}`);
 
@@ -61,7 +79,14 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		const defaultCards = bulkData.data.find((d: { type: string }) => d.type === 'default_cards');
 		if (!defaultCards) throw new Error('Could not find default_cards bulk data');
 
-		console.log(`[price-updater] Downloading from ${defaultCards.download_uri}...`);
+		// Check if we already have this version (skip redundant downloads)
+		const lastKnown = getLastBulkUpdate();
+		if (lastKnown === defaultCards.updated_at) {
+			console.log('[price-updater] Already have latest data, skipping download');
+			return { updated: 0, snapshotted: 0 };
+		}
+
+		console.log(`[price-updater] New data available (${defaultCards.updated_at}), downloading...`);
 		const downloadResponse = await fetch(defaultCards.download_uri);
 		if (!downloadResponse.ok || !downloadResponse.body) {
 			throw new Error(`Download failed: ${downloadResponse.status}`);
@@ -113,7 +138,10 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		const snapshotted = snapshotResult.changes;
 		console.log(`[price-updater] Snapshotted prices for ${snapshotted} collection cards`);
 
-		// 4. Cleanup temp file
+		// 4. Save the bulk data version we just processed
+		writeFileSync(lastBulkUpdatePath, defaultCards.updated_at, 'utf-8');
+
+		// 5. Cleanup temp file
 		if (existsSync(priceDataPath)) {
 			await unlink(priceDataPath);
 		}
@@ -127,11 +155,6 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 
 /** Check and run price update if needed (non-blocking) */
 export function checkAndUpdatePrices(): void {
-	if (!pricesNeedUpdate()) {
-		console.log('[price-updater] Prices are up to date');
-		return;
-	}
-
 	// Check if we have any cards in the DB at all
 	const cardCount = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };
 	if (cardCount.count === 0) {
@@ -139,10 +162,15 @@ export function checkAndUpdatePrices(): void {
 		return;
 	}
 
-	console.log('[price-updater] Prices are outdated, starting background update...');
-
-	// Run in background - don't block the server
-	runPriceUpdate().catch((err) => {
+	// Check Scryfall for new data, then update if needed
+	pricesNeedUpdate().then((needsUpdate) => {
+		if (!needsUpdate) {
+			console.log('[price-updater] Prices are up to date (no new Scryfall data)');
+			return;
+		}
+		console.log('[price-updater] New Scryfall data available, starting background update...');
+		return runPriceUpdate();
+	}).catch((err) => {
 		console.error('[price-updater] Background price update failed:', err.message);
 	});
 }

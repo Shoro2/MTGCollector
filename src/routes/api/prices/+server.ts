@@ -1,8 +1,11 @@
 import { json } from '@sveltejs/kit';
 import { getPriceUpdateStatus, runPriceUpdate } from '$lib/server/price-updater';
 
+let lastSkipped = false;
+
 export async function GET() {
-	return json(getPriceUpdateStatus());
+	const status = getPriceUpdateStatus();
+	return json({ ...status, skipped: lastSkipped });
 }
 
 export async function POST() {
@@ -11,10 +14,17 @@ export async function POST() {
 		return json({ success: false, message: 'Update already in progress' }, { status: 409 });
 	}
 
+	lastSkipped = false;
+
 	// Run in background
 	runPriceUpdate()
 		.then((result) => {
-			console.log(`[api/prices] Update done: ${result.updated} prices updated, ${result.snapshotted} snapshots`);
+			if (result.updated === 0 && result.snapshotted === 0) {
+				lastSkipped = true;
+				console.log('[api/prices] No new data from Scryfall, skipped');
+			} else {
+				console.log(`[api/prices] Update done: ${result.updated} prices updated, ${result.snapshotted} snapshots`);
+			}
 		})
 		.catch((err) => {
 			console.error('[api/prices] Update failed:', err.message);

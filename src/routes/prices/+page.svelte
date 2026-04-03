@@ -16,20 +16,23 @@
 
 	async function triggerPriceUpdate() {
 		updating = true;
-		updateMessage = '';
+		updateMessage = 'Checking Scryfall for new price data...';
 		const res = await fetch('/api/prices', { method: 'POST' });
 		const result = await res.json();
 		if (result.success) {
-			updateMessage = 'Price update started. This downloads ~500MB and may take a few minutes...';
+			updateMessage = 'New data found, downloading ~500MB...';
 			// Poll for completion
 			const poll = setInterval(async () => {
 				const status = await fetch('/api/prices').then((r) => r.json());
 				if (!status.inProgress) {
 					clearInterval(poll);
 					updating = false;
-					updateMessage = 'Prices updated successfully!';
-					// Reload page to show new data
-					window.location.reload();
+					if (status.skipped) {
+						updateMessage = 'Prices are already up to date (no new Scryfall data).';
+					} else {
+						updateMessage = 'Prices updated successfully!';
+						window.location.reload();
+					}
 				}
 			}, 5000);
 		} else {
@@ -54,11 +57,6 @@
 			: null
 	);
 
-	let updatedToday = $derived(
-		data.priceStatus.lastUpdate
-			? new Date(data.priceStatus.lastUpdate).toDateString() === new Date().toDateString()
-			: false
-	);
 
 	function formatLastUpdate(dateStr: string | null): string {
 		if (!dateStr) return 'Never';
@@ -151,10 +149,10 @@
 			</span>
 			<button
 				onclick={triggerPriceUpdate}
-				disabled={updating || data.priceStatus.inProgress || updatedToday}
+				disabled={updating || data.priceStatus.inProgress}
 				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 			>
-				{updating || data.priceStatus.inProgress ? 'Updating...' : updatedToday ? 'Already updated today' : 'Update Prices'}
+				{updating || data.priceStatus.inProgress ? 'Checking for updates...' : 'Update Prices'}
 			</button>
 		</div>
 	</div>
