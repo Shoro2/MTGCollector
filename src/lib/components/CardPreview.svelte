@@ -34,15 +34,14 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<span
+<div
 	bind:this={imgEl}
 	onmouseenter={onEnter}
 	onmouseleave={onLeave}
 	onmousemove={onMove}
-	class="contents"
 >
 	<slot />
-</span>
+</div>
 
 {#if hovering && src}
 	<div
