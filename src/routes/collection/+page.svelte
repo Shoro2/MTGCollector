@@ -210,7 +210,9 @@
 				<!-- Card Image -->
 				<div class="flex-shrink-0 w-48">
 					{#if getImageSrc(editItem)}
-						<img src={getImageSrc(editItem)} alt={editItem.name as string} class="w-full rounded-lg shadow-lg" />
+						<CardPreview src={getImageSrc(editItem)} alt={editItem.name as string} scale={1.7}>
+							<img src={getImageSrc(editItem)} alt={editItem.name as string} class="w-full rounded-lg shadow-lg" />
+						</CardPreview>
 					{:else}
 						<div class="w-full aspect-[488/680] bg-[var(--color-bg)] rounded-lg flex items-center justify-center text-[var(--color-text-muted)] text-sm p-2 text-center">
 							{editItem.name}
