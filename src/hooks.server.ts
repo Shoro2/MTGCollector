@@ -7,7 +7,7 @@ import { redirect, type Handle } from '@sveltejs/kit';
 initDb();
 
 // Check if prices need updating (runs in background, non-blocking)
-checkAndUpdatePrices();
+setTimeout(() => checkAndUpdatePrices(), 5000);
 
 // Routes that don't require authentication
 const publicRoutes = ['/login', '/auth/', '/cards', '/impressum', '/datenschutz'];
