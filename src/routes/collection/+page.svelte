@@ -400,6 +400,13 @@
 			>
 				Import from Moxfield
 			</a>
+			<a
+				href="/collection/export"
+				download="moxfield_collection.csv"
+				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
+			>
+				Export for Moxfield
+			</a>
 		</div>
 	</div>
 
