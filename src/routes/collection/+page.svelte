@@ -16,7 +16,18 @@
 
 	// Edit modal state
 	let editItemId = $state<number | null>(null);
-	let editItem = $derived(editItemId !== null ? data.items.find((i) => i.id === editItemId) ?? null : null);
+	let editItem = $derived(
+		editItemId !== null
+			? data.items.find((i) => i.id === editItemId) ?? data.editCard ?? null
+			: null
+	);
+
+	// Auto-open edit modal from URL param (e.g. from prices page)
+	$effect(() => {
+		if (data.editCard && editItemId === null) {
+			openEdit(data.editCard);
+		}
+	});
 	let editQuantity = $state(1);
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);

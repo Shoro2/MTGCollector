@@ -225,7 +225,7 @@
 			<div class="space-y-2">
 				{#each data.topCards as card, i}
 					<a
-						href="/prices?card={card.id}"
+						href="/collection?edit={card.collection_id}"
 						class="flex items-center gap-4 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors"
 					>
 						<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>

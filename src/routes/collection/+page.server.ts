@@ -76,6 +76,27 @@ export async function load({ url }) {
 		)
 		.get() as { uniqueCards: number; totalCards: number; totalValue: number };
 
+	// Load a specific card for edit modal (e.g. from prices page link)
+	const editId = url.searchParams.get('edit');
+	let editCard: (Record<string, unknown> & { tags: Array<Record<string, unknown>> }) | null = null;
+	if (editId) {
+		const item = sqlite
+			.prepare(
+				`SELECT cc.*, c.name, c.set_name, c.set_code, c.collector_number, c.image_uri, c.local_image_path,
+					c.mana_cost, c.type_line, c.rarity, c.price_eur, c.price_eur_foil, cc.purchase_price
+				FROM collection_cards cc
+				JOIN cards c ON cc.card_id = c.id
+				WHERE cc.id = ?`
+			)
+			.get(parseInt(editId)) as Record<string, unknown> | undefined;
+		if (item) {
+			const cardTags = sqlite
+				.prepare('SELECT t.* FROM tags t JOIN collection_card_tags cct ON t.id = cct.tag_id WHERE cct.collection_card_id = ?')
+				.all(item.id) as Array<Record<string, unknown>>;
+			editCard = { ...item, tags: cardTags };
+		}
+	}
+
 	return {
 		items: itemsWithTags,
 		totalItems: countResult.count,
@@ -84,6 +105,7 @@ export async function load({ url }) {
 		totalPages: Math.ceil(countResult.count / pageSize),
 		tags: allTags,
 		stats,
-		filters: { search, tagFilter, sortBy, sortDir }
+		filters: { search, tagFilter, sortBy, sortDir },
+		editCard
 	};
 }

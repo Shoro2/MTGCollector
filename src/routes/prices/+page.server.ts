@@ -22,7 +22,7 @@ export async function load({ url }) {
 		.prepare(
 			`SELECT c.id, c.name, c.set_name, c.image_uri, c.local_image_path,
 				CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END as price,
-				cc.quantity, cc.foil, cc.purchase_price
+				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
 			WHERE price IS NOT NULL
