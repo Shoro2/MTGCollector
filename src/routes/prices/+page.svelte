@@ -9,10 +9,13 @@
 
 	let valueChartCanvas = $state<HTMLCanvasElement>(null!);
 	let cardChartCanvas = $state<HTMLCanvasElement>(null!);
+	let profitChartCanvas = $state<HTMLCanvasElement>(null!);
 	let valueChart: Chart | null = null;
 	let cardChart: Chart | null = null;
+	let profitChart: Chart | null = null;
 	let updating = $state(false);
 	let updateMessage = $state('');
+	let chartMode = $state<'value' | 'profit'>('value');
 
 	async function triggerPriceUpdate() {
 		updating = true;
@@ -70,10 +73,8 @@
 		return `${diffD} day${diffD > 1 ? 's' : ''} ago (${d.toLocaleDateString()})`;
 	}
 
-	onMount(() => {
-		Chart.register(...registerables);
-
-		// Collection value chart
+	function buildValueChart() {
+		valueChart?.destroy();
 		if (data.valueHistory.length > 0 && valueChartCanvas) {
 			valueChart = new Chart(valueChartCanvas, {
 				type: 'line',
@@ -100,6 +101,69 @@
 				}
 			});
 		}
+	}
+
+	function buildProfitChart() {
+		profitChart?.destroy();
+		if (data.profitHistory.length > 0 && profitChartCanvas) {
+			const profitData = data.profitHistory.map((h) => ({
+				date: new Date(h.recorded_at).toLocaleDateString(),
+				profit: (h.total_value ?? 0) - (h.total_purchase ?? 0)
+			}));
+			profitChart = new Chart(profitChartCanvas, {
+				type: 'line',
+				data: {
+					labels: profitData.map((h) => h.date),
+					datasets: [
+						{
+							label: 'Profit / Loss (EUR)',
+							data: profitData.map((h) => h.profit),
+							borderColor: profitData.length > 0 && profitData[profitData.length - 1].profit >= 0 ? '#22c55e' : '#ef4444',
+							backgroundColor: profitData.length > 0 && profitData[profitData.length - 1].profit >= 0 ? '#22c55e22' : '#ef444422',
+							fill: true,
+							tension: 0.3
+						},
+						{
+							label: 'Purchase Price (EUR)',
+							data: data.profitHistory.map((h) => h.total_purchase),
+							borderColor: '#94a3b8',
+							borderDash: [5, 5],
+							tension: 0.3,
+							pointRadius: 0
+						},
+						{
+							label: 'Current Value (EUR)',
+							data: data.profitHistory.map((h) => h.total_value),
+							borderColor: '#f59e0b',
+							tension: 0.3,
+							pointRadius: 0
+						}
+					]
+				},
+				options: {
+					responsive: true,
+					plugins: { legend: { labels: { color: '#94a3b8' } } },
+					scales: {
+						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
+					}
+				}
+			});
+		}
+	}
+
+	function switchChart(mode: 'value' | 'profit') {
+		chartMode = mode;
+		// Need to wait for canvas to be in DOM
+		setTimeout(() => {
+			if (mode === 'value') buildValueChart();
+			else buildProfitChart();
+		}, 0);
+	}
+
+	onMount(() => {
+		Chart.register(...registerables);
+		buildValueChart();
 
 		// Single card price chart
 		if (data.cardPriceHistory.length > 0 && cardChartCanvas) {
@@ -135,6 +199,7 @@
 
 		return () => {
 			valueChart?.destroy();
+			profitChart?.destroy();
 			cardChart?.destroy();
 		};
 	});
@@ -188,11 +253,48 @@
 		</div>
 	</div>
 
-	<!-- Collection Value Chart -->
-	{#if data.valueHistory.length > 0}
+	<!-- Chart Toggle -->
+	{#if data.valueHistory.length > 0 || data.profitHistory.length > 0}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h2 class="text-lg font-semibold mb-4">Collection Value Over Time</h2>
-			<canvas bind:this={valueChartCanvas}></canvas>
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold">
+					{chartMode === 'value' ? 'Collection Value Over Time' : 'Profit / Loss'}
+				</h2>
+				<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-0.5">
+					<button
+						onclick={() => switchChart('value')}
+						class="px-3 py-1 rounded-md text-sm transition-colors {chartMode === 'value' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>
+						Value
+					</button>
+					<button
+						onclick={() => switchChart('profit')}
+						class="px-3 py-1 rounded-md text-sm transition-colors {chartMode === 'profit' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>
+						Profit / Loss
+					</button>
+				</div>
+			</div>
+
+			{#if chartMode === 'profit' && data.missingPriceCount > 0}
+				<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 mb-4 text-sm text-yellow-400 flex items-center gap-2">
+					<span>⚠</span>
+					<span>
+						{data.missingPriceCount} card{data.missingPriceCount > 1 ? 's' : ''} in your collection {data.missingPriceCount > 1 ? 'have' : 'has'} no purchase price set.
+						<a href="/collection" class="underline hover:text-yellow-300">Set missing prices</a>
+					</span>
+				</div>
+			{/if}
+
+			{#if chartMode === 'value'}
+				<canvas bind:this={valueChartCanvas}></canvas>
+			{:else}
+				{#if data.profitHistory.length > 0}
+					<canvas bind:this={profitChartCanvas}></canvas>
+				{:else}
+					<p class="text-[var(--color-text-muted)] text-center py-4">No profit data available. Set purchase prices on your cards to see profit/loss tracking.</p>
+				{/if}
+			{/if}
 		</div>
 	{:else}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">

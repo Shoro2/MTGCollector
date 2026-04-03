@@ -60,8 +60,28 @@ export async function load({ url, locals }) {
 		)
 		.get(userId) as { totalValue: number; totalPurchaseValue: number; uniqueCards: number; totalCards: number };
 
+	// Cards missing purchase price
+	const missingPriceCount = sqlite
+		.prepare('SELECT COUNT(*) as count FROM collection_cards WHERE user_id = ? AND purchase_price IS NULL')
+		.get(userId) as { count: number };
+
+	// Purchase value over time (sum of purchase_prices stays constant, value changes)
+	const profitHistory = sqlite
+		.prepare(
+			`SELECT
+				ph.recorded_at,
+				SUM(CASE WHEN cc.foil = 1 THEN ph.price_eur_foil ELSE ph.price_eur END * cc.quantity) as total_value,
+				SUM(cc.purchase_price * cc.quantity) as total_purchase
+			FROM price_history ph
+			JOIN collection_cards cc ON ph.card_id = cc.card_id
+			WHERE cc.user_id = ? AND cc.purchase_price IS NOT NULL
+			GROUP BY ph.recorded_at
+			ORDER BY ph.recorded_at ASC`
+		)
+		.all(userId) as Array<{ recorded_at: string; total_value: number; total_purchase: number }>;
+
 	const priceStatus = getPriceUpdateStatus();
 	const hasNewData = await pricesNeedUpdate();
 
-	return { valueHistory, topCards, cardPriceHistory, selectedCard, stats, priceStatus, hasNewData };
+	return { valueHistory, profitHistory, topCards, cardPriceHistory, selectedCard, stats, missingPriceCount: missingPriceCount.count, priceStatus, hasNewData };
 }
