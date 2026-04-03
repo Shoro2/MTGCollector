@@ -97,8 +97,8 @@ export async function POST({ request }) {
 	);
 
 	const insertCollection = sqlite.prepare(
-		`INSERT INTO collection_cards (card_id, quantity, condition, foil, notes, added_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`
+		`INSERT INTO collection_cards (card_id, quantity, condition, foil, purchase_price, notes, added_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`
 	);
 
 	let imported = 0;
@@ -119,7 +119,8 @@ export async function POST({ request }) {
 			const quantity = parseInt(row.Count) || 1;
 			const condition = mapCondition(row.Condition);
 			const foil = row.Foil === 'foil' || row.Foil === 'etched' ? 1 : 0;
-			const purchasePrice = row['Purchase Price'] || null;
+			const purchasePriceStr = row['Purchase Price'] || '';
+			const purchasePrice = purchasePriceStr ? parseFloat(purchasePriceStr) : null;
 			const tags = row.Tags || '';
 
 			// Try to find card by set_code + collector_number
@@ -138,16 +139,14 @@ export async function POST({ request }) {
 				continue;
 			}
 
-			const notes = [
-				purchasePrice ? `Purchase: ${purchasePrice}` : '',
-				tags ? `Moxfield tags: ${tags}` : ''
-			].filter(Boolean).join('; ') || null;
+			const notes = tags ? `Moxfield tags: ${tags}` : null;
 
 			insertCollection.run(
 				card.id,
 				quantity,
 				condition,
 				foil,
+				purchasePrice != null && !isNaN(purchasePrice) ? purchasePrice : null,
 				notes,
 				new Date().toISOString()
 			);

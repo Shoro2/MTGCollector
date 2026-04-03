@@ -47,6 +47,7 @@ export const collectionCards = sqliteTable('collection_cards', {
 	quantity: integer('quantity').notNull().default(1),
 	condition: text('condition').default('near_mint'),
 	foil: integer('foil', { mode: 'boolean' }).default(false),
+	purchasePrice: real('purchase_price'),
 	notes: text('notes'),
 	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
 });

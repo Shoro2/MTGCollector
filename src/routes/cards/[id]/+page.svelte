@@ -8,6 +8,7 @@
 	let addQuantity = $state(1);
 	let addCondition = $state('near_mint');
 	let addFoil = $state(false);
+	let addPurchasePrice = $state('');
 	let adding = $state(false);
 	let showAddForm = $state(false);
 
@@ -24,7 +25,8 @@
 				cardId: card.id,
 				quantity: addQuantity,
 				condition: addCondition,
-				foil: addFoil
+				foil: addFoil,
+				purchasePrice: addPurchasePrice ? parseFloat(addPurchasePrice) : null
 			})
 		});
 		adding = false;
@@ -203,6 +205,18 @@
 									<span class="text-sm">Foil</span>
 								</label>
 							</div>
+						</div>
+						<div>
+							<label for="add-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price (EUR)</label>
+							<input
+								id="add-purchase-price"
+								type="number"
+								bind:value={addPurchasePrice}
+								step="0.01"
+								min="0"
+								placeholder="e.g. 3.50"
+								class="w-48 bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1 focus:outline-none focus:border-[var(--color-primary)]"
+							/>
 						</div>
 						<button
 							onclick={addToCollection}

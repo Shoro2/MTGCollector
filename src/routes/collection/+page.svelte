@@ -19,6 +19,7 @@
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);
 	let editNotes = $state('');
+	let editPurchasePrice = $state('');
 	let saving = $state(false);
 
 	function openEdit(item: Record<string, unknown>) {
@@ -27,6 +28,7 @@
 		editCondition = item.condition as string;
 		editFoil = !!(item.foil as number);
 		editNotes = (item.notes as string) || '';
+		editPurchasePrice = item.purchase_price != null ? String(item.purchase_price) : '';
 	}
 
 	function closeEdit() {
@@ -44,7 +46,8 @@
 				quantity: editQuantity,
 				condition: editCondition,
 				foil: editFoil,
-				notes: editNotes || null
+				notes: editNotes || null,
+				purchasePrice: editPurchasePrice ? parseFloat(editPurchasePrice) : null
 			})
 		});
 		saving = false;
@@ -138,6 +141,16 @@
 			body: JSON.stringify({ id })
 		});
 		await invalidateAll();
+	}
+
+	function priceChange(item: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
+		const purchasePrice = item.purchase_price as number | null;
+		const currentPrice = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
+		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
+		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
+		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };
+		if (percent < 0) return { percent, direction: '▼', color: 'text-red-400' };
+		return { percent: 0, direction: '—', color: 'text-[var(--color-text-muted)]' };
 	}
 
 	function getImageSrc(item: Record<string, unknown>): string {
@@ -238,15 +251,37 @@
 						</div>
 					</div>
 
+					<!-- Purchase Price -->
+					<div>
+						<label for="edit-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price (EUR)</label>
+						<input
+							id="edit-purchase-price"
+							type="number"
+							bind:value={editPurchasePrice}
+							step="0.01"
+							min="0"
+							placeholder="e.g. 3.50"
+							class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-[var(--color-primary)]"
+						/>
+					</div>
+
 					<!-- Price Info -->
 					<div class="grid grid-cols-2 gap-3">
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
-							<span class="text-xs text-[var(--color-text-muted)]">Price (EUR)</span>
-							<p class="font-medium text-[var(--color-accent)]">{formatPrice(editItem.price_eur as number | null)}</p>
+							<span class="text-xs text-[var(--color-text-muted)]">Current Price</span>
+							<p class="font-medium text-[var(--color-accent)]">
+								{formatPrice((editItem.foil ? editItem.price_eur_foil : editItem.price_eur) as number | null)}
+							</p>
 						</div>
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
-							<span class="text-xs text-[var(--color-text-muted)]">Foil Price (EUR)</span>
-							<p class="font-medium text-[var(--color-accent)]">{formatPrice(editItem.price_eur_foil as number | null)}</p>
+							<span class="text-xs text-[var(--color-text-muted)]">Since Purchase</span>
+							{#if priceChange(editItem)}
+								<p class="font-medium {priceChange(editItem)!.color}">
+									{priceChange(editItem)!.direction} {Math.abs(priceChange(editItem)!.percent).toFixed(1)}%
+								</p>
+							{:else}
+								<p class="font-medium text-[var(--color-text-muted)]">—</p>
+							{/if}
 						</div>
 					</div>
 
@@ -462,7 +497,11 @@
 						<p class="text-[var(--color-accent)] font-medium">
 							{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null)}
 						</p>
-						{#if (item.quantity as number) > 1}
+						{#if priceChange(item)}
+							<p class="text-xs {priceChange(item)!.color}">
+								{priceChange(item)!.direction} {Math.abs(priceChange(item)!.percent).toFixed(1)}%
+							</p>
+						{:else if (item.quantity as number) > 1}
 							<p class="text-xs text-[var(--color-text-muted)]">
 								{formatPrice(((item.foil ? item.price_eur_foil : item.price_eur) as number ?? 0) * (item.quantity as number))} total
 							</p>

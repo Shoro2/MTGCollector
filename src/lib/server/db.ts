@@ -64,6 +64,7 @@ export function initDb() {
 			quantity INTEGER NOT NULL DEFAULT 1,
 			condition TEXT DEFAULT 'near_mint',
 			foil INTEGER DEFAULT 0,
+			purchase_price REAL,
 			notes TEXT,
 			added_at TEXT
 		);
@@ -105,6 +106,13 @@ export function initDb() {
 			oracle_text
 		);
 	`);
+
+	// Migrations for existing databases
+	try {
+		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN purchase_price REAL');
+	} catch {
+		// Column already exists
+	}
 }
 
 export { sqlite };
