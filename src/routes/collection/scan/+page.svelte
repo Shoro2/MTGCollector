@@ -33,7 +33,9 @@
 		try {
 			// Dynamically load Tesseract.js from CDN
 			const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
-			const worker = await Tesseract.createWorker('eng');
+			const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
+			if (!createWorker) throw new Error('Failed to load Tesseract.js');
+			const worker = await createWorker('eng');
 			scanProgress = 'Scanning card...';
 
 			const { data } = await worker.recognize(imageFile);
@@ -132,7 +134,7 @@
 					</label>
 				{:else}
 					<div class="relative">
-						<img src={imagePreview} alt="Card photo" class="max-h-64 rounded-lg mx-auto" />
+						<img src={imagePreview} alt="Uploaded card" class="max-h-64 rounded-lg mx-auto" />
 						<button
 							onclick={reset}
 							class="absolute top-2 right-2 bg-black/60 text-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-black/80"
