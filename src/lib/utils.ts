@@ -38,9 +38,10 @@ export function getRarityColor(rarity: string): string {
 	return colors[rarity] || '#666';
 }
 
-export function formatPrice(price: number | null): string {
-	if (price === null || price === undefined) return '—';
-	return `€${price.toFixed(2)}`;
+export function formatPrice(price: number | null, priceUsd?: number | null): string {
+	if (price !== null && price !== undefined) return `€${price.toFixed(2)}`;
+	if (priceUsd !== null && priceUsd !== undefined) return `$${priceUsd.toFixed(2)}`;
+	return '—';
 }
 
 export function conditionLabel(condition: string): string {

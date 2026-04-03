@@ -524,7 +524,7 @@
 												{result.set_name} ({(result.set_code as string).toUpperCase()}) #{result.collector_number}
 											</p>
 										</div>
-										<span class="text-sm text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null)}</span>
+										<span class="text-sm text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null, result.price_usd as number | null)}</span>
 										{#if isAdded}
 											<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 										{:else}
@@ -583,7 +583,7 @@
 															<p class="text-sm font-medium truncate">{result.name}</p>
 															<p class="text-xs text-[var(--color-text-muted)]">{result.set_name} #{result.collector_number}</p>
 														</div>
-														<span class="text-xs text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null)}</span>
+														<span class="text-xs text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null, result.price_usd as number | null)}</span>
 														{#if isAdded}
 															<span class="text-green-400 text-xs">Added!</span>
 														{:else}

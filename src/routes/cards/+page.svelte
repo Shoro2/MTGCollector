@@ -313,8 +313,8 @@
 					<p class="text-sm font-medium truncate">{card.name}</p>
 					<div class="flex items-center justify-between mt-1">
 						<span class="text-xs text-[var(--color-text-muted)]">{card.set_name}</span>
-						{#if card.price_eur}
-							<span class="text-xs text-[var(--color-accent)]">{formatPrice(card.price_eur as number)}</span>
+						{#if card.price_eur || card.price_usd}
+							<span class="text-xs text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null, card.price_usd as number | null)}</span>
 						{/if}
 					</div>
 				</div>

@@ -294,7 +294,7 @@
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
 							<span class="text-xs text-[var(--color-text-muted)]">Current Price</span>
 							<p class="font-medium text-[var(--color-accent)]">
-								{formatPrice((editItem.foil ? editItem.price_eur_foil : editItem.price_eur) as number | null)}
+								{formatPrice((editItem.foil ? editItem.price_eur_foil : editItem.price_eur) as number | null, (editItem.foil ? editItem.price_usd_foil : editItem.price_usd) as number | null)}
 							</p>
 						</div>
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
@@ -543,7 +543,7 @@
 					<!-- Price -->
 					<div class="text-right flex-shrink-0">
 						<p class="text-[var(--color-accent)] font-medium">
-							{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null)}
+							{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null, (item.foil ? item.price_usd_foil : item.price_usd) as number | null)}
 						</p>
 						{#if priceChange(item)}
 							<p class="text-xs {priceChange(item)!.color}">
@@ -551,7 +551,7 @@
 							</p>
 						{:else if (item.quantity as number) > 1}
 							<p class="text-xs text-[var(--color-text-muted)]">
-								{formatPrice(((item.foil ? item.price_eur_foil : item.price_eur) as number ?? 0) * (item.quantity as number))} total
+								{formatPrice(((item.foil ? item.price_eur_foil : item.price_eur) as number ?? 0) * (item.quantity as number), ((item.foil ? item.price_usd_foil : item.price_usd) as number ?? 0) * (item.quantity as number))} total
 							</p>
 						{/if}
 					</div>

@@ -134,12 +134,12 @@
 					<p class="font-medium">{card.collector_number}</p>
 				</div>
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
-					<span class="text-[var(--color-text-muted)]">Price (EUR)</span>
-					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null)}</p>
+					<span class="text-[var(--color-text-muted)]">Price</span>
+					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null, card.price_usd as number | null)}</p>
 				</div>
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
-					<span class="text-[var(--color-text-muted)]">Price Foil (EUR)</span>
-					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur_foil as number | null)}</p>
+					<span class="text-[var(--color-text-muted)]">Price Foil</span>
+					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur_foil as number | null, card.price_usd_foil as number | null)}</p>
 				</div>
 			</div>
 
@@ -264,8 +264,8 @@
 								class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-3 py-1.5 text-sm hover:border-[var(--color-primary)] transition-colors"
 							>
 								{reprint.set_name} #{reprint.collector_number}
-								{#if reprint.price_eur}
-									<span class="text-[var(--color-accent)] ml-1">{formatPrice(reprint.price_eur as number)}</span>
+								{#if reprint.price_eur || reprint.price_usd}
+									<span class="text-[var(--color-accent)] ml-1">{formatPrice(reprint.price_eur as number | null, reprint.price_usd as number | null)}</span>
 								{/if}
 							</a>
 						{/each}

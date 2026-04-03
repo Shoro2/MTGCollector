@@ -5,7 +5,7 @@ export async function POST({ request }) {
 	const body = await request.json();
 	const { query, setCode, collectorNumber } = body;
 
-	const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, rarity`;
+	const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity`;
 
 	// Search by set code + collector number (most reliable, language-independent)
 	if (setCode && collectorNumber) {

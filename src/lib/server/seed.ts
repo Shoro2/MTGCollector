@@ -106,7 +106,9 @@ function importCards(filePath: string) {
 			released_at TEXT,
 			scryfall_uri TEXT,
 			price_eur REAL,
-			price_eur_foil REAL
+			price_eur_foil REAL,
+			price_usd REAL,
+			price_usd_foil REAL
 		);
 
 		CREATE TABLE IF NOT EXISTS card_faces (
@@ -168,13 +170,13 @@ function importCards(filePath: string) {
 			colors, color_identity, keywords, set_code, set_name,
 			collector_number, rarity, power, toughness, loyalty,
 			image_uri, layout, legalities, released_at, scryfall_uri,
-			price_eur, price_eur_foil
+			price_eur, price_eur_foil, price_usd, price_usd_foil
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?
+			?, ?, ?, ?
 		)
 	`);
 
@@ -212,6 +214,10 @@ function importCards(filePath: string) {
 				const priceEurFoil = card.prices?.eur_foil
 					? parseFloat(card.prices.eur_foil)
 					: null;
+				const priceUsd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
+				const priceUsdFoil = card.prices?.usd_foil
+					? parseFloat(card.prices.usd_foil)
+					: null;
 
 				insertCard.run(
 					card.id,
@@ -237,7 +243,9 @@ function importCards(filePath: string) {
 					card.released_at || null,
 					card.scryfall_uri || null,
 					priceEur,
-					priceEurFoil
+					priceEurFoil,
+					priceUsd,
+					priceUsdFoil
 				);
 
 				// Insert card faces for multi-faced cards

@@ -15,6 +15,8 @@ interface ScryfallPriceCard {
 	prices: {
 		eur?: string | null;
 		eur_foil?: string | null;
+		usd?: string | null;
+		usd_foil?: string | null;
 	};
 }
 
@@ -103,7 +105,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		const allCards: ScryfallPriceCard[] = JSON.parse(fileContent);
 
 		const updatePrice = sqlite.prepare(
-			'UPDATE cards SET price_eur = ?, price_eur_foil = ? WHERE id = ?'
+			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ? WHERE id = ?'
 		);
 
 		let updated = 0;
@@ -115,8 +117,10 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 				for (const card of batch) {
 					const priceEur = card.prices?.eur ? parseFloat(card.prices.eur) : null;
 					const priceEurFoil = card.prices?.eur_foil ? parseFloat(card.prices.eur_foil) : null;
+					const priceUsd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
+					const priceUsdFoil = card.prices?.usd_foil ? parseFloat(card.prices.usd_foil) : null;
 
-					const result = updatePrice.run(priceEur, priceEurFoil, card.id);
+					const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, card.id);
 					if (result.changes > 0) updated++;
 				}
 			});

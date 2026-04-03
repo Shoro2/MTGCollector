@@ -13,7 +13,7 @@ export async function load({ params, locals }) {
 	let reprints: Array<Record<string, unknown>> = [];
 	if (card.oracle_id) {
 		reprints = sqlite
-			.prepare('SELECT id, set_code, set_name, collector_number, price_eur, image_uri FROM cards WHERE oracle_id = ? AND id != ? ORDER BY released_at DESC')
+			.prepare('SELECT id, set_code, set_name, collector_number, price_eur, price_usd, image_uri FROM cards WHERE oracle_id = ? AND id != ? ORDER BY released_at DESC')
 			.all(card.oracle_id, params.id) as Array<Record<string, unknown>>;
 	}
 

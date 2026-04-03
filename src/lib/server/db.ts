@@ -42,7 +42,9 @@ export function initDb() {
 			released_at TEXT,
 			scryfall_uri TEXT,
 			price_eur REAL,
-			price_eur_foil REAL
+			price_eur_foil REAL,
+			price_usd REAL,
+			price_usd_foil REAL
 		);
 
 		CREATE TABLE IF NOT EXISTS card_faces (
@@ -130,6 +132,14 @@ export function initDb() {
 
 	try {
 		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE');
+	} catch { /* Column already exists */ }
+
+	try {
+		sqlite.exec('ALTER TABLE cards ADD COLUMN price_usd REAL');
+	} catch { /* Column already exists */ }
+
+	try {
+		sqlite.exec('ALTER TABLE cards ADD COLUMN price_usd_foil REAL');
 	} catch { /* Column already exists */ }
 
 	try {
