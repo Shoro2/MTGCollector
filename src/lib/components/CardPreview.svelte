@@ -1,10 +1,12 @@
 <script lang="ts">
-	let { src, alt, scale = 2 }: { src: string; alt: string; scale?: number } = $props();
+	import type { Snippet } from 'svelte';
+
+	let { src, alt, scale = 2, children }: { src: string; alt: string; scale?: number; children: Snippet } = $props();
 
 	let hovering = $state(false);
 	let mouseX = $state(0);
 	let mouseY = $state(0);
-	let imgEl = $state<HTMLElement>(null!);
+	let portalTarget = $state<HTMLElement | null>(null);
 
 	function onEnter() {
 		hovering = true;
@@ -19,35 +21,41 @@
 		mouseY = e.clientY;
 	}
 
-	let previewStyle = $derived.by(() => {
-		if (!hovering) return '';
-		const width = 244 * scale;
-		const height = 340 * scale;
-		let x = mouseX + 20;
-		let y = mouseY - height / 2;
-		// Keep within viewport
-		if (x + width > window.innerWidth - 10) x = mouseX - width - 20;
-		if (y < 10) y = 10;
-		if (y + height > window.innerHeight - 10) y = window.innerHeight - height - 10;
-		return `left:${x}px;top:${y}px;width:${width}px;height:${height}px;`;
+	$effect(() => {
+		if (hovering && src) {
+			if (!portalTarget) {
+				portalTarget = document.createElement('div');
+				document.body.appendChild(portalTarget);
+			}
+
+			const width = 244 * scale;
+			const height = 340 * scale;
+			let x = mouseX + 20;
+			let y = mouseY - height / 2;
+			if (x + width > window.innerWidth - 10) x = mouseX - width - 20;
+			if (y < 10) y = 10;
+			if (y + height > window.innerHeight - 10) y = window.innerHeight - height - 10;
+
+			portalTarget.style.cssText = `position:fixed;z-index:9999;pointer-events:none;left:${x}px;top:${y}px;width:${width}px;height:${height}px;border-radius:0.5rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);`;
+			portalTarget.innerHTML = `<img src="${src}" alt="${alt}" style="width:100%;height:100%;object-fit:cover;" />`;
+		} else if (portalTarget) {
+			portalTarget.remove();
+			portalTarget = null;
+		}
+	});
+
+	$effect(() => {
+		return () => {
+			portalTarget?.remove();
+		};
 	});
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	bind:this={imgEl}
 	onmouseenter={onEnter}
 	onmouseleave={onLeave}
 	onmousemove={onMove}
 >
-	<slot />
+	{@render children()}
 </div>
-
-{#if hovering && src}
-	<div
-		class="fixed z-[100] pointer-events-none rounded-lg overflow-hidden shadow-2xl border border-[var(--color-border)]"
-		style={previewStyle}
-	>
-		<img {src} {alt} class="w-full h-full object-cover" />
-	</div>
-{/if}
