@@ -14,6 +14,7 @@ export async function load({ url }) {
 	const legality = url.searchParams.get('legality') || '';
 	const sortBy = url.searchParams.get('sort') || 'name';
 	const sortDir = url.searchParams.get('dir') || 'asc';
+	const unique = url.searchParams.get('unique') === '1';
 	const page = parseInt(url.searchParams.get('page') || '1');
 	const pageSize = 40;
 	const offset = (page - 1) * pageSize;
@@ -95,6 +96,11 @@ export async function load({ url }) {
 		params.push(`$.${legality}`);
 	}
 
+	// Unique mode: only show newest printing per oracle_id
+	if (unique) {
+		conditions.push(`cards.id IN (SELECT id FROM cards AS c2 WHERE c2.oracle_id = cards.oracle_id ORDER BY c2.released_at DESC LIMIT 1)`);
+	}
+
 	const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
 	// Get total count
@@ -137,7 +143,7 @@ export async function load({ url }) {
 		page,
 		pageSize,
 		totalPages: Math.ceil(totalCards / pageSize),
-		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir },
+		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir, unique },
 		sets
 	};
 }

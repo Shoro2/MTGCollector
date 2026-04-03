@@ -83,6 +83,17 @@
 		goto(`/cards?${params.toString()}`);
 	}
 
+	function toggleUnique() {
+		const params = new URLSearchParams($page.url.searchParams);
+		if (data.filters.unique) {
+			params.delete('unique');
+		} else {
+			params.set('unique', '1');
+		}
+		params.delete('page');
+		goto(`/cards?${params.toString()}`);
+	}
+
 	function clearFilters() {
 		query = '';
 		selectedColors = [];
@@ -235,7 +246,7 @@
 	{/if}
 
 	<!-- Sort Bar -->
-	<div class="flex items-center gap-2 text-sm">
+	<div class="flex items-center gap-2 text-sm flex-wrap">
 		<span class="text-[var(--color-text-muted)]">Sort by:</span>
 		{#each [['name', 'Name'], ['price', 'Price'], ['cmc', 'CMC'], ['rarity', 'Rarity'], ['set', 'Set'], ['released', 'Released']] as [key, label]}
 			<button
@@ -248,6 +259,13 @@
 				{/if}
 			</button>
 		{/each}
+		<span class="mx-2 text-[var(--color-border)]">|</span>
+		<button
+			onclick={toggleUnique}
+			class="px-3 py-1 rounded-lg border transition-colors {data.filters.unique ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
+		>
+			Unique only
+		</button>
 	</div>
 
 	<!-- Card Grid -->
