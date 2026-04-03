@@ -12,6 +12,8 @@ export async function load({ url }) {
 	const cmcMin = url.searchParams.get('cmcMin');
 	const cmcMax = url.searchParams.get('cmcMax');
 	const legality = url.searchParams.get('legality') || '';
+	const sortBy = url.searchParams.get('sort') || 'name';
+	const sortDir = url.searchParams.get('dir') || 'asc';
 	const page = parseInt(url.searchParams.get('page') || '1');
 	const pageSize = 40;
 	const offset = (page - 1) * pageSize;
@@ -100,8 +102,21 @@ export async function load({ url }) {
 	const countResult = sqlite.prepare(countSql).get(...params) as { count: number };
 	const totalCards = countResult.count;
 
+	// Sort
+	const validSorts: Record<string, string> = {
+		name: 'cards.name',
+		price: 'cards.price_eur',
+		cmc: 'cards.cmc',
+		rarity: "CASE cards.rarity WHEN 'mythic' THEN 4 WHEN 'rare' THEN 3 WHEN 'uncommon' THEN 2 ELSE 1 END",
+		set: 'cards.set_name',
+		released: 'cards.released_at'
+	};
+	const orderColumn = validSorts[sortBy] || 'cards.name';
+	const orderDir = sortDir === 'desc' ? 'DESC' : 'ASC';
+	const nullHandling = sortBy === 'price' ? `NULLS LAST` : '';
+
 	// Get paginated results
-	const resultSql = `SELECT * FROM cards ${whereClause} ORDER BY name ASC LIMIT ? OFFSET ?`;
+	const resultSql = `SELECT * FROM cards ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get all unique sets for the filter dropdown
@@ -115,7 +130,7 @@ export async function load({ url }) {
 		page,
 		pageSize,
 		totalPages: Math.ceil(totalCards / pageSize),
-		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality },
+		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir },
 		sets
 	};
 }

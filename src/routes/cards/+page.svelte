@@ -69,6 +69,18 @@
 		goto(`/cards?${params.toString()}`);
 	}
 
+	function setSort(sort: string) {
+		const params = new URLSearchParams($page.url.searchParams);
+		if (data.filters.sortBy === sort) {
+			params.set('dir', data.filters.sortDir === 'asc' ? 'desc' : 'asc');
+		} else {
+			params.set('sort', sort);
+			params.set('dir', 'asc');
+		}
+		params.delete('page');
+		goto(`/cards?${params.toString()}`);
+	}
+
 	function clearFilters() {
 		query = '';
 		selectedColors = [];
@@ -219,6 +231,22 @@
 			</div>
 		</div>
 	{/if}
+
+	<!-- Sort Bar -->
+	<div class="flex items-center gap-2 text-sm">
+		<span class="text-[var(--color-text-muted)]">Sort by:</span>
+		{#each [['name', 'Name'], ['price', 'Price'], ['cmc', 'CMC'], ['rarity', 'Rarity'], ['set', 'Set'], ['released', 'Released']] as [key, label]}
+			<button
+				onclick={() => setSort(key)}
+				class="px-3 py-1 rounded-lg border transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
+			>
+				{label}
+				{#if data.filters.sortBy === key}
+					{data.filters.sortDir === 'asc' ? '▲' : '▼'}
+				{/if}
+			</button>
+		{/each}
+	</div>
 
 	<!-- Card Grid -->
 	<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
