@@ -8,10 +8,13 @@
 	let scanProgress = $state('');
 	let ocrText = $state('');
 	let searchQuery = $state('');
+	let setCode = $state('');
+	let collectorNumber = $state('');
 	let results = $state<Array<Record<string, unknown>>>([]);
 	let matchType = $state('');
 	let adding = $state<string | null>(null);
 	let addedCards = $state<string[]>([]);
+	let searchMode = $state<'name' | 'set'>('set');
 
 	function onFileSelect(e: Event) {
 		const input = e.target as HTMLInputElement;
@@ -20,9 +23,36 @@
 			imagePreview = URL.createObjectURL(imageFile);
 			ocrText = '';
 			searchQuery = '';
+			setCode = '';
+			collectorNumber = '';
 			results = [];
 			matchType = '';
 		}
+	}
+
+	/** Crop a portion of the image using canvas */
+	function cropImage(file: File, yStart: number, yEnd: number): Promise<Blob> {
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			img.onload = () => {
+				const canvas = document.createElement('canvas');
+				const startY = Math.floor(img.height * yStart);
+				const cropHeight = Math.floor(img.height * (yEnd - yStart));
+				canvas.width = img.width;
+				canvas.height = cropHeight;
+				const ctx = canvas.getContext('2d')!;
+				// White background for better OCR
+				ctx.fillStyle = 'white';
+				ctx.fillRect(0, 0, canvas.width, canvas.height);
+				ctx.drawImage(img, 0, startY, img.width, cropHeight, 0, 0, img.width, cropHeight);
+				canvas.toBlob((blob) => {
+					if (blob) resolve(blob);
+					else reject(new Error('Failed to crop image'));
+				}, 'image/png');
+			};
+			img.onerror = reject;
+			img.src = URL.createObjectURL(file);
+		});
 	}
 
 	async function scanImage() {
@@ -31,32 +61,54 @@
 		scanProgress = 'Loading OCR engine...';
 
 		try {
-			// Dynamically load Tesseract.js from CDN
 			const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
 			const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
 			if (!createWorker) throw new Error('Failed to load Tesseract.js');
 			const worker = await createWorker('eng');
-			scanProgress = 'Scanning card...';
 
-			const { data } = await worker.recognize(imageFile);
-			await worker.terminate();
-
-			ocrText = data.text;
-
-			// Extract likely card name: first non-empty line, cleaned up
-			const lines = data.text
+			// 1. Scan card name (top 12% of image)
+			scanProgress = 'Reading card name...';
+			const nameBlob = await cropImage(imageFile, 0, 0.12);
+			const nameResult = await worker.recognize(nameBlob);
+			const nameLine = nameResult.data.text
 				.split('\n')
 				.map((l: string) => l.trim())
-				.filter((l: string) => l.length > 2);
+				.filter((l: string) => l.length > 1)
+				.join(' ')
+				.replace(/[^a-zA-Z\s,'-]/g, '')
+				.trim();
 
-			if (lines.length > 0) {
-				// Card name is typically the first line
-				// Remove common OCR artifacts
-				const cardName = lines[0]
-					.replace(/[^a-zA-Z\s,'-]/g, '')
-					.trim();
-				searchQuery = cardName;
-				await searchCards(cardName);
+			// 2. Scan collector number + set code (bottom 6% of image)
+			scanProgress = 'Reading set info...';
+			const bottomBlob = await cropImage(imageFile, 0.94, 1.0);
+			const bottomResult = await worker.recognize(bottomBlob);
+			const bottomText = bottomResult.data.text;
+
+			await worker.terminate();
+
+			ocrText = `Name area: ${nameLine}\nBottom area: ${bottomText}`;
+
+			// Try to extract set code and collector number from bottom
+			// Format is usually like: "U 0137" and "TMT • DE"
+			const numMatch = bottomText.match(/(\d{3,4})/);
+			const setMatch = bottomText.match(/([A-Z]{3})/);
+
+			if (numMatch) {
+				collectorNumber = numMatch[1].replace(/^0+/, ''); // strip leading zeros
+			}
+			if (setMatch) {
+				setCode = setMatch[1].toLowerCase();
+			}
+
+			// If we got set code + number, search by that first
+			if (setCode && collectorNumber) {
+				searchMode = 'set';
+				await searchBySet();
+			} else if (nameLine) {
+				// Fallback to name search
+				searchMode = 'name';
+				searchQuery = nameLine;
+				await searchCards(nameLine);
 			}
 
 			scanProgress = '';
@@ -78,9 +130,25 @@
 		matchType = data.matchType || 'none';
 	}
 
+	async function searchBySet() {
+		if (!setCode.trim() || !collectorNumber.trim()) return;
+		const res = await fetch('/collection/scan', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ setCode: setCode.trim().toLowerCase(), collectorNumber: collectorNumber.trim() })
+		});
+		const data = await res.json();
+		results = data.results;
+		matchType = data.matchType || 'none';
+	}
+
 	async function manualSearch() {
-		if (searchQuery.trim().length < 2) return;
-		await searchCards(searchQuery.trim());
+		if (searchMode === 'set') {
+			await searchBySet();
+		} else {
+			if (searchQuery.trim().length < 2) return;
+			await searchCards(searchQuery.trim());
+		}
 	}
 
 	async function addToCollection(cardId: string) {
@@ -99,6 +167,8 @@
 		imagePreview = '';
 		ocrText = '';
 		searchQuery = '';
+		setCode = '';
+		collectorNumber = '';
 		results = [];
 		matchType = '';
 		addedCards = [];
@@ -161,17 +231,60 @@
 		</div>
 	</div>
 
-	<!-- Manual Search / OCR Result -->
-	{#if imagePreview}
-		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4">
-			<p class="text-xs text-[var(--color-text-muted)] mb-2">
-				{ocrText ? 'Detected text (edit to refine):' : 'Or search manually:'}
-			</p>
+	<!-- Search Area -->
+	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 space-y-3">
+		<!-- Mode Toggle -->
+		<div class="flex gap-2 text-sm">
+			<button
+				onclick={() => searchMode = 'set'}
+				class="px-3 py-1 rounded-lg border transition-colors {searchMode === 'set' ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-bg)] border-[var(--color-border)]'}"
+			>
+				By Set + Number
+			</button>
+			<button
+				onclick={() => searchMode = 'name'}
+				class="px-3 py-1 rounded-lg border transition-colors {searchMode === 'name' ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-bg)] border-[var(--color-border)]'}"
+			>
+				By Name
+			</button>
+		</div>
+
+		{#if searchMode === 'set'}
+			<form onsubmit={(e) => { e.preventDefault(); manualSearch(); }} class="flex gap-2 items-end">
+				<div>
+					<label for="set-code" class="block text-xs text-[var(--color-text-muted)] mb-1">Set Code</label>
+					<input
+						id="set-code"
+						type="text"
+						bind:value={setCode}
+						placeholder="e.g. tmt"
+						class="w-24 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm uppercase focus:outline-none focus:border-[var(--color-primary)]"
+					/>
+				</div>
+				<div>
+					<label for="collector-num" class="block text-xs text-[var(--color-text-muted)] mb-1">Collector #</label>
+					<input
+						id="collector-num"
+						type="text"
+						bind:value={collectorNumber}
+						placeholder="e.g. 137"
+						class="w-24 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-primary)]"
+					/>
+				</div>
+				<button
+					type="submit"
+					class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-2 rounded-lg text-sm transition-colors"
+				>
+					Search
+				</button>
+			</form>
+			<p class="text-xs text-[var(--color-text-muted)]">Find set code and number at the bottom of the card (e.g. "U 0137 &middot; TMT")</p>
+		{:else}
 			<form onsubmit={(e) => { e.preventDefault(); manualSearch(); }} class="flex gap-2">
 				<input
 					type="text"
 					bind:value={searchQuery}
-					placeholder="Card name..."
+					placeholder="Card name (English)..."
 					class="flex-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[var(--color-primary)]"
 				/>
 				<button
@@ -181,14 +294,15 @@
 					Search
 				</button>
 			</form>
-			{#if ocrText}
-				<details class="mt-2">
-					<summary class="text-xs text-[var(--color-text-muted)] cursor-pointer">Show full OCR text</summary>
-					<pre class="text-xs text-[var(--color-text-muted)] mt-1 whitespace-pre-wrap bg-[var(--color-bg)] rounded p-2">{ocrText}</pre>
-				</details>
-			{/if}
-		</div>
-	{/if}
+		{/if}
+
+		{#if ocrText}
+			<details>
+				<summary class="text-xs text-[var(--color-text-muted)] cursor-pointer">Show OCR result</summary>
+				<pre class="text-xs text-[var(--color-text-muted)] mt-1 whitespace-pre-wrap bg-[var(--color-bg)] rounded p-2">{ocrText}</pre>
+			</details>
+		{/if}
+	</div>
 
 	<!-- Search Results -->
 	{#if results.length > 0}
@@ -230,10 +344,10 @@
 				{/each}
 			</div>
 		</div>
-	{:else if searchQuery && !scanning}
+	{:else if (searchQuery || (setCode && collectorNumber)) && !scanning}
 		<div class="text-center py-8 text-[var(--color-text-muted)]">
-			<p>No cards found for "{searchQuery}"</p>
-			<p class="text-sm mt-1">Try editing the search text above</p>
+			<p>No cards found</p>
+			<p class="text-sm mt-1">Try a different search or switch to {searchMode === 'set' ? 'name' : 'set + number'} search</p>
 		</div>
 	{/if}
 
