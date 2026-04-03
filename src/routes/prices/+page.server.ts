@@ -46,12 +46,13 @@ export async function load({ url }) {
 		.prepare(
 			`SELECT
 				COALESCE(SUM(CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END * cc.quantity), 0) as totalValue,
+				COALESCE(SUM(cc.purchase_price * cc.quantity), 0) as totalPurchaseValue,
 				COUNT(*) as uniqueCards,
 				COALESCE(SUM(cc.quantity), 0) as totalCards
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id`
 		)
-		.get() as { totalValue: number; uniqueCards: number; totalCards: number };
+		.get() as { totalValue: number; totalPurchaseValue: number; uniqueCards: number; totalCards: number };
 
 	const priceStatus = getPriceUpdateStatus();
 

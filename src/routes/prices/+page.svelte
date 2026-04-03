@@ -160,10 +160,20 @@
 	{/if}
 
 	<!-- Stats -->
-	<div class="grid grid-cols-3 gap-4">
+	{@const totalChange = data.stats.totalPurchaseValue > 0 ? ((data.stats.totalValue - data.stats.totalPurchaseValue) / data.stats.totalPurchaseValue) * 100 : null}
+	<div class="grid grid-cols-4 gap-4">
 		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
 			<p class="text-sm text-[var(--color-text-muted)]">Collection Value</p>
 			<p class="text-2xl font-bold text-[var(--color-accent)]">{formatPrice(data.stats.totalValue)}</p>
+		</div>
+		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+			<p class="text-sm text-[var(--color-text-muted)]">Total Purchase Price</p>
+			<p class="text-2xl font-bold">{formatPrice(data.stats.totalPurchaseValue)}</p>
+			{#if totalChange !== null}
+				<p class="text-sm mt-1 {totalChange > 0 ? 'text-green-400' : totalChange < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]'}">
+					{totalChange > 0 ? '▲' : totalChange < 0 ? '▼' : '—'} {Math.abs(totalChange).toFixed(1)}%
+				</p>
+			{/if}
 		</div>
 		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
 			<p class="text-sm text-[var(--color-text-muted)]">Unique Cards</p>
