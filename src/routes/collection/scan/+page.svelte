@@ -21,6 +21,8 @@
 	let debugCanvasUrl = $state('');
 	let adding = $state<string | null>(null);
 	let addedCards = $state<Array<{ id: string; name: string }>>([]);
+	let selectedCards = $state<Set<number>>(new Set());
+	let importing = $state(false);
 
 	// Manual search fallback per card
 	let manualSetCode = $state('');
@@ -359,6 +361,44 @@
 		}
 	}
 
+	function toggleSelect(idx: number) {
+		const next = new Set(selectedCards);
+		if (next.has(idx)) next.delete(idx);
+		else next.add(idx);
+		selectedCards = next;
+	}
+
+	function selectAllIdentified() {
+		const next = new Set(selectedCards);
+		for (let i = 0; i < detectedCards.length; i++) {
+			const card = detectedCards[i];
+			if (card.status === 'found' && card.results.length > 0) {
+				const firstResult = card.results[0];
+				if (!addedCards.some(a => a.id === firstResult.id)) {
+					next.add(i);
+				}
+			}
+		}
+		selectedCards = next;
+	}
+
+	async function importAllSelected() {
+		importing = true;
+		for (const idx of selectedCards) {
+			const card = detectedCards[idx];
+			if (card.status === 'found' && card.results.length > 0) {
+				const result = card.results[0];
+				const id = result.id as string;
+				const name = result.name as string;
+				if (!addedCards.some(a => a.id === id)) {
+					await addToCollection(id, name);
+				}
+			}
+		}
+		selectedCards = new Set();
+		importing = false;
+	}
+
 	function reset() {
 		imagePreview = '';
 		detectedCards = [];
@@ -366,6 +406,7 @@
 		scanProgress = '';
 		manualResults = [];
 		manualCardIndex = null;
+		selectedCards = new Set();
 	}
 
 	function getImageSrc(card: Record<string, unknown>): string {
@@ -408,10 +449,37 @@
 
 	<!-- Detected Cards -->
 	{#if detectedCards.length > 0}
+		{@const identifiedCount = detectedCards.filter(c => c.status === 'found' && c.results.length > 0 && !addedCards.some(a => a.id === c.results[0].id)).length}
+		{#if !scanning && identifiedCount > 0}
+			<div class="flex gap-3 items-center">
+				<button onclick={selectAllIdentified}
+					class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors">
+					Select all identified ({identifiedCount})
+				</button>
+				{#if selectedCards.size > 0}
+					<button onclick={importAllSelected}
+						disabled={importing}
+						class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+						{importing ? 'Importing...' : `Import ${selectedCards.size} selected`}
+					</button>
+					<button onclick={() => selectedCards = new Set()}
+						class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+						Clear selection
+					</button>
+				{/if}
+			</div>
+		{/if}
 		<div class="space-y-4">
 			{#each detectedCards as card, idx}
-				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4">
+				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 {selectedCards.has(idx) ? 'ring-2 ring-green-500/50' : ''}">
 					<div class="flex gap-4">
+						<!-- Selection checkbox for identified cards -->
+						{#if card.status === 'found' && card.results.length > 0 && !addedCards.some(a => a.id === card.results[0].id)}
+							<div class="flex-shrink-0 pt-1">
+								<input type="checkbox" checked={selectedCards.has(idx)} onchange={() => toggleSelect(idx)}
+									class="w-5 h-5 rounded border-[var(--color-border)] accent-green-600 cursor-pointer" />
+							</div>
+						{/if}
 						<!-- Debug: Cropped card + bottom scan -->
 						<div class="flex-shrink-0 space-y-2">
 							<img src={card.croppedUrl} alt="Card {idx + 1}" class="w-32 rounded" />
