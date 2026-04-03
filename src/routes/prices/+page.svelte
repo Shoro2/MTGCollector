@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { formatPrice } from '$lib/utils';
+	import CardPreview from '$lib/components/CardPreview.svelte';
 	import { onMount } from 'svelte';
 	import { Chart, registerables } from 'chart.js';
 
@@ -198,12 +199,14 @@
 					>
 						<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
 						{#if card.image_uri || card.local_image_path}
-							<img
-								src={(card.local_image_path || card.image_uri) as string}
-								alt={card.name as string}
-								class="w-10 h-14 object-cover rounded"
-								loading="lazy"
-							/>
+							<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={6}>
+								<img
+									src={(card.local_image_path || card.image_uri) as string}
+									alt={card.name as string}
+									class="w-10 h-14 object-cover rounded"
+									loading="lazy"
+								/>
+							</CardPreview>
 						{/if}
 						<div class="flex-1 min-w-0">
 							<p class="font-medium truncate">{card.name}</p>

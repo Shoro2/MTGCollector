@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { formatManaCost, formatPrice, getRarityColor } from '$lib/utils';
+	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -257,12 +258,14 @@
 				class="group bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all hover:scale-[1.02]"
 			>
 				{#if imgSrc}
-					<img
-						src={imgSrc}
-						alt={card.name as string}
-						class="w-full aspect-[488/680] object-cover"
-						loading="lazy"
-					/>
+					<CardPreview src={imgSrc} alt={card.name as string} scale={2}>
+						<img
+							src={imgSrc}
+							alt={card.name as string}
+							class="w-full aspect-[488/680] object-cover"
+							loading="lazy"
+						/>
+					</CardPreview>
 				{:else}
 					<div class="w-full aspect-[488/680] bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-text-muted)] text-sm p-4 text-center">
 						{card.name}

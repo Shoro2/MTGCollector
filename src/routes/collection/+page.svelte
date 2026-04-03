@@ -3,6 +3,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { formatPrice, conditionLabel } from '$lib/utils';
+	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -479,7 +480,9 @@
 					<!-- Thumbnail -->
 					<div class="flex-shrink-0">
 						{#if imgSrc}
-							<img src={imgSrc} alt={item.name as string} class="w-16 h-22 object-cover rounded" loading="lazy" />
+							<CardPreview src={imgSrc} alt={item.name as string} scale={4}>
+								<img src={imgSrc} alt={item.name as string} class="w-16 h-22 object-cover rounded" loading="lazy" />
+							</CardPreview>
 						{:else}
 							<div class="w-16 h-22 bg-[var(--color-bg)] rounded"></div>
 						{/if}
