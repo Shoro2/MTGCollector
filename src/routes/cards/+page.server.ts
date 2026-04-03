@@ -16,7 +16,9 @@ export async function load({ url }) {
 	const sortDir = url.searchParams.get('dir') || 'asc';
 	const unique = url.searchParams.get('unique') === '1';
 	const page = parseInt(url.searchParams.get('page') || '1');
-	const pageSize = 40;
+	const validPageSizes = [40, 75, 100, 200];
+	const pageSizeParam = parseInt(url.searchParams.get('pageSize') || '40');
+	const pageSize = validPageSizes.includes(pageSizeParam) ? pageSizeParam : 40;
 	const offset = (page - 1) * pageSize;
 
 	const conditions: string[] = [];
@@ -145,7 +147,7 @@ export async function load({ url }) {
 		page,
 		pageSize,
 		totalPages: Math.ceil(totalCards / pageSize),
-		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir, unique },
+		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir, unique, pageSize },
 		sets
 	};
 }
