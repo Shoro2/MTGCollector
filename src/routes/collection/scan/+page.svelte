@@ -208,20 +208,12 @@
 				const bottomH = cardH - bottomY;
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, cardW, bottomH));
 
-				// Scale up 4x first (for better OCR on tiny text)
+				// Scale up 4x (for better OCR on tiny text), keep original colors
 				const scaled = new cv.Mat();
 				cv.resize(bottomRoi, scaled, new cv.Size(cardW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
 
-				// Convert to grayscale
-				const bottomGray = new cv.Mat();
-				cv.cvtColor(scaled, bottomGray, cv.COLOR_RGBA2GRAY);
-
-				// Adaptive threshold handles both light and dark backgrounds
-				const bottomThresh = new cv.Mat();
-				cv.adaptiveThreshold(bottomGray, bottomThresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 10);
-
 				const bottomCanvas = document.createElement('canvas');
-				cv.imshow(bottomCanvas, bottomThresh);
+				cv.imshow(bottomCanvas, scaled);
 				const bottomUrl = bottomCanvas.toDataURL();
 
 				cards.push({
@@ -238,8 +230,7 @@
 
 				// Cleanup card-specific mats
 				srcPts.delete(); dstPts.delete(); M.delete(); warped.delete();
-				bottomRoi.delete(); bottomGray.delete();
-				bottomThresh.delete(); scaled.delete();
+				bottomRoi.delete(); scaled.delete();
 				pts.delete();
 			}
 
