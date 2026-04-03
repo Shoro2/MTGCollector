@@ -203,25 +203,25 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
-				// Crop bottom 12% for set/number info
-				const bottomY = Math.floor(cardH * 0.88);
+				// Crop bottom 5% for set/number info (just the collector line)
+				const bottomY = Math.floor(cardH * 0.95);
 				const bottomH = cardH - bottomY;
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, cardW, bottomH));
 
-				// Process for OCR: grayscale, invert, threshold
-				const bottomGray = new cv.Mat();
-				cv.cvtColor(bottomRoi, bottomGray, cv.COLOR_RGBA2GRAY);
-				const bottomInv = new cv.Mat();
-				cv.bitwise_not(bottomGray, bottomInv);
-				const bottomThresh = new cv.Mat();
-				cv.threshold(bottomInv, bottomThresh, 100, 255, cv.THRESH_BINARY);
-
-				// Scale up 3x for better OCR
+				// Scale up 4x first (for better OCR on tiny text)
 				const scaled = new cv.Mat();
-				cv.resize(bottomThresh, scaled, new cv.Size(cardW * 3, bottomH * 3), 0, 0, cv.INTER_CUBIC);
+				cv.resize(bottomRoi, scaled, new cv.Size(cardW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
+
+				// Convert to grayscale
+				const bottomGray = new cv.Mat();
+				cv.cvtColor(scaled, bottomGray, cv.COLOR_RGBA2GRAY);
+
+				// Adaptive threshold handles both light and dark backgrounds
+				const bottomThresh = new cv.Mat();
+				cv.adaptiveThreshold(bottomGray, bottomThresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 10);
 
 				const bottomCanvas = document.createElement('canvas');
-				cv.imshow(bottomCanvas, scaled);
+				cv.imshow(bottomCanvas, bottomThresh);
 				const bottomUrl = bottomCanvas.toDataURL();
 
 				cards.push({
@@ -238,7 +238,7 @@
 
 				// Cleanup card-specific mats
 				srcPts.delete(); dstPts.delete(); M.delete(); warped.delete();
-				bottomRoi.delete(); bottomGray.delete(); bottomInv.delete();
+				bottomRoi.delete(); bottomGray.delete();
 				bottomThresh.delete(); scaled.delete();
 				pts.delete();
 			}
