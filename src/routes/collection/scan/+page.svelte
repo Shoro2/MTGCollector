@@ -193,8 +193,8 @@
 				const edgeTop = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
 				if (edgeTop > edgeLeft) {
-					// Card is landscape - rotate corners 90° so bottom becomes right side
-					ordered = [ordered[3], ordered[0], ordered[1], ordered[2]];
+					// Card is landscape - rotate corners 90° clockwise to portrait
+					ordered = [ordered[1], ordered[2], ordered[3], ordered[0]];
 				}
 
 				// Perspective transform to flatten card
