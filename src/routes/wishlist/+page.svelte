@@ -10,6 +10,8 @@
 	$effect(() => { search = data.filters.search; });
 	let removing = $state<number | null>(null);
 	let adding = $state<string | null>(null);
+	let collectingItem = $state<{ cardId: string; wishlistId: number } | null>(null);
+	let collectPrice = $state('');
 
 	const collectedSet = $derived(new Set(data.collectedCardIds));
 
@@ -48,20 +50,27 @@
 		await invalidateAll();
 	}
 
-	async function addToCollection(cardId: string, wishlistId: number) {
-		adding = cardId;
+	function startCollect(cardId: string, wishlistId: number) {
+		collectingItem = { cardId, wishlistId };
+		collectPrice = '';
+	}
+
+	async function confirmCollect() {
+		if (!collectingItem) return;
+		adding = collectingItem.cardId;
+		const purchasePrice = collectPrice.trim() ? parseFloat(collectPrice) : null;
 		await fetch('/collection', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ cardId, quantity: 1, condition: 'near_mint', foil: false })
+			body: JSON.stringify({ cardId: collectingItem.cardId, quantity: 1, condition: 'near_mint', foil: false, purchasePrice })
 		});
-		// Remove from wishlist after adding to collection
 		await fetch('/wishlist', {
 			method: 'DELETE',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ id: wishlistId })
+			body: JSON.stringify({ id: collectingItem.wishlistId })
 		});
 		adding = null;
+		collectingItem = null;
 		await invalidateAll();
 	}
 
@@ -160,14 +169,41 @@
 					<!-- Actions -->
 					<div class="flex items-center gap-2 flex-shrink-0">
 						{#if !inCollection}
-							<button
-								onclick={() => addToCollection(item.card_id as string, item.id as number)}
-								disabled={adding === item.card_id}
-								class="bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-50"
-								title="Add to collection & remove from wishlist"
-							>
-								{adding === item.card_id ? '...' : 'Collect'}
-							</button>
+							{#if collectingItem?.cardId === item.card_id}
+								<form onsubmit={(e) => { e.preventDefault(); confirmCollect(); }} class="flex items-center gap-1.5">
+									<span class="text-xs text-[var(--color-text-muted)]">€</span>
+									<input
+										type="number"
+										step="0.01"
+										min="0"
+										bind:value={collectPrice}
+										placeholder="Price"
+										class="w-20 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-xs focus:outline-none focus:border-[var(--color-primary)]"
+									/>
+									<button
+										type="submit"
+										disabled={adding === item.card_id}
+										class="bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-xs transition-colors disabled:opacity-50"
+									>
+										{adding === item.card_id ? '...' : 'OK'}
+									</button>
+									<button
+										type="button"
+										onclick={() => collectingItem = null}
+										class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1 py-1 text-xs"
+									>
+										✕
+									</button>
+								</form>
+							{:else}
+								<button
+									onclick={() => startCollect(item.card_id as string, item.id as number)}
+									class="bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-lg text-xs transition-colors"
+									title="Add to collection & remove from wishlist"
+								>
+									Collect
+								</button>
+							{/if}
 						{/if}
 						<button
 							onclick={() => removeFromWishlist(item.id as number)}
