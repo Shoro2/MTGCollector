@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { onMount } from 'svelte';
 	import { formatPrice, conditionLabel } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
@@ -23,11 +24,12 @@
 	);
 
 	// Auto-open edit modal from URL param (e.g. from prices page)
-	$effect(() => {
-		if (data.editCard && editItemId === null) {
+	onMount(() => {
+		if (data.editCard) {
 			openEdit(data.editCard);
 		}
 	});
+
 	let editQuantity = $state(1);
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);
