@@ -70,6 +70,15 @@ export const collectionCards = sqliteTable('collection_cards', {
 	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
 });
 
+export const wishlistCards = sqliteTable('wishlist_cards', {
+	id: integer('id').primaryKey({ autoIncrement: true }),
+	userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+	cardId: text('card_id').notNull().references(() => cards.id),
+	priority: integer('priority').default(0),
+	notes: text('notes'),
+	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
+});
+
 export const tags = sqliteTable('tags', {
 	id: integer('id').primaryKey({ autoIncrement: true }),
 	name: text('name').notNull().unique(),

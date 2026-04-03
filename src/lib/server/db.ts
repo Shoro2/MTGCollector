@@ -99,6 +99,15 @@ export function initDb() {
 			PRIMARY KEY (collection_card_id, tag_id)
 		);
 
+		CREATE TABLE IF NOT EXISTS wishlist_cards (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+			card_id TEXT NOT NULL REFERENCES cards(id),
+			priority INTEGER DEFAULT 0,
+			notes TEXT,
+			added_at TEXT
+		);
+
 		CREATE TABLE IF NOT EXISTS price_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			card_id TEXT NOT NULL REFERENCES cards(id),
@@ -114,6 +123,8 @@ export function initDb() {
 		CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
 		CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
 		CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
+		CREATE INDEX IF NOT EXISTS idx_wishlist_cards_card_id ON wishlist_cards(card_id);
+		CREATE INDEX IF NOT EXISTS idx_wishlist_cards_user_id ON wishlist_cards(user_id);
 		CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
 		CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
 

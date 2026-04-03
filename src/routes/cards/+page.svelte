@@ -7,6 +7,7 @@
 
 	let { data }: { data: PageData } = $props();
 	let collectedSet = $derived(new Set(data.collectedCardIds));
+	let wishlistSet = $derived(new Set(data.wishlistCardIds));
 
 	let query = $state('');
 	let selectedColors = $state<string[]>([]);
@@ -282,6 +283,7 @@
 		{#each data.cards as card}
 			{@const imgSrc = getImageSrc(card)}
 			{@const inCollection = collectedSet.has(card.id as string)}
+			{@const onWishlist = wishlistSet.has(card.id as string)}
 			<a
 				href="/cards/{card.id}"
 				class="group bg-[var(--color-surface)] rounded-lg overflow-hidden border transition-all hover:scale-[1.02] {inCollection ? 'border-green-500/50' : 'border-[var(--color-border)] hover:border-[var(--color-primary)]'}"
@@ -306,6 +308,10 @@
 							<svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
 								<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
 							</svg>
+						</div>
+					{:else if onWishlist}
+						<div class="absolute top-1.5 right-1.5 bg-yellow-500 rounded-full w-6 h-6 flex items-center justify-center shadow-lg text-white text-sm font-bold">
+							★
 						</div>
 					{/if}
 				</div>

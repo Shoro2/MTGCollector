@@ -28,5 +28,10 @@ export async function load({ params, locals }) {
 		? sqlite.prepare('SELECT id, quantity, condition, foil, notes FROM collection_cards WHERE card_id = ? AND user_id = ?').all(params.id, userId) as Array<Record<string, unknown>>
 		: [];
 
-	return { card, faces, reprints, priceHistory, inCollection };
+	// Check if on wishlist (user-specific)
+	const onWishlist = userId
+		? sqlite.prepare('SELECT id FROM wishlist_cards WHERE card_id = ? AND user_id = ?').get(params.id, userId) as { id: number } | undefined
+		: undefined;
+
+	return { card, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null };
 }

@@ -26,6 +26,9 @@
 					<a href="/collection" class="{isActive('/collection') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 						Collection
 					</a>
+					<a href="/wishlist" class="{isActive('/wishlist') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
+						Wishlist
+					</a>
 					<a href="/prices" class="{isActive('/prices') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 						Prices
 					</a>

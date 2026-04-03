@@ -141,9 +141,16 @@ export async function load({ url, locals }) {
 		: [];
 	const collectedCardIds = new Set(collectedRows.map((r) => r.card_id));
 
+	// Get card IDs on wishlist (user-specific)
+	const wishlistRows = userId
+		? sqlite.prepare('SELECT DISTINCT card_id FROM wishlist_cards WHERE user_id = ?').all(userId) as Array<{ card_id: string }>
+		: [];
+	const wishlistCardIds = new Set(wishlistRows.map((r) => r.card_id));
+
 	return {
 		cards: results,
 		collectedCardIds: [...collectedCardIds],
+		wishlistCardIds: [...wishlistCardIds],
 		totalCards,
 		page,
 		pageSize,

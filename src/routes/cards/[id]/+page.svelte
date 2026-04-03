@@ -43,6 +43,27 @@
 		await invalidateAll();
 	}
 
+	let togglingWishlist = $state(false);
+
+	async function toggleWishlist() {
+		togglingWishlist = true;
+		if (data.onWishlist) {
+			await fetch('/wishlist', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: data.onWishlist.id })
+			});
+		} else {
+			await fetch('/wishlist', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ cardId: card.id })
+			});
+		}
+		togglingWishlist = false;
+		await invalidateAll();
+	}
+
 	function getImageSrc(): string {
 		if (card.local_image_path) return card.local_image_path as string;
 		if (card.image_uri) return card.image_uri as string;
@@ -169,6 +190,15 @@
 					{/each}
 				</div>
 			</div>
+
+			<!-- Wishlist Button -->
+			<button
+				onclick={toggleWishlist}
+				disabled={togglingWishlist}
+				class="w-full py-2 rounded-lg text-sm border transition-colors disabled:opacity-50 {data.onWishlist ? 'bg-yellow-600/20 border-yellow-600 text-yellow-400 hover:bg-yellow-600/30' : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-yellow-600'}"
+			>
+				{data.onWishlist ? '★ On Wishlist' : '☆ Add to Wishlist'}
+			</button>
 
 			<!-- Collection Section -->
 			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
