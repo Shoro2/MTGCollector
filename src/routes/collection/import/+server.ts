@@ -72,7 +72,12 @@ function mapCondition(moxfieldCondition: string): string {
 	return map[moxfieldCondition] || 'near_mint';
 }
 
-export async function POST({ request }) {
+export async function POST({ request, locals }) {
+	if (!locals.user) {
+		return json({ success: false, message: 'Not authenticated' }, { status: 401 });
+	}
+	const userId = locals.user.id;
+
 	const formData = await request.formData();
 	const file = formData.get('file') as File;
 	const mode = formData.get('mode') as string; // 'sync' or 'append'
@@ -97,8 +102,8 @@ export async function POST({ request }) {
 	);
 
 	const insertCollection = sqlite.prepare(
-		`INSERT INTO collection_cards (card_id, quantity, condition, foil, purchase_price, notes, added_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, purchase_price, notes, added_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	);
 
 	let imported = 0;
@@ -109,8 +114,8 @@ export async function POST({ request }) {
 	const transaction = sqlite.transaction(() => {
 		// In sync mode, clear existing collection first
 		if (mode === 'sync') {
-			sqlite.exec('DELETE FROM collection_card_tags');
-			sqlite.exec('DELETE FROM collection_cards');
+			sqlite.prepare('DELETE FROM collection_card_tags WHERE collection_card_id IN (SELECT id FROM collection_cards WHERE user_id = ?)').run(userId);
+			sqlite.prepare('DELETE FROM collection_cards WHERE user_id = ?').run(userId);
 		}
 
 		for (const row of rows) {
@@ -142,6 +147,7 @@ export async function POST({ request }) {
 			const notes = tags ? `Moxfield tags: ${tags}` : null;
 
 			insertCollection.run(
+				userId,
 				card.id,
 				quantity,
 				condition,

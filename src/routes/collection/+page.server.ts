@@ -1,6 +1,10 @@
 import { sqlite } from '$lib/server/db';
+import { redirect } from '@sveltejs/kit';
 
-export async function load({ url }) {
+export async function load({ url, locals }) {
+	if (!locals.user) throw redirect(302, '/login');
+	const userId = locals.user.id;
+
 	const tagFilter = url.searchParams.get('tag');
 	const search = url.searchParams.get('q') || '';
 	const sortBy = url.searchParams.get('sort') || 'added_at';
@@ -9,8 +13,8 @@ export async function load({ url }) {
 	const pageSize = 40;
 	const offset = (page - 1) * pageSize;
 
-	const conditions: string[] = [];
-	const params: (string | number)[] = [];
+	const conditions: string[] = ['cc.user_id = ?'];
+	const params: (string | number)[] = [userId];
 
 	if (search) {
 		conditions.push('c.name LIKE ?');
@@ -22,7 +26,7 @@ export async function load({ url }) {
 		params.push(parseInt(tagFilter));
 	}
 
-	const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+	const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
 	const validSorts: Record<string, string> = {
 		name: 'c.name',
@@ -72,9 +76,10 @@ export async function load({ url }) {
 				COUNT(*) as uniqueCards,
 				COALESCE(SUM(cc.quantity), 0) as totalCards,
 				COALESCE(SUM(CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END * cc.quantity), 0) as totalValue
-			FROM collection_cards cc JOIN cards c ON cc.card_id = c.id`
+			FROM collection_cards cc JOIN cards c ON cc.card_id = c.id
+			WHERE cc.user_id = ?`
 		)
-		.get() as { uniqueCards: number; totalCards: number; totalValue: number };
+		.get(userId) as { uniqueCards: number; totalCards: number; totalValue: number };
 
 	// Load a specific card for edit modal (e.g. from prices page link)
 	const editId = url.searchParams.get('edit');
@@ -86,9 +91,9 @@ export async function load({ url }) {
 					c.mana_cost, c.type_line, c.rarity, c.price_eur, c.price_eur_foil, cc.purchase_price
 				FROM collection_cards cc
 				JOIN cards c ON cc.card_id = c.id
-				WHERE cc.id = ?`
+				WHERE cc.id = ? AND cc.user_id = ?`
 			)
-			.get(parseInt(editId)) as Record<string, unknown> | undefined;
+			.get(parseInt(editId), userId) as Record<string, unknown> | undefined;
 		if (item) {
 			const cardTags = sqlite
 				.prepare('SELECT t.* FROM tags t JOIN collection_card_tags cct ON t.id = cct.tag_id WHERE cct.collection_card_id = ?')

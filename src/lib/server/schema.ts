@@ -41,8 +41,24 @@ export const cardFaces = sqliteTable('card_faces', {
 	toughness: text('toughness')
 });
 
+export const users = sqliteTable('users', {
+	id: text('id').primaryKey(),
+	googleId: text('google_id').notNull().unique(),
+	email: text('email').notNull(),
+	name: text('name').notNull(),
+	avatarUrl: text('avatar_url'),
+	createdAt: text('created_at').$defaultFn(() => new Date().toISOString())
+});
+
+export const sessions = sqliteTable('sessions', {
+	id: text('id').primaryKey(),
+	userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+	expiresAt: text('expires_at').notNull()
+});
+
 export const collectionCards = sqliteTable('collection_cards', {
 	id: integer('id').primaryKey({ autoIncrement: true }),
+	userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
 	cardId: text('card_id').notNull().references(() => cards.id),
 	quantity: integer('quantity').notNull().default(1),
 	condition: text('condition').default('near_mint'),

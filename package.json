@@ -26,6 +26,7 @@
 	"dependencies": {
 		"@sveltejs/adapter-node": "^5.5.4",
 		"@tailwindcss/vite": "^4.2.2",
+		"arctic": "^3.7.0",
 		"better-sqlite3": "^12.8.0",
 		"chart.js": "^4.5.1",
 		"drizzle-orm": "^0.45.2",

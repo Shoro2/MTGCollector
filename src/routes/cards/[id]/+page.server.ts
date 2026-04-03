@@ -1,7 +1,7 @@
 import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
 
-export async function load({ params }) {
+export async function load({ params, locals }) {
 	const card = sqlite.prepare('SELECT * FROM cards WHERE id = ?').get(params.id) as Record<string, unknown> | undefined;
 	if (!card) throw error(404, 'Card not found');
 
@@ -22,10 +22,11 @@ export async function load({ params }) {
 		.prepare('SELECT price_eur, price_eur_foil, recorded_at FROM price_history WHERE card_id = ? ORDER BY recorded_at ASC')
 		.all(params.id) as Array<Record<string, unknown>>;
 
-	// Check if in collection
-	const inCollection = sqlite
-		.prepare('SELECT id, quantity, condition, foil, notes FROM collection_cards WHERE card_id = ?')
-		.all(params.id) as Array<Record<string, unknown>>;
+	// Check if in collection (user-specific)
+	const userId = locals?.user?.id;
+	const inCollection = userId
+		? sqlite.prepare('SELECT id, quantity, condition, foil, notes FROM collection_cards WHERE card_id = ? AND user_id = ?').all(params.id, userId) as Array<Record<string, unknown>>
+		: [];
 
 	return { card, faces, reprints, priceHistory, inCollection };
 }

@@ -58,8 +58,24 @@ export function initDb() {
 			toughness TEXT
 		);
 
+		CREATE TABLE IF NOT EXISTS users (
+			id TEXT PRIMARY KEY,
+			google_id TEXT UNIQUE NOT NULL,
+			email TEXT NOT NULL,
+			name TEXT NOT NULL,
+			avatar_url TEXT,
+			created_at TEXT
+		);
+
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			expires_at TEXT NOT NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS collection_cards (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
 			card_id TEXT NOT NULL REFERENCES cards(id),
 			quantity INTEGER NOT NULL DEFAULT 1,
 			condition TEXT DEFAULT 'near_mint',
@@ -110,9 +126,16 @@ export function initDb() {
 	// Migrations for existing databases
 	try {
 		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN purchase_price REAL');
-	} catch {
-		// Column already exists
-	}
+	} catch { /* Column already exists */ }
+
+	try {
+		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE');
+	} catch { /* Column already exists */ }
+
+	try {
+		sqlite.exec('CREATE INDEX IF NOT EXISTS idx_collection_cards_user_id ON collection_cards(user_id)');
+		sqlite.exec('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
+	} catch { /* Indexes already exist */ }
 }
 
 export { sqlite };

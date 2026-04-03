@@ -1,8 +1,9 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { formatPrice } from '$lib/utils';
+	import type { LayoutData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data }: { data: PageData & LayoutData } = $props();
 </script>
 
 <div class="space-y-8">
@@ -16,14 +17,16 @@
 			<h3 class="text-[var(--color-text-muted)] text-sm uppercase tracking-wide mb-1">Cards in Database</h3>
 			<p class="text-3xl font-bold">{data.totalCards.toLocaleString()}</p>
 		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h3 class="text-[var(--color-text-muted)] text-sm uppercase tracking-wide mb-1">Cards in Collection</h3>
-			<p class="text-3xl font-bold">{data.collectionCount.toLocaleString()}</p>
-		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h3 class="text-[var(--color-text-muted)] text-sm uppercase tracking-wide mb-1">Collection Value</h3>
-			<p class="text-3xl font-bold text-[var(--color-accent)]">{formatPrice(data.collectionValue)}</p>
-		</div>
+		{#if data.user}
+			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+				<h3 class="text-[var(--color-text-muted)] text-sm uppercase tracking-wide mb-1">Cards in Collection</h3>
+				<p class="text-3xl font-bold">{data.collectionCount.toLocaleString()}</p>
+			</div>
+			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+				<h3 class="text-[var(--color-text-muted)] text-sm uppercase tracking-wide mb-1">Collection Value</h3>
+				<p class="text-3xl font-bold text-[var(--color-accent)]">{formatPrice(data.collectionValue)}</p>
+			</div>
+		{/if}
 	</div>
 
 	{#if data.totalCards === 0}
@@ -44,12 +47,21 @@
 			>
 				Browse Cards
 			</a>
-			<a
-				href="/collection"
-				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-6 py-3 rounded-lg font-medium border border-[var(--color-border)] transition-colors"
-			>
-				My Collection
-			</a>
+			{#if data.user}
+				<a
+					href="/collection"
+					class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-6 py-3 rounded-lg font-medium border border-[var(--color-border)] transition-colors"
+				>
+					My Collection
+				</a>
+			{:else}
+				<a
+					href="/login"
+					class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-6 py-3 rounded-lg font-medium border border-[var(--color-border)] transition-colors"
+				>
+					Sign in to start collecting
+				</a>
+			{/if}
 		</div>
 	{/if}
 </div>

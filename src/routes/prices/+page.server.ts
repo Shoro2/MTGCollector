@@ -1,7 +1,11 @@
 import { sqlite } from '$lib/server/db';
 import { getPriceUpdateStatus, pricesNeedUpdate } from '$lib/server/price-updater';
+import { redirect } from '@sveltejs/kit';
 
-export async function load({ url }) {
+export async function load({ url, locals }) {
+	if (!locals.user) throw redirect(302, '/login');
+	const userId = locals.user.id;
+
 	const cardId = url.searchParams.get('card');
 
 	// Collection value over time
@@ -12,10 +16,11 @@ export async function load({ url }) {
 				SUM(CASE WHEN cc.foil = 1 THEN ph.price_eur_foil ELSE ph.price_eur END * cc.quantity) as total_value
 			FROM price_history ph
 			JOIN collection_cards cc ON ph.card_id = cc.card_id
+			WHERE cc.user_id = ?
 			GROUP BY ph.recorded_at
 			ORDER BY ph.recorded_at ASC`
 		)
-		.all() as Array<{ recorded_at: string; total_value: number }>;
+		.all(userId) as Array<{ recorded_at: string; total_value: number }>;
 
 	// Most valuable cards in collection
 	const topCards = sqlite
@@ -25,11 +30,11 @@ export async function load({ url }) {
 				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
-			WHERE price IS NOT NULL
+			WHERE price IS NOT NULL AND cc.user_id = ?
 			ORDER BY price * cc.quantity DESC
 			LIMIT 20`
 		)
-		.all() as Array<Record<string, unknown>>;
+		.all(userId) as Array<Record<string, unknown>>;
 
 	// Single card price history
 	let cardPriceHistory: Array<Record<string, unknown>> = [];
@@ -50,9 +55,10 @@ export async function load({ url }) {
 				COUNT(*) as uniqueCards,
 				COALESCE(SUM(cc.quantity), 0) as totalCards
 			FROM collection_cards cc
-			JOIN cards c ON cc.card_id = c.id`
+			JOIN cards c ON cc.card_id = c.id
+			WHERE cc.user_id = ?`
 		)
-		.get() as { totalValue: number; totalPurchaseValue: number; uniqueCards: number; totalCards: number };
+		.get(userId) as { totalValue: number; totalPurchaseValue: number; uniqueCards: number; totalCards: number };
 
 	const priceStatus = getPriceUpdateStatus();
 	const hasNewData = await pricesNeedUpdate();

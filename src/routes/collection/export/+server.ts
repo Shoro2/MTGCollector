@@ -1,4 +1,5 @@
 import { sqlite } from '$lib/server/db';
+import { error } from '@sveltejs/kit';
 
 const conditionMap: Record<string, string> = {
 	near_mint: 'Near Mint',
@@ -12,16 +13,19 @@ function csvField(val: string | number | null | undefined): string {
 	return `"${String(val ?? '').replace(/"/g, '""')}"`;
 }
 
-export async function GET() {
+export async function GET({ locals }) {
+	if (!locals.user) throw error(401, 'Not authenticated');
+
 	const items = sqlite
 		.prepare(
 			`SELECT cc.quantity, cc.condition, cc.foil, cc.added_at, cc.purchase_price,
 				c.name, c.set_code, c.collector_number
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
+			WHERE cc.user_id = ?
 			ORDER BY c.name ASC`
 		)
-		.all() as Array<Record<string, unknown>>;
+		.all(locals.user.id) as Array<Record<string, unknown>>;
 
 	const header = '"Count","Tradelist Count","Name","Edition","Condition","Language","Foil","Tags","Last Modified","Collector Number","Alter","Proxy","Purchase Price"';
 

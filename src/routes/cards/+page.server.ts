@@ -2,7 +2,7 @@ import { db, sqlite } from '$lib/server/db';
 import { cards } from '$lib/server/schema';
 import { sql } from 'drizzle-orm';
 
-export async function load({ url }) {
+export async function load({ url, locals }) {
 	const query = url.searchParams.get('q') || '';
 	const colors = url.searchParams.getAll('color');
 	const colorMode = url.searchParams.get('colorMode') || 'include';
@@ -134,10 +134,11 @@ export async function load({ url }) {
 		.prepare('SELECT DISTINCT set_code, set_name FROM cards ORDER BY set_name ASC')
 		.all() as Array<{ set_code: string; set_name: string }>;
 
-	// Get card IDs in collection for marking
-	const collectedRows = sqlite
-		.prepare('SELECT DISTINCT card_id FROM collection_cards')
-		.all() as Array<{ card_id: string }>;
+	// Get card IDs in collection for marking (user-specific)
+	const userId = locals?.user?.id;
+	const collectedRows = userId
+		? sqlite.prepare('SELECT DISTINCT card_id FROM collection_cards WHERE user_id = ?').all(userId) as Array<{ card_id: string }>
+		: [];
 	const collectedCardIds = new Set(collectedRows.map((r) => r.card_id));
 
 	return {
