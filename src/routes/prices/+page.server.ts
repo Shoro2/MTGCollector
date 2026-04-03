@@ -1,5 +1,5 @@
 import { sqlite } from '$lib/server/db';
-import { getPriceUpdateStatus } from '$lib/server/price-updater';
+import { getPriceUpdateStatus, pricesNeedUpdate } from '$lib/server/price-updater';
 
 export async function load({ url }) {
 	const cardId = url.searchParams.get('card');
@@ -55,6 +55,7 @@ export async function load({ url }) {
 		.get() as { totalValue: number; totalPurchaseValue: number; uniqueCards: number; totalCards: number };
 
 	const priceStatus = getPriceUpdateStatus();
+	const hasNewData = await pricesNeedUpdate();
 
-	return { valueHistory, topCards, cardPriceHistory, selectedCard, stats, priceStatus };
+	return { valueHistory, topCards, cardPriceHistory, selectedCard, stats, priceStatus, hasNewData };
 }

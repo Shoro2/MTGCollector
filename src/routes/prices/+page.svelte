@@ -149,10 +149,10 @@
 			</span>
 			<button
 				onclick={triggerPriceUpdate}
-				disabled={updating || data.priceStatus.inProgress}
+				disabled={updating || data.priceStatus.inProgress || !data.hasNewData}
 				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 			>
-				{updating || data.priceStatus.inProgress ? 'Checking for updates...' : 'Update Prices'}
+				{updating || data.priceStatus.inProgress ? 'Updating...' : data.hasNewData ? 'Update Prices' : 'Prices up to date'}
 			</button>
 		</div>
 	</div>
