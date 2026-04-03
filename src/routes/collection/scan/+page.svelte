@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { createWorker } from 'tesseract.js';
 	import { formatPrice } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
@@ -32,7 +31,9 @@
 		scanProgress = 'Loading OCR engine...';
 
 		try {
-			const worker = await createWorker('eng');
+			// Dynamically load Tesseract.js from CDN
+			const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
+			const worker = await Tesseract.createWorker('eng');
 			scanProgress = 'Scanning card...';
 
 			const { data } = await worker.recognize(imageFile);
