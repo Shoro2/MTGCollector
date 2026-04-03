@@ -275,15 +275,6 @@
 		>
 			Unique only
 		</button>
-		<span class="mx-2 text-[var(--color-border)]">|</span>
-		<select
-			onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
-			class="px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
-		>
-			{#each [40, 75, 100, 200] as size}
-				<option value={size} selected={data.filters.pageSize === size}>{size} per page</option>
-			{/each}
-		</select>
 	</div>
 
 	<!-- Card Grid -->
@@ -358,6 +349,14 @@
 			>
 				Next
 			</button>
+			<select
+				onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
+				class="ml-4 px-2 py-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-sm"
+			>
+				{#each [40, 75, 100, 200] as size}
+					<option value={size} selected={data.filters.pageSize === size}>{size} per page</option>
+				{/each}
+			</select>
 		</div>
 	{/if}
 </div>
