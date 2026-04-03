@@ -6,6 +6,7 @@
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
+	let collectedSet = $derived(new Set(data.collectedCardIds));
 
 	let query = $state('');
 	let selectedColors = $state<string[]>([]);
@@ -253,24 +254,34 @@
 	<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
 		{#each data.cards as card}
 			{@const imgSrc = getImageSrc(card)}
+			{@const inCollection = collectedSet.has(card.id as string)}
 			<a
 				href="/cards/{card.id}"
-				class="group bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)] hover:border-[var(--color-primary)] transition-all hover:scale-[1.02]"
+				class="group bg-[var(--color-surface)] rounded-lg overflow-hidden border transition-all hover:scale-[1.02] {inCollection ? 'border-green-500/50' : 'border-[var(--color-border)] hover:border-[var(--color-primary)]'}"
 			>
-				{#if imgSrc}
-					<CardPreview src={imgSrc} alt={card.name as string} scale={2}>
-						<img
-							src={imgSrc}
-							alt={card.name as string}
-							class="w-full aspect-[488/680] object-cover"
-							loading="lazy"
-						/>
-					</CardPreview>
-				{:else}
-					<div class="w-full aspect-[488/680] bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-text-muted)] text-sm p-4 text-center">
-						{card.name}
-					</div>
-				{/if}
+				<div class="relative">
+					{#if imgSrc}
+						<CardPreview src={imgSrc} alt={card.name as string} scale={2}>
+							<img
+								src={imgSrc}
+								alt={card.name as string}
+								class="w-full aspect-[488/680] object-cover"
+								loading="lazy"
+							/>
+						</CardPreview>
+					{:else}
+						<div class="w-full aspect-[488/680] bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-text-muted)] text-sm p-4 text-center">
+							{card.name}
+						</div>
+					{/if}
+					{#if inCollection}
+						<div class="absolute top-1.5 right-1.5 bg-green-500 rounded-full w-6 h-6 flex items-center justify-center shadow-lg">
+							<svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+							</svg>
+						</div>
+					{/if}
+				</div>
 				<div class="p-2">
 					<p class="text-sm font-medium truncate">{card.name}</p>
 					<div class="flex items-center justify-between mt-1">

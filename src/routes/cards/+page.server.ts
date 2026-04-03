@@ -124,8 +124,15 @@ export async function load({ url }) {
 		.prepare('SELECT DISTINCT set_code, set_name FROM cards ORDER BY set_name ASC')
 		.all() as Array<{ set_code: string; set_name: string }>;
 
+	// Get card IDs in collection for marking
+	const collectedRows = sqlite
+		.prepare('SELECT DISTINCT card_id FROM collection_cards')
+		.all() as Array<{ card_id: string }>;
+	const collectedCardIds = new Set(collectedRows.map((r) => r.card_id));
+
 	return {
 		cards: results,
+		collectedCardIds: [...collectedCardIds],
 		totalCards,
 		page,
 		pageSize,
