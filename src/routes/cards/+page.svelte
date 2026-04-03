@@ -248,7 +248,7 @@
 	<!-- Sort Bar -->
 	<div class="flex items-center gap-2 text-sm flex-wrap">
 		<span class="text-[var(--color-text-muted)]">Sort by:</span>
-		{#each [['name', 'Name'], ['price', 'Price'], ['cmc', 'CMC'], ['rarity', 'Rarity'], ['set', 'Set'], ['released', 'Released']] as [key, label]}
+		{#each [['name', 'Name'], ['price', 'Price'], ['cmc', 'CMC'], ['power', 'Power'], ['toughness', 'Toughness'], ['rarity', 'Rarity'], ['set', 'Set'], ['released', 'Released']] as [key, label]}
 			<button
 				onclick={() => setSort(key)}
 				class="px-3 py-1 rounded-lg border transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"

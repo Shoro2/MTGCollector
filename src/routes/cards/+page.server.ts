@@ -115,11 +115,13 @@ export async function load({ url }) {
 		cmc: 'cards.cmc',
 		rarity: "CASE cards.rarity WHEN 'mythic' THEN 4 WHEN 'rare' THEN 3 WHEN 'uncommon' THEN 2 ELSE 1 END",
 		set: 'cards.set_name',
-		released: 'cards.released_at'
+		released: 'cards.released_at',
+		power: 'CAST(cards.power AS REAL)',
+		toughness: 'CAST(cards.toughness AS REAL)'
 	};
 	const orderColumn = validSorts[sortBy] || 'cards.name';
 	const orderDir = sortDir === 'desc' ? 'DESC' : 'ASC';
-	const nullHandling = sortBy === 'price' ? `NULLS LAST` : '';
+	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
 	// Get paginated results
 	const resultSql = `SELECT * FROM cards ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
