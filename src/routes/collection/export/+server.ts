@@ -27,7 +27,7 @@ export async function GET() {
 
 	const rows = items.map((item) => {
 		const qty = item.quantity as number;
-		const name = item.name as string;
+		const name = (item.name as string).split(' // ')[0];
 		const set = (item.set_code as string).toLowerCase();
 		const condition = conditionMap[item.condition as string] || 'Near Mint';
 		const foil = item.foil ? 'foil' : '';
