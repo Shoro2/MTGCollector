@@ -38,6 +38,12 @@
 		}
 	}
 
+	let updatedToday = $derived(
+		data.priceStatus.lastUpdate
+			? new Date(data.priceStatus.lastUpdate).toDateString() === new Date().toDateString()
+			: false
+	);
+
 	function formatLastUpdate(dateStr: string | null): string {
 		if (!dateStr) return 'Never';
 		const d = new Date(dateStr);
@@ -129,10 +135,10 @@
 			</span>
 			<button
 				onclick={triggerPriceUpdate}
-				disabled={updating || data.priceStatus.inProgress}
-				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+				disabled={updating || data.priceStatus.inProgress || updatedToday}
+				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 			>
-				{updating || data.priceStatus.inProgress ? 'Updating...' : 'Update Prices'}
+				{updating || data.priceStatus.inProgress ? 'Updating...' : updatedToday ? 'Already updated today' : 'Update Prices'}
 			</button>
 		</div>
 	</div>
