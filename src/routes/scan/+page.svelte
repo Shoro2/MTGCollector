@@ -74,6 +74,12 @@
 		const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
 		if (!createWorker) throw new Error('Failed to load Tesseract.js');
 		tesseractWorker = await createWorker('eng');
+		// Restrict character set to what appears on MTG cards
+		// Prevents misreads like 1→), •→«, etc.
+		await tesseractWorker.setParameters({
+			tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&',
+			tessedit_pageseg_mode: '6' // Assume single block of text
+		});
 		return tesseractWorker;
 	}
 
@@ -328,41 +334,36 @@
 	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string } {
 		const result = { setCode: '', collectorNumber: '' };
 
-		// Era 5 (MOM 2023+): <rarity> <number> <SET> <sep> <LANG>
-		// e.g. "C 0047 TMT • EN" or "R 0123 DSK * EN"
-		const era5 = new RegExp(`[CURM]\\s+0*(\\d{1,4})\\s+([A-Z]{3})\\s*.\\s*(?:${langs})`, 'i');
-		let m = text.match(era5);
-		if (m) {
-			result.collectorNumber = m[1];
-			result.setCode = m[2].toLowerCase();
-		}
+		// Step 1: Find anchor — <SET 3-letter> followed by <LANG 2-letter> within a few chars
+		// This is the most reliable anchor point in any era
+		const anchor = new RegExp(`([A-Z]{3})\\s*\\S?\\s*(?:${langs})\\b`, 'i');
+		const anchorMatch = text.match(anchor);
 
-		// Era 4 (M15–2022): <number> <rarity> <SET> <sep> <LANG>
-		// e.g. "123 R TSK • EN"
-		if (!result.setCode) {
-			const era4 = new RegExp(`0*(\\d{1,4})\\s+[CURM]\\s+([A-Z]{3})\\s*.\\s*(?:${langs})`, 'i');
-			m = text.match(era4);
-			if (m) {
-				result.collectorNumber = m[1];
-				result.setCode = m[2].toLowerCase();
-			}
-		}
+		if (anchorMatch) {
+			result.setCode = anchorMatch[1].toLowerCase();
 
-		// Fallback: find <SET> <any separator char> <LANG> anchor, then look for number nearby
-		if (!result.setCode) {
-			const anchor = new RegExp(`([A-Z]{3})\\s*.\\s*(?:${langs})`, 'i');
-			m = text.match(anchor);
-			if (m) {
-				result.setCode = m[1].toLowerCase();
-				const before = text.substring(0, m.index);
-				const numMatch = before.match(/0*(\d{1,4})\s*$/);
+			// Step 2: Extract collector number from text BEFORE the set code
+			const before = text.substring(0, anchorMatch.index);
+
+			// Look for 1-4 digits, possibly with rarity letter nearby
+			// Allow optional rarity letter (C/U/R/M) before or after digits
+			const numPatterns = [
+				/[CURM]\s*0*(\d{1,4})\s*$/i,    // Era 5: "R 0241" at end
+				/0*(\d{1,4})\s*[CURM]\s*$/i,     // Era 4: "123 R" at end
+				/0*(\d{1,4})\s*$/,                // Just digits at end
+				/0*(\d{1,4})/                     // Any digits anywhere
+			];
+
+			for (const pattern of numPatterns) {
+				const numMatch = before.match(pattern);
 				if (numMatch) {
 					result.collectorNumber = numMatch[1];
+					break;
 				}
 			}
 		}
 
-		// Last resort: any 3-letter uppercase + any number
+		// Fallback: any 3-letter uppercase + any number
 		if (!result.setCode) {
 			const setMatch = text.match(/\b([A-Z]{3})\b/);
 			const numMatch = text.match(/\b0*(\d{1,4})\b/);
