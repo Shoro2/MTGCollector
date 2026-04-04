@@ -224,9 +224,17 @@
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
 
-				// Scale up 4x for better OCR on tiny text
+				// Convert to grayscale, scale up 6x, and sharpen for better OCR
+				const grayBottom = new cv.Mat();
+				cv.cvtColor(bottomRoi, grayBottom, cv.COLOR_RGBA2GRAY);
+				const upscaled = new cv.Mat();
+				cv.resize(grayBottom, upscaled, new cv.Size(roiW * 6, bottomH * 6), 0, 0, cv.INTER_CUBIC);
+				// Unsharp mask: subtract blurred version to enhance edges
+				const blurredBottom = new cv.Mat();
+				cv.GaussianBlur(upscaled, blurredBottom, new cv.Size(0, 0), 3);
 				const scaled = new cv.Mat();
-				cv.resize(bottomRoi, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
+				cv.addWeighted(upscaled, 1.5, blurredBottom, -0.5, 0, scaled);
+				grayBottom.delete(); upscaled.delete(); blurredBottom.delete();
 
 				const bottomCanvas = document.createElement('canvas');
 				cv.imshow(bottomCanvas, scaled);
