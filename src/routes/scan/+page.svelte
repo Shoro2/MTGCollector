@@ -314,7 +314,7 @@
 				const croppedUrl = cardCanvas.toDataURL();
 
 				// Crop bottom 10% left half for collector info (right side has copyright)
-				const bottomY = Math.floor(cardH * 0.90);
+				const bottomY = Math.floor(cardH * 0.85);
 				const bottomH = cardH - bottomY;
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
