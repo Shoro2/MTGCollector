@@ -17,6 +17,62 @@
 	let updateMessage = $state('');
 	let chartMode = $state<'value' | 'profit'>('value');
 
+	// Card price modal
+	let modalOpen = $state(false);
+	let modalCard = $state<{ name: string; set_name: string } | null>(null);
+	let modalChartCanvas = $state<HTMLCanvasElement>(null!);
+	let modalChart: Chart | null = null;
+	let modalLoading = $state(false);
+
+	async function openCardChart(cardId: string) {
+		modalLoading = true;
+		modalOpen = true;
+		modalCard = null;
+		const res = await fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`);
+		const result = await res.json();
+		modalLoading = false;
+		if (!result.card) return;
+		modalCard = result.card;
+		setTimeout(() => {
+			if (!modalChartCanvas || !result.history.length) return;
+			modalChart?.destroy();
+			modalChart = new Chart(modalChartCanvas, {
+				type: 'line',
+				data: {
+					labels: result.history.map((h: Record<string, unknown>) => new Date(h.recorded_at as string).toLocaleDateString()),
+					datasets: [
+						{
+							label: 'Price (EUR)',
+							data: result.history.map((h: Record<string, unknown>) => h.price_eur as number),
+							borderColor: '#3b82f6',
+							tension: 0.3
+						},
+						{
+							label: 'Foil Price (EUR)',
+							data: result.history.map((h: Record<string, unknown>) => h.price_eur_foil as number),
+							borderColor: '#f59e0b',
+							tension: 0.3
+						}
+					]
+				},
+				options: {
+					responsive: true,
+					plugins: { legend: { labels: { color: '#94a3b8' } } },
+					scales: {
+						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
+					}
+				}
+			});
+		}, 0);
+	}
+
+	function closeModal() {
+		modalOpen = false;
+		modalChart?.destroy();
+		modalChart = null;
+	}
+
 	async function triggerPriceUpdate() {
 		updating = true;
 		updateMessage = 'Checking Scryfall for new price data...';
@@ -201,6 +257,7 @@
 			valueChart?.destroy();
 			profitChart?.destroy();
 			cardChart?.destroy();
+			modalChart?.destroy();
 		};
 	});
 </script>
@@ -324,38 +381,79 @@
 			<h2 class="text-lg font-semibold mb-4">Most Valuable Cards</h2>
 			<div class="space-y-2">
 				{#each data.topCards as card, i}
-					<a
-						href="/collection?edit={card.collection_id}"
-						class="flex items-center gap-4 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors"
-					>
-						<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
-						{#if card.image_uri || card.local_image_path}
-							<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={3.6}>
-								<img
-									src={(card.local_image_path || card.image_uri) as string}
-									alt={card.name as string}
-									class="w-10 h-14 object-cover rounded"
-									loading="lazy"
-								/>
-							</CardPreview>
-						{/if}
-						<div class="flex-1 min-w-0">
-							<p class="font-medium truncate">{card.name}</p>
-							<p class="text-xs text-[var(--color-text-muted)]">
-								{card.set_name} &middot; {card.quantity}x {#if card.foil}<span class="text-[var(--color-accent)]">FOIL</span>{/if}
-							</p>
-						</div>
-						<div class="text-right flex-shrink-0">
-							<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
-							{#if priceChange(card)}
-								<p class="text-xs {priceChange(card)!.color}">
-									{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
-								</p>
+					<div class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors">
+						<a
+							href="/collection?edit={card.collection_id}"
+							class="flex items-center gap-4 flex-1 min-w-0"
+						>
+							<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
+							{#if card.image_uri || card.local_image_path}
+								<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={3.6}>
+									<img
+										src={(card.local_image_path || card.image_uri) as string}
+										alt={card.name as string}
+										class="w-10 h-14 object-cover rounded"
+										loading="lazy"
+									/>
+								</CardPreview>
 							{/if}
-						</div>
-					</a>
+							<div class="flex-1 min-w-0">
+								<p class="font-medium truncate">{card.name}</p>
+								<p class="text-xs text-[var(--color-text-muted)]">
+									{card.set_name} &middot; {card.quantity}x {#if card.foil}<span class="text-[var(--color-accent)]">FOIL</span>{/if}
+								</p>
+							</div>
+							<div class="text-right flex-shrink-0">
+								<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
+								{#if priceChange(card)}
+									<p class="text-xs {priceChange(card)!.color}">
+										{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
+									</p>
+								{/if}
+							</div>
+						</a>
+						<button
+							onclick={() => openCardChart(card.id as string)}
+							class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
+							title="Price history"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M3 13l4-4 4 4 4-8 6 6" />
+								<path stroke-linecap="round" stroke-linejoin="round" d="M3 20h18" />
+							</svg>
+						</button>
+					</div>
 				{/each}
 			</div>
 		</div>
 	{/if}
 </div>
+
+<!-- Card Price History Modal -->
+{#if modalOpen}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+		onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+		onkeydown={(e) => { if (e.key === 'Escape') closeModal(); }}
+	>
+		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[80vh] overflow-auto p-6">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold">
+					{#if modalCard}
+						Price History: {modalCard.name}
+						<span class="text-sm text-[var(--color-text-muted)] font-normal">({modalCard.set_name})</span>
+					{:else}
+						Loading...
+					{/if}
+				</h2>
+				<button onclick={closeModal} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
+			</div>
+			{#if modalLoading}
+				<p class="text-[var(--color-text-muted)] text-center py-8">Loading price data...</p>
+			{:else if modalCard}
+				<canvas bind:this={modalChartCanvas}></canvas>
+			{/if}
+		</div>
+	</div>
+{/if}
