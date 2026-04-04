@@ -413,6 +413,31 @@
 		selectedCards = new Set();
 	}
 
+	let copied = $state(false);
+
+	function getMoxfieldText(): string {
+		const lines: string[] = [];
+		for (const card of detectedCards) {
+			if (card.status === 'found' && card.results.length > 0) {
+				const r = card.results[0];
+				const rawName = r.name as string;
+				const parts = rawName.split(' // ');
+				const name = parts.length === 2 && parts[0] === parts[1] ? parts[0] : rawName;
+				const set = (r.set_code as string).toUpperCase();
+				const num = r.collector_number as string;
+				lines.push(`1 ${name} (${set}) ${num}`);
+			}
+		}
+		return lines.join('\n');
+	}
+
+	async function copyMoxfieldText() {
+		const text = getMoxfieldText();
+		await navigator.clipboard.writeText(text);
+		copied = true;
+		setTimeout(() => copied = false, 2000);
+	}
+
 	function getImageSrc(card: Record<string, unknown>): string {
 		if (card.local_image_path) return card.local_image_path as string;
 		if (card.image_uri) return card.image_uri as string;
@@ -458,21 +483,36 @@
 	<!-- Detected Cards -->
 	{#if detectedCards.length > 0}
 		{@const identifiedCount = detectedCards.filter(c => c.status === 'found' && c.results.length > 0 && !addedCards.some(a => a.id === c.results[0].id)).length}
-		{#if loggedIn && !scanning && identifiedCount > 0}
-			<div class="flex gap-3 items-center">
-				<button onclick={selectAllIdentified}
-					class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors">
-					Select all identified ({identifiedCount})
-				</button>
-				{#if selectedCards.size > 0}
-					<button onclick={importAllSelected}
-						disabled={importing}
-						class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
-						{importing ? 'Importing...' : `Import ${selectedCards.size} selected`}
+		{@const hasIdentified = detectedCards.some(c => c.status === 'found' && c.results.length > 0)}
+		{#if !scanning && (identifiedCount > 0 || hasIdentified)}
+			<div class="flex gap-3 items-center flex-wrap">
+				{#if loggedIn && identifiedCount > 0}
+					<button onclick={selectAllIdentified}
+						class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors">
+						Select all identified ({identifiedCount})
 					</button>
-					<button onclick={() => selectedCards = new Set()}
-						class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
-						Clear selection
+					{#if selectedCards.size > 0}
+						<button onclick={importAllSelected}
+							disabled={importing}
+							class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+							{importing ? 'Importing...' : `Import ${selectedCards.size} selected`}
+						</button>
+						<button onclick={() => selectedCards = new Set()}
+							class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+							Clear selection
+						</button>
+					{/if}
+				{/if}
+				{#if hasIdentified}
+					<button onclick={copyMoxfieldText}
+						class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2">
+						{#if copied}
+							<svg class="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+							Copied!
+						{:else}
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+							Copy for Moxfield
+						{/if}
 					</button>
 				{/if}
 			</div>
