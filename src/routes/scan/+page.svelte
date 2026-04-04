@@ -331,6 +331,18 @@
 		});
 	}
 
+	// Fix common OCR misreads of digits
+	function fixOcrDigits(s: string): string {
+		return s
+			.replace(/[JjIil|!]/g, '1')  // J, I, l, |, ! → 1
+			.replace(/[Oo]/g, '0')        // O, o → 0
+			.replace(/[Ss]/g, '5')        // S, s → 5
+			.replace(/[Bb]/g, '8')        // B → 8
+			.replace(/[Zz]/g, '2')        // Z → 2
+			.replace(/[)]/g, '1')         // ) → 1
+			.replace(/[^0-9]/g, '');       // remove anything else
+	}
+
 	function stripLeadingZeros(s: string): string {
 		const stripped = s.replace(/^0+/, '');
 		return stripped || '0';
@@ -354,17 +366,28 @@
 			const before = text.substring(0, anchorMatch.index);
 
 			// Handle fraction format first (Era 3): "010/277"
-			const fractionMatch = before.match(/(\d{1,4})\/\d{1,4}/);
+			const fractionMatch = before.match(/([\dOoIilJjBbSsZz]{1,4})\/([\dOoIilJjBbSsZz]{1,4})/);
 			if (fractionMatch) {
-				result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
+				result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
 			} else {
-				// Find all digit sequences in before text, take the longest/last one
-				// This avoids 0* prefix eating digits (e.g. "0085" → want "85" not "5")
-				const allDigits = [...before.matchAll(/(\d{1,4})/g)];
+				// Find digit sequences. Then check if a single char follows (possibly
+				// separated by space) that's a common OCR misread of a digit.
+				// e.g. "024 J" → J is misread 1, so collector number is 0241
+				const allDigits = [...before.matchAll(/\d{1,4}/g)];
 				if (allDigits.length > 0) {
-					// Take the last digit sequence (closest to set code)
-					const lastDigits = allDigits[allDigits.length - 1][1];
-					result.collectorNumber = stripLeadingZeros(lastDigits);
+					const lastMatch = allDigits[allDigits.length - 1];
+					let raw = lastMatch[0];
+					// Check char(s) right after the digits (skip spaces)
+					const afterIdx = (lastMatch.index ?? 0) + raw.length;
+					const after = before.substring(afterIdx).replace(/^\s+/, '');
+					// If a single OCR-digit-like char follows before non-digit text
+					if (after.length > 0 && /^[JjIil|!)Oo](?:\s|$)/.test(after)) {
+						raw += after[0];
+					}
+					const fixed = fixOcrDigits(raw);
+					if (fixed.length > 0 && fixed.length <= 4) {
+						result.collectorNumber = stripLeadingZeros(fixed);
+					}
 				}
 			}
 		}
