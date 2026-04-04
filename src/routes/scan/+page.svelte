@@ -225,17 +225,17 @@
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
 
-				// Convert to grayscale and threshold to isolate white text on dark background.
-				// This filters out the colored card frame automatically.
-				const gray = new cv.Mat();
-				cv.cvtColor(bottomRoi, gray, cv.COLOR_RGBA2GRAY);
+				// Convert to grayscale, then use adaptive threshold to isolate text.
+				// This handles varying brightness and filters out the colored card frame.
+				const grayRoi = new cv.Mat();
+				cv.cvtColor(bottomRoi, grayRoi, cv.COLOR_RGBA2GRAY);
 				const thresh = new cv.Mat();
-				cv.threshold(gray, thresh, 180, 255, cv.THRESH_BINARY);
+				cv.adaptiveThreshold(grayRoi, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 10);
 
 				// Scale up 4x for better OCR
 				const scaled = new cv.Mat();
 				cv.resize(thresh, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
-				gray.delete(); thresh.delete();
+				grayRoi.delete(); thresh.delete();
 
 				const bottomCanvas = document.createElement('canvas');
 				cv.imshow(bottomCanvas, scaled);
