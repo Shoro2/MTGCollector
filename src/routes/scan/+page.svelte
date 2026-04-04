@@ -364,20 +364,17 @@
 		cv.threshold(sat, highSatThresh, 100, 255, cv.THRESH_BINARY);
 		const highSatRatio = cv.countNonZero(highSatThresh) / (artW * artH);
 
-		// Foil indicators:
-		// - Higher average saturation (foils shimmer with more color)
-		// - Higher hue standard deviation (rainbow effect = spread across hues)
-		// - Higher brightness variance (specular highlights)
-		// - More high-saturation pixels
+		// Foil detection is inherently unreliable from a single photo.
+		// Use very conservative thresholds — only flag obvious foils.
+		// The user can toggle foil status manually per card.
 		let foilScore = 0;
-		if (avgSat > 80) foilScore++;
-		if (avgSat > 110) foilScore++;
-		if (stdHue > 45) foilScore++;
+		if (avgSat > 120) foilScore++;
 		if (stdHue > 55) foilScore++;
-		if (stdVal > 55) foilScore++;
-		if (highSatRatio > 0.35) foilScore++;
+		if (stdHue > 65) foilScore++;
+		if (stdVal > 65) foilScore++;
 		if (highSatRatio > 0.5) foilScore++;
-		if (stdSat > 45) foilScore++;
+		if (highSatRatio > 0.65) foilScore++;
+		if (stdSat > 55) foilScore++;
 
 		// Cleanup
 		artRoi.delete(); hsv.delete(); hsvConv.delete();
@@ -385,7 +382,8 @@
 		satMean.delete(); satStd.delete(); hueMean.delete(); hueStd.delete();
 		valMean.delete(); valStd.delete(); highSatThresh.delete();
 
-		return foilScore >= 4;
+		// Require 5 of 7 indicators — very conservative to avoid false positives
+		return foilScore >= 5;
 	}
 
 	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
@@ -622,9 +620,14 @@
 						<div class="flex-1">
 							<h3 class="text-sm font-semibold mb-2">
 								Card {idx + 1}
-								{#if card.foil}
-									<span class="text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 px-1.5 py-0.5 rounded font-medium ml-1">FOIL</span>
-								{/if}
+								<button
+									onclick={() => { card.foil = !card.foil; }}
+									class="text-xs px-1.5 py-0.5 rounded font-medium ml-1 border transition-colors {card.foil
+										? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30'
+										: 'bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}"
+								>
+									{card.foil ? 'FOIL' : 'Non-Foil'}
+								</button>
 								{#if card.setCode || card.collectorNumber}
 									<span class="text-[var(--color-text-muted)] font-normal">
 										— detected: {card.setCode.toUpperCase()} #{card.collectorNumber}
