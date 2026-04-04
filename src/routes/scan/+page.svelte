@@ -657,7 +657,9 @@
 							</CardPreview>
 							<div>
 								<p class="text-xs text-[var(--color-text-muted)] mb-1">Scanned area:</p>
+								<CardPreview src={card.bottomUrl} alt="Bottom scan {idx + 1}" scale={3}>
 								<img src={card.bottomUrl} alt="Bottom scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
+							</CardPreview>
 							</div>
 							{#if card.ocrText}
 								<p class="text-xs text-[var(--color-text-muted)] font-mono break-all w-32">{card.ocrText.trim()}</p>
