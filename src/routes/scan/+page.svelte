@@ -271,13 +271,14 @@
 					card.ocrText = text;
 
 					// Parse collector info using anchor-based matching.
-					// Anchor on: <SET 3-letter> <separator> <LANG 2-letter>
-					// Then extract collector number from nearby context.
 					const langs = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
 					const parsed = parseCollectorInfo(text, langs);
 					card.setCode = parsed.setCode;
 					card.collectorNumber = parsed.collectorNumber;
-					card.foil = parsed.foil;
+
+					// Foil detection via pixel analysis of separator area between SET and LANG.
+					// Star (★) has significantly more pixels than dot (•).
+					card.foil = detectFoilFromWords(result.data.words, card.bottomUrl, parsed.setCode, langs);
 
 					if (card.setCode && card.collectorNumber) {
 						const res = await fetch('/scan', {
@@ -316,8 +317,8 @@
 		});
 	}
 
-	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string; foil: boolean } {
-		const result = { setCode: '', collectorNumber: '', foil: false };
+	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string } {
+		const result = { setCode: '', collectorNumber: '' };
 
 		// Era 5 (MOM 2023+): <rarity> <number> <SET> <sep> <LANG>
 		// e.g. "C 0047 TMT • EN" or "R 0123 DSK * EN"
@@ -345,7 +346,6 @@
 			m = text.match(anchor);
 			if (m) {
 				result.setCode = m[1].toLowerCase();
-				// Look for collector number before the set code in the text
 				const before = text.substring(0, m.index);
 				const numMatch = before.match(/0*(\d{1,4})\s*$/);
 				if (numMatch) {
@@ -362,19 +362,66 @@
 			if (numMatch) result.collectorNumber = numMatch[1];
 		}
 
-		// Foil detection: check separator between SET and LANG
-		// Foil = star (★), OCR reads as *, ★, ☆, %, §, x, X
-		// Non-foil = dot (•), OCR reads as ., ·, ,, e
-		if (result.setCode) {
-			const sepPattern = new RegExp(`${result.setCode.toUpperCase()}\\s*(.)\\s*(?:${langs})`, 'i');
-			const sepMatch = text.match(sepPattern);
-			if (sepMatch) {
-				const sep = sepMatch[1];
-				result.foil = /[★☆✦✧⭐*%§xX&]/.test(sep);
-			}
+		return result;
+	}
+
+	function detectFoilFromWords(words: any[], bottomUrl: string, setCode: string, langs: string): boolean {
+		if (!setCode || !words?.length) return false;
+
+		const langList = langs.split('|');
+		const setUpper = setCode.toUpperCase();
+
+		// Find the SET word and LANG word in Tesseract's word list
+		let setWord: any = null;
+		let langWord: any = null;
+		for (const w of words) {
+			const t = w.text.toUpperCase().replace(/[^A-Z]/g, '');
+			if (t === setUpper) setWord = w;
+			if (langList.includes(t) && setWord) { langWord = w; break; }
 		}
 
-		return result;
+		if (!setWord || !langWord) return false;
+
+		// Get bounding boxes — the separator is between SET's right edge and LANG's left edge
+		const sepX1 = setWord.bbox.x1;  // right edge of SET
+		const sepX2 = langWord.bbox.x0; // left edge of LANG
+		const sepY0 = Math.min(setWord.bbox.y0, langWord.bbox.y0);
+		const sepY1 = Math.max(setWord.bbox.y1, langWord.bbox.y1);
+		const sepW = sepX2 - sepX1;
+		const sepH = sepY1 - sepY0;
+
+		if (sepW < 3 || sepH < 3) return false;
+
+		// Draw the OCR image onto a canvas to read pixels
+		const img = new Image();
+		img.src = bottomUrl;
+
+		try {
+			const canvas = document.createElement('canvas');
+			canvas.width = img.naturalWidth || img.width;
+			canvas.height = img.naturalHeight || img.height;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) return false;
+			ctx.drawImage(img, 0, 0);
+
+			// Read the separator region pixels
+			const imageData = ctx.getImageData(sepX1, sepY0, sepW, sepH);
+			const pixels = imageData.data;
+
+			// Count bright pixels (the symbol is light text on dark background)
+			let brightPixels = 0;
+			const totalPixels = sepW * sepH;
+			for (let i = 0; i < pixels.length; i += 4) {
+				const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+				if (brightness > 140) brightPixels++;
+			}
+
+			const brightRatio = brightPixels / totalPixels;
+			// Star ★ fills ~15-30% of its bounding box, dot • fills ~5-12%
+			return brightRatio > 0.14;
+		} catch {
+			return false;
+		}
 	}
 
 	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
