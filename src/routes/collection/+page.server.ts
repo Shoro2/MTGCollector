@@ -34,6 +34,12 @@ export async function load({ url, locals }) {
 		name: 'c.name',
 		added_at: 'cc.added_at',
 		price: 'CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END',
+		profit: `CASE WHEN cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
+			(COALESCE(
+				CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END,
+				CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END * ${usdToEur}
+			) - cc.purchase_price) / cc.purchase_price * 100
+			ELSE NULL END`,
 		quantity: 'cc.quantity',
 		set_name: 'c.set_name'
 	};
