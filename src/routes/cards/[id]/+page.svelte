@@ -2,6 +2,8 @@
 	import type { PageData } from './$types';
 	import { formatManaCost, formatPrice, getRarityColor, conditionLabel } from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { Chart, registerables } from 'chart.js';
 
 	let { data }: { data: PageData } = $props();
 
@@ -69,6 +71,70 @@
 		if (card.image_uri) return card.image_uri as string;
 		return '';
 	}
+
+	// Price chart
+	let priceChartCanvas = $state<HTMLCanvasElement>(null!);
+	let priceChart: Chart | null = null;
+	let chartType = $state<'normal' | 'foil'>('normal');
+
+	function buildPriceChart() {
+		priceChart?.destroy();
+		priceChart = null;
+		if (!priceChartCanvas || data.priceHistory.length === 0) return;
+
+		const labels = data.priceHistory.map((h) => new Date(h.recorded_at as string).toLocaleDateString());
+		const eurKey = chartType === 'foil' ? 'price_eur_foil' : 'price_eur';
+		const usdKey = chartType === 'foil' ? 'price_usd_foil' : 'price_usd';
+
+		const eurData = data.priceHistory.map((h) => h[eurKey] as number | null);
+		const usdData = data.priceHistory.map((h) => h[usdKey] as number | null);
+		const hasEur = eurData.some((v) => v != null);
+		const hasUsd = usdData.some((v) => v != null);
+
+		const datasets: any[] = [];
+		if (hasEur) {
+			datasets.push({
+				label: `Price EUR${chartType === 'foil' ? ' (Foil)' : ''}`,
+				data: eurData,
+				borderColor: '#f59e0b',
+				tension: 0.3,
+				spanGaps: true
+			});
+		}
+		if (hasUsd) {
+			datasets.push({
+				label: `Price USD${chartType === 'foil' ? ' (Foil)' : ''}`,
+				data: usdData,
+				borderColor: '#3b82f6',
+				tension: 0.3,
+				spanGaps: true
+			});
+		}
+
+		priceChart = new Chart(priceChartCanvas, {
+			type: 'line',
+			data: { labels, datasets },
+			options: {
+				responsive: true,
+				plugins: { legend: { labels: { color: '#94a3b8' } } },
+				scales: {
+					x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+					y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+				}
+			}
+		});
+	}
+
+	function switchChartType(type: 'normal' | 'foil') {
+		chartType = type;
+		setTimeout(() => buildPriceChart(), 0);
+	}
+
+	onMount(() => {
+		Chart.register(...registerables);
+		buildPriceChart();
+		return () => priceChart?.destroy();
+	});
 </script>
 
 <div class="space-y-6">
@@ -163,6 +229,30 @@
 					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur_foil as number | null, card.price_usd_foil as number | null)}</p>
 				</div>
 			</div>
+
+			<!-- Price History Chart -->
+			{#if data.priceHistory.length > 0}
+				<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+					<div class="flex items-center justify-between mb-3">
+						<h3 class="font-semibold">Price History</h3>
+						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-0.5">
+							<button
+								onclick={() => switchChartType('normal')}
+								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'normal' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>
+								Normal
+							</button>
+							<button
+								onclick={() => switchChartType('foil')}
+								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'foil' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>
+								Foil
+							</button>
+						</div>
+					</div>
+					<canvas bind:this={priceChartCanvas}></canvas>
+				</div>
+			{/if}
 
 			<!-- Colors -->
 			{#if colors.length > 0}
