@@ -127,10 +127,10 @@
 				{ blur: 3, low: 75, high: 200 },   // Sharp edges (high contrast)
 			];
 
-			const cardContours: Array<{ corners: any; area: number }> = [];
-			const minArea = (img.width * img.height) * 0.005; // 0.5% of image (for many cards)
-			const maxArea = (img.width * img.height) * 0.8;   // Max 80% (not the whole image)
-			const seenRects = new Set<string>(); // Deduplicate across runs
+			let allCandidates: Array<{ corners: any; area: number; rect: { x: number; y: number; width: number; height: number } }> = [];
+			const minArea = (img.width * img.height) * 0.015; // 1.5% of image
+			const maxArea = (img.width * img.height) * 0.5;   // Max 50%
+			const seenRects = new Set<string>();
 
 			for (const params of cannyParams) {
 				const blurMat = new cv.Mat();
@@ -138,14 +138,12 @@
 				cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
 				cv.Canny(blurMat, edgeMat, params.low, params.high);
 
-				// Dilate to close gaps
 				const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
 				cv.dilate(edgeMat, edgeMat, kernel);
 
 				const conts = new cv.MatVector();
 				const hier = new cv.Mat();
-				// Use RETR_LIST to find all contours, not just external
-				cv.findContours(edgeMat, conts, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+				cv.findContours(edgeMat, conts, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
 				for (let i = 0; i < conts.size(); i++) {
 					const contour = conts.get(i);
@@ -159,12 +157,11 @@
 					if (approx.rows === 4) {
 						const rect = cv.boundingRect(approx);
 						const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-						if (aspect > 0.5 && aspect < 0.9) {
-							// Deduplicate: skip if we already have a similar rectangle
+						if (aspect > 0.55 && aspect < 0.85) {
 							const key = `${Math.round(rect.x / 20)}_${Math.round(rect.y / 20)}_${Math.round(rect.width / 20)}`;
 							if (!seenRects.has(key)) {
 								seenRects.add(key);
-								cardContours.push({ corners: approx.clone(), area });
+								allCandidates.push({ corners: approx.clone(), area, rect });
 							}
 						}
 					}
@@ -175,8 +172,22 @@
 				conts.delete(); hier.delete();
 			}
 
-			// Sort by area (largest first)
-			cardContours.sort((a, b) => b.area - a.area);
+			// Filter out contours contained within larger ones (text boxes inside cards)
+			allCandidates.sort((a, b) => b.area - a.area);
+			const cardContours: typeof allCandidates = [];
+			for (const candidate of allCandidates) {
+				const r = candidate.rect;
+				const isInside = cardContours.some(card => {
+					const c = card.rect;
+					// Check if candidate center is inside an existing larger card
+					const cx = r.x + r.width / 2;
+					const cy = r.y + r.height / 2;
+					return cx > c.x && cx < c.x + c.width && cy > c.y && cy < c.y + c.height;
+				});
+				if (!isInside) {
+					cardContours.push(candidate);
+				}
+			}
 
 			// Debug: draw detected rectangles on image
 			const debugMat = src.clone();
@@ -230,7 +241,7 @@
 				// (edge detection often finds inner edges, cutting off the border)
 				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
 				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-				const pad = 0.03;
+				const pad = 0.05;
 				ordered = ordered.map(([x, y]) => [
 					Math.max(0, Math.min(img.width - 1, Math.round(x + (x - cx) * pad))),
 					Math.max(0, Math.min(img.height - 1, Math.round(y + (y - cy) * pad)))
