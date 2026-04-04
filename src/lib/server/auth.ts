@@ -26,7 +26,9 @@ export function validateSession(sessionId: string): { id: string; name: string; 
 
 	if (!row) return null;
 	const adminEmail = (env.ADMIN_EMAIL || '').toLowerCase();
-	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: row.email.toLowerCase() === adminEmail };
+	const isAdmin = row.email.toLowerCase() === adminEmail;
+	console.log(`[Auth] User: ${row.email} | ADMIN_EMAIL: ${env.ADMIN_EMAIL} | isAdmin: ${isAdmin}`);
+	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin };
 }
 
 export function deleteSession(sessionId: string) {
