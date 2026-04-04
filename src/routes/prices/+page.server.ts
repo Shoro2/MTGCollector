@@ -10,24 +10,6 @@ export async function load({ url, locals }) {
 
 	const cardId = url.searchParams.get('card');
 
-	// Collection value over time — with USD→EUR fallback
-	const valueHistory = sqlite
-		.prepare(
-			`SELECT
-				ph.recorded_at,
-				SUM(COALESCE(
-					CASE WHEN cc.foil = 1 THEN ph.price_eur_foil ELSE ph.price_eur END,
-					CASE WHEN cc.foil = 1 THEN ph.price_usd_foil ELSE ph.price_usd END * ?
-				) * cc.quantity) as total_value
-			FROM price_history ph
-			JOIN collection_cards cc ON ph.card_id = cc.card_id
-			WHERE cc.user_id = ?
-			AND ph.recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at))
-			GROUP BY ph.recorded_at
-			ORDER BY ph.recorded_at ASC`
-		)
-		.all(usdToEur, userId) as Array<{ recorded_at: string; total_value: number }>;
-
 	// Most valuable cards in collection
 	const topCards = sqlite
 		.prepare(
@@ -100,5 +82,5 @@ export async function load({ url, locals }) {
 	const priceStatus = getPriceUpdateStatus();
 	const hasNewData = await pricesNeedUpdate();
 
-	return { valueHistory, profitHistory, topCards, cardPriceHistory, selectedCard, stats, missingPriceCount: missingPriceCount.count, priceStatus, hasNewData, usdToEur };
+	return { profitHistory, topCards, cardPriceHistory, selectedCard, stats, missingPriceCount: missingPriceCount.count, priceStatus, hasNewData, usdToEur };
 }

@@ -7,15 +7,12 @@
 
 	let { data }: { data: PageData } = $props();
 
-	let valueChartCanvas = $state<HTMLCanvasElement>(null!);
 	let cardChartCanvas = $state<HTMLCanvasElement>(null!);
 	let profitChartCanvas = $state<HTMLCanvasElement>(null!);
-	let valueChart: Chart | null = null;
 	let cardChart: Chart | null = null;
 	let profitChart: Chart | null = null;
 	let updating = $state(false);
 	let updateMessage = $state('');
-	let chartMode = $state<'value' | 'profit'>('value');
 
 	// Card price modal
 	let modalOpen = $state(false);
@@ -134,36 +131,6 @@
 		return `${diffD} day${diffD > 1 ? 's' : ''} ago (${d.toLocaleDateString()})`;
 	}
 
-	function buildValueChart() {
-		valueChart?.destroy();
-		if (data.valueHistory.length > 0 && valueChartCanvas) {
-			valueChart = new Chart(valueChartCanvas, {
-				type: 'line',
-				data: {
-					labels: data.valueHistory.map((h) => new Date(h.recorded_at).toLocaleDateString()),
-					datasets: [
-						{
-							label: 'Collection Value (EUR)',
-							data: data.valueHistory.map((h) => h.total_value),
-							borderColor: '#f59e0b',
-							backgroundColor: '#f59e0b22',
-							fill: true,
-							tension: 0.3
-						}
-					]
-				},
-				options: {
-					responsive: true,
-					plugins: { legend: { labels: { color: '#94a3b8' } } },
-					scales: {
-						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
-					}
-				}
-			});
-		}
-	}
-
 	function buildProfitChart() {
 		profitChart?.destroy();
 		if (data.profitHistory.length > 0 && profitChartCanvas) {
@@ -213,18 +180,9 @@
 		}
 	}
 
-	function switchChart(mode: 'value' | 'profit') {
-		chartMode = mode;
-		// Need to wait for canvas to be in DOM
-		setTimeout(() => {
-			if (mode === 'value') buildValueChart();
-			else buildProfitChart();
-		}, 0);
-	}
-
 	onMount(() => {
 		Chart.register(...registerables);
-		buildValueChart();
+		buildProfitChart();
 
 		// Single card price chart
 		if (data.cardPriceHistory.length > 0 && cardChartCanvas) {
@@ -259,7 +217,6 @@
 		}
 
 		return () => {
-			valueChart?.destroy();
 			profitChart?.destroy();
 			cardChart?.destroy();
 			modalChart?.destroy();
@@ -315,30 +272,12 @@
 		</div>
 	</div>
 
-	<!-- Chart Toggle -->
-	{#if data.valueHistory.length > 0 || data.profitHistory.length > 0}
+	<!-- Profit / Loss Chart -->
+	{#if data.profitHistory.length > 0}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-lg font-semibold">
-					{chartMode === 'value' ? 'Collection Value Over Time' : 'Profit / Loss'}
-				</h2>
-				<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-0.5">
-					<button
-						onclick={() => switchChart('value')}
-						class="px-3 py-1 rounded-md text-sm transition-colors {chartMode === 'value' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-					>
-						Value
-					</button>
-					<button
-						onclick={() => switchChart('profit')}
-						class="px-3 py-1 rounded-md text-sm transition-colors {chartMode === 'profit' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-					>
-						Profit / Loss
-					</button>
-				</div>
-			</div>
+			<h2 class="text-lg font-semibold mb-4">Profit / Loss</h2>
 
-			{#if chartMode === 'profit' && data.missingPriceCount > 0}
+			{#if data.missingPriceCount > 0}
 				<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 mb-4 text-sm text-yellow-400 flex items-center gap-2">
 					<span>⚠</span>
 					<span>
@@ -348,15 +287,7 @@
 				</div>
 			{/if}
 
-			{#if chartMode === 'value'}
-				<canvas bind:this={valueChartCanvas}></canvas>
-			{:else}
-				{#if data.profitHistory.length > 0}
-					<canvas bind:this={profitChartCanvas}></canvas>
-				{:else}
-					<p class="text-[var(--color-text-muted)] text-center py-4">No profit data available. Set purchase prices on your cards to see profit/loss tracking.</p>
-				{/if}
-			{/if}
+			<canvas bind:this={profitChartCanvas}></canvas>
 		</div>
 	{:else}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
