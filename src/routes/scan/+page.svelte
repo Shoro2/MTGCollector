@@ -14,7 +14,9 @@
 	let detectedCards = $state<Array<{
 		index: number;
 		croppedUrl: string;
+		nameUrl: string;
 		bottomUrl: string;
+		nameText: string;
 		ocrText: string;
 		setCode: string;
 		collectorNumber: string;
@@ -313,6 +315,20 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
+				// Crop top name area (~3-8% height, skip border, left 75%)
+				const nameY = Math.floor(cardH * 0.03);
+				const nameH = Math.floor(cardH * 0.055);
+				const nameW = Math.floor(cardW * 0.75);
+				const nameRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.05), nameY, nameW, nameH));
+				const grayName = new cv.Mat();
+				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
+				const nameScaled = new cv.Mat();
+				cv.resize(grayName, nameScaled, new cv.Size(nameW * 6, nameH * 6), 0, 0, cv.INTER_CUBIC);
+				const nameCanvas = document.createElement('canvas');
+				cv.imshow(nameCanvas, nameScaled);
+				const nameUrl = nameCanvas.toDataURL();
+				nameRoi.delete(); grayName.delete(); nameScaled.delete();
+
 				// Crop bottom 10% left half for collector info (right side has copyright)
 				const bottomY = Math.floor(cardH * 0.85);
 				const bottomH = cardH - bottomY;
@@ -338,7 +354,9 @@
 				cards.push({
 					index: i,
 					croppedUrl,
+					nameUrl,
 					bottomUrl,
+					nameText: '',
 					ocrText: '',
 					setCode: '',
 					collectorNumber: '',
@@ -359,12 +377,59 @@
 			// Cleanup OpenCV mats
 			src.delete(); gray.delete();
 
-			// OCR: use Google Vision for 5+ cards (batch), Tesseract for 1-4
+			// === Name-first OCR approach ===
+			// Phase 1: OCR name areas with Tesseract (large text = high accuracy)
+			const worker = await getTesseractWorker();
+			await worker.setParameters({
+				tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.",
+				tessedit_pageseg_mode: '7' // single text line
+			});
+
+			for (let i = 0; i < detectedCards.length; i++) {
+				scanProgress = `Reading name ${i + 1}/${detectedCards.length}...`;
+				const card = detectedCards[i];
+				try {
+					const result = await worker.recognize(card.nameUrl);
+					card.nameText = result.data.text.replace(/[\r\n]+/g, ' ').trim();
+				} catch { card.nameText = ''; }
+				detectedCards = [...detectedCards];
+			}
+
+			// Phase 2: Search DB by name → get all reprints
+			for (let i = 0; i < detectedCards.length; i++) {
+				const card = detectedCards[i];
+				if (!card.nameText || card.nameText.length < 2) continue;
+
+				scanProgress = `Searching "${card.nameText}"...`;
+				try {
+					const res = await fetch('/scan', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ query: card.nameText })
+					});
+					const searchData = await res.json();
+					if (searchData.results.length > 0) {
+						// Filter to exact name matches only (these are reprints of the same card)
+						const bestName = (searchData.results[0].name as string);
+						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === bestName);
+						card.matchType = searchData.matchType;
+					}
+				} catch { /* */ }
+				detectedCards = [...detectedCards];
+			}
+
+			// Phase 3: OCR bottom areas for disambiguation + foil detection
+			await worker.setParameters({
+				tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&',
+				tessedit_pageseg_mode: '6'
+			});
+
+			// Google Vision batch for bottom text if 5+ cards
 			const useGoogleVision = detectedCards.length >= 5;
-			let ocrTexts: string[] = [];
+			let visionBottomTexts: string[] = [];
 
 			if (useGoogleVision) {
-				scanProgress = `Reading ${detectedCards.length} cards with Google Vision...`;
+				scanProgress = `Reading card details with Google Vision...`;
 				try {
 					const res = await fetch('/api/ocr', {
 						method: 'POST',
@@ -372,71 +437,81 @@
 						body: JSON.stringify({ images: detectedCards.map(c => c.bottomUrl) })
 					});
 					if (res.ok) {
-						const data = await res.json();
-						ocrTexts = data.results;
-					} else {
-						// Fallback to Tesseract if Vision API fails
-						console.warn('Google Vision failed, falling back to Tesseract');
-						ocrTexts = [];
+						const visionData = await res.json();
+						visionBottomTexts = visionData.results;
 					}
-				} catch {
-					ocrTexts = [];
-				}
+				} catch { /* fallback to Tesseract */ }
 			}
 
-			const useTesseract = !useGoogleVision || ocrTexts.length === 0;
-			const worker = useTesseract ? await getTesseractWorker() : null;
+			const langs = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
 
 			for (let i = 0; i < detectedCards.length; i++) {
-				scanProgress = `Processing card ${i + 1} of ${detectedCards.length}...`;
 				const card = detectedCards[i];
+				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
 
-				try {
-					let text = '';
-					let tesseractWords: any[] | null = null;
-
-					if (ocrTexts.length > i) {
-						// Google Vision result (already normalized by server)
-						text = ocrTexts[i];
-					} else if (worker) {
-						// Tesseract fallback
+				// OCR bottom text
+				let tesseractWords: any[] | null = null;
+				if (visionBottomTexts.length > i) {
+					card.ocrText = visionBottomTexts[i];
+				} else {
+					try {
 						const result = await worker.recognize(card.bottomUrl);
-						text = result.data.text.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+						card.ocrText = result.data.text.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 						tesseractWords = result.data.words;
+					} catch { card.ocrText = ''; }
+				}
+
+				// Parse set code + collector number from bottom
+				const parsed = parseCollectorInfo(card.ocrText, langs);
+				card.setCode = parsed.setCode;
+				card.collectorNumber = parsed.collectorNumber;
+
+				// Foil detection: text-based only reliable with Google Vision
+				if (tesseractWords) {
+					card.foil = detectFoilFromWords(tesseractWords, card.bottomUrl, parsed.setCode, langs);
+				} else {
+					card.foil = parsed.foilFromText;
+				}
+
+				if (card.results.length === 1) {
+					// Unique card from name search — done
+					card.status = 'found';
+				} else if (card.results.length > 1 && card.setCode) {
+					// Multiple reprints — match by set code + collector number
+					let match = card.results.find(r =>
+						(r.set_code as string).toLowerCase() === card.setCode.toLowerCase() &&
+						card.collectorNumber &&
+						(String(r.collector_number) === card.collectorNumber ||
+						 String(r.collector_number) === card.collectorNumber.replace(/^0+/, '') ||
+						 String(r.collector_number).padStart(3, '0') === card.collectorNumber.padStart(3, '0'))
+					);
+					if (!match) {
+						// Try just set code match
+						match = card.results.find(r => (r.set_code as string).toLowerCase() === card.setCode.toLowerCase());
 					}
-
-					card.ocrText = text;
-
-					// Parse collector info using anchor-based matching.
-					const langs = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
-					const parsed = parseCollectorInfo(text, langs);
-					card.setCode = parsed.setCode;
-					card.collectorNumber = parsed.collectorNumber;
-
-					// Foil detection: text-based only reliable with Google Vision.
-					// Tesseract can't distinguish • from ★ (both read as *).
-					// For Tesseract, only use pixel analysis.
-					if (tesseractWords) {
-						card.foil = detectFoilFromWords(tesseractWords, card.bottomUrl, parsed.setCode, langs);
-					} else {
-						// Google Vision result — text separator is reliable
-						card.foil = parsed.foilFromText;
+					if (match) {
+						// Move matched reprint to front
+						card.results = [match, ...card.results.filter(r => r !== match)];
+						card.matchType = 'reprint_match';
 					}
-
-					if (card.setCode && card.collectorNumber) {
+					card.status = 'found';
+				} else if (card.results.length > 1) {
+					// Multiple reprints, no set code — show most recent first
+					card.status = 'found';
+				} else if (card.setCode && card.collectorNumber) {
+					// Name OCR failed — try set+number directly (old fallback)
+					try {
 						const res = await fetch('/scan', {
 							method: 'POST',
 							headers: { 'Content-Type': 'application/json' },
 							body: JSON.stringify({ setCode: card.setCode, collectorNumber: card.collectorNumber })
 						});
-						const data = await res.json();
-						card.results = data.results;
-						card.matchType = data.matchType || 'none';
+						const searchData = await res.json();
+						card.results = searchData.results;
+						card.matchType = searchData.matchType || 'set_number';
 						card.status = card.results.length > 0 ? 'found' : 'not_found';
-					} else {
-						card.status = 'not_found';
-					}
-				} catch {
+					} catch { card.status = 'not_found'; }
+				} else {
 					card.status = 'not_found';
 				}
 
@@ -832,14 +907,23 @@
 								<img src={card.croppedUrl} alt="Card {idx + 1}" class="w-32 rounded" />
 							</CardPreview>
 							<div>
-								<p class="text-xs text-[var(--color-text-muted)] mb-1">Scanned area:</p>
-								<CardPreview src={card.bottomUrl} alt="Bottom scan {idx + 1}" maxWidth={600} maxHeight={200} contain>
-								<img src={card.bottomUrl} alt="Bottom scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
-							</CardPreview>
+								<p class="text-xs text-[var(--color-text-muted)] mb-1">Name:</p>
+								<CardPreview src={card.nameUrl} alt="Name scan {idx + 1}" maxWidth={600} maxHeight={150} contain>
+									<img src={card.nameUrl} alt="Name scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
+								</CardPreview>
+								{#if card.nameText}
+									<p class="text-xs text-[var(--color-text-muted)] font-mono break-all w-32 mt-0.5">"{card.nameText}"</p>
+								{/if}
 							</div>
-							{#if card.ocrText}
-								<p class="text-xs text-[var(--color-text-muted)] font-mono break-all w-32">{card.ocrText.trim()}</p>
-							{/if}
+							<div>
+								<p class="text-xs text-[var(--color-text-muted)] mb-1">Bottom:</p>
+								<CardPreview src={card.bottomUrl} alt="Bottom scan {idx + 1}" maxWidth={600} maxHeight={200} contain>
+									<img src={card.bottomUrl} alt="Bottom scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
+								</CardPreview>
+								{#if card.ocrText}
+									<p class="text-xs text-[var(--color-text-muted)] font-mono break-all w-32 mt-0.5">{card.ocrText.trim()}</p>
+								{/if}
+							</div>
 						</div>
 
 						<!-- Result -->
