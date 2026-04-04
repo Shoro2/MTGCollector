@@ -17,6 +17,7 @@ export async function load({ url, locals }) {
 			FROM price_history ph
 			JOIN collection_cards cc ON ph.card_id = cc.card_id
 			WHERE cc.user_id = ?
+			AND ph.recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at))
 			GROUP BY ph.recorded_at
 			ORDER BY ph.recorded_at ASC`
 		)
@@ -42,7 +43,7 @@ export async function load({ url, locals }) {
 	if (cardId) {
 		selectedCard = sqlite.prepare('SELECT id, name, set_name FROM cards WHERE id = ?').get(cardId) as Record<string, unknown> | null;
 		cardPriceHistory = sqlite
-			.prepare('SELECT price_eur, price_eur_foil, recorded_at FROM price_history WHERE card_id = ? ORDER BY recorded_at ASC')
+			.prepare('SELECT price_eur, price_eur_foil, recorded_at FROM price_history WHERE card_id = ? AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at)) ORDER BY recorded_at ASC')
 			.all(cardId) as Array<Record<string, unknown>>;
 	}
 
@@ -75,6 +76,7 @@ export async function load({ url, locals }) {
 			FROM price_history ph
 			JOIN collection_cards cc ON ph.card_id = cc.card_id
 			WHERE cc.user_id = ? AND cc.purchase_price IS NOT NULL
+			AND ph.recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at))
 			GROUP BY ph.recorded_at
 			ORDER BY ph.recorded_at ASC`
 		)
