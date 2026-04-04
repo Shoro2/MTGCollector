@@ -538,7 +538,9 @@
 						{/if}
 						<!-- Debug: Cropped card + bottom scan -->
 						<div class="flex-shrink-0 space-y-2">
-							<img src={card.croppedUrl} alt="Card {idx + 1}" class="w-32 rounded" />
+							<CardPreview src={card.croppedUrl} alt="Card {idx + 1}" scale={3}>
+								<img src={card.croppedUrl} alt="Card {idx + 1}" class="w-32 rounded" />
+							</CardPreview>
 							<div>
 								<p class="text-xs text-[var(--color-text-muted)] mb-1">Scanned area:</p>
 								<img src={card.bottomUrl} alt="Bottom scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
