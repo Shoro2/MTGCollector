@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	let { src, alt, scale = 2, children }: { src: string; alt: string; scale?: number; children: Snippet } = $props();
+	let { src, alt, scale = 2, maxWidth = 0, maxHeight = 0, children }: { src: string; alt: string; scale?: number; maxWidth?: number; maxHeight?: number; children: Snippet } = $props();
 
 	let hovering = $state(false);
 	let mouseX = $state(0);
@@ -28,8 +28,8 @@
 				document.body.appendChild(portalTarget);
 			}
 
-			const width = 244 * scale;
-			const height = 340 * scale;
+			const width = maxWidth || 244 * scale;
+			const height = maxHeight || 340 * scale;
 			let x = mouseX + 20;
 			let y = mouseY - height / 2;
 			if (x + width > window.innerWidth - 10) x = mouseX - width - 20;
