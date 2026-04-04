@@ -413,11 +413,14 @@
 					card.setCode = parsed.setCode;
 					card.collectorNumber = parsed.collectorNumber;
 
-					// Foil detection from text separator
-					card.foil = parsed.foilFromText;
-					// Also try pixel analysis if we have Tesseract word data
-					if (!card.foil && tesseractWords) {
+					// Foil detection: text-based only reliable with Google Vision.
+					// Tesseract can't distinguish • from ★ (both read as *).
+					// For Tesseract, only use pixel analysis.
+					if (tesseractWords) {
 						card.foil = detectFoilFromWords(tesseractWords, card.bottomUrl, parsed.setCode, langs);
+					} else {
+						// Google Vision result — text separator is reliable
+						card.foil = parsed.foilFromText;
 					}
 
 					if (card.setCode && card.collectorNumber) {
