@@ -219,13 +219,14 @@
 				const croppedUrl = cardCanvas.toDataURL();
 
 				// Crop bottom 8%, left half only (right side has copyright text that confuses OCR)
-				const bottomY = Math.floor(cardH * 0.92);
-				const bottomH = cardH - bottomY;
-				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, Math.floor(cardW * 0.5), bottomH));
+				// Crop only the black info bar at very bottom (skip card frame/border above it)
+				const bottomY = Math.floor(cardH * 0.945);
+				const bottomH = Math.floor(cardH * 0.99) - bottomY;
+				const bottomRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.05), bottomY, Math.floor(cardW * 0.45), bottomH));
 
 				// Scale up 4x (for better OCR on tiny text), keep original colors
 				const scaled = new cv.Mat();
-				const roiW = Math.floor(cardW * 0.5);
+				const roiW = Math.floor(cardW * 0.45);
 				cv.resize(bottomRoi, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
 
 				const bottomCanvas = document.createElement('canvas');
