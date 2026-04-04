@@ -167,7 +167,12 @@
 
 	function priceChange(item: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
 		const purchasePrice = item.purchase_price as number | null;
-		const currentPrice = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
+		let currentPrice = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
+		// Fallback: convert USD to EUR if no EUR price available
+		if (currentPrice == null) {
+			const usdPrice = (item.foil ? item.price_usd_foil : item.price_usd) as number | null;
+			if (usdPrice != null) currentPrice = usdPrice * data.usdToEur;
+		}
 		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
 		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
 		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };

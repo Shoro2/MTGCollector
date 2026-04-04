@@ -1,9 +1,11 @@
 import { sqlite } from '$lib/server/db';
+import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { redirect } from '@sveltejs/kit';
 
 export async function load({ url, locals }) {
 	if (!locals.user) throw redirect(302, '/login');
 	const userId = locals.user.id;
+	const usdToEur = await getUsdToEurRate();
 
 	const tagFilter = url.searchParams.get('tag');
 	const search = url.searchParams.get('q') || '';
@@ -111,6 +113,7 @@ export async function load({ url, locals }) {
 		tags: allTags,
 		stats,
 		filters: { search, tagFilter, sortBy, sortDir },
-		editCard
+		editCard,
+		usdToEur
 	};
 }

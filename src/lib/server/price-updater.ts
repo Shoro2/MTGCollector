@@ -132,8 +132,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		// 3. Snapshot prices for collection cards only
 		const now = new Date().toISOString();
 		const snapshotResult = sqlite.prepare(`
-			INSERT INTO price_history (card_id, price_eur, price_eur_foil, recorded_at)
-			SELECT c.id, c.price_eur, c.price_eur_foil, ?
+			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
+			SELECT c.id, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, ?
 			FROM cards c
 			INNER JOIN collection_cards cc ON cc.card_id = c.id
 			GROUP BY c.id

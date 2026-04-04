@@ -102,7 +102,12 @@
 
 	function priceChange(card: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
 		const purchasePrice = card.purchase_price as number | null;
-		const currentPrice = card.price as number | null;
+		let currentPrice = card.price as number | null;
+		// Fallback: convert USD to EUR if no EUR price
+		if (currentPrice == null) {
+			const usdPrice = card.price_usd as number | null;
+			if (usdPrice != null) currentPrice = usdPrice * data.usdToEur;
+		}
 		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
 		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
 		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };

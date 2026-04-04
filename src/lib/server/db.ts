@@ -154,6 +154,14 @@ export function initDb() {
 	} catch { /* Column already exists */ }
 
 	try {
+		sqlite.exec('ALTER TABLE price_history ADD COLUMN price_usd REAL');
+	} catch { /* Column already exists */ }
+
+	try {
+		sqlite.exec('ALTER TABLE price_history ADD COLUMN price_usd_foil REAL');
+	} catch { /* Column already exists */ }
+
+	try {
 		sqlite.exec('CREATE INDEX IF NOT EXISTS idx_collection_cards_user_id ON collection_cards(user_id)');
 		sqlite.exec('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
 	} catch { /* Indexes already exist */ }
