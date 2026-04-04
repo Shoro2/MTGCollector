@@ -31,7 +31,7 @@ export async function load({ url, locals }) {
 	if (cardId) {
 		selectedCard = sqlite.prepare('SELECT id, name, set_name FROM cards WHERE id = ?').get(cardId) as Record<string, unknown> | null;
 		cardPriceHistory = sqlite
-			.prepare('SELECT price_eur, price_eur_foil, recorded_at FROM price_history WHERE card_id = ? AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)) ORDER BY recorded_at ASC')
+			.prepare(`SELECT price_eur, price_eur_foil, recorded_at FROM price_history WHERE card_id = ? AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)) ORDER BY recorded_at ASC`)
 			.all(cardId) as Array<Record<string, unknown>>;
 	}
 
