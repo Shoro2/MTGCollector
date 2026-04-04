@@ -830,7 +830,7 @@
 							</CardPreview>
 							<div>
 								<p class="text-xs text-[var(--color-text-muted)] mb-1">Scanned area:</p>
-								<CardPreview src={card.bottomUrl} alt="Bottom scan {idx + 1}" maxWidth={500} maxHeight={120}>
+								<CardPreview src={card.bottomUrl} alt="Bottom scan {idx + 1}" maxWidth={600} maxHeight={200} contain>
 								<img src={card.bottomUrl} alt="Bottom scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
 							</CardPreview>
 							</div>

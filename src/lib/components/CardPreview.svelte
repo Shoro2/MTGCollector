@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	let { src, alt, scale = 2, maxWidth = 0, maxHeight = 0, children }: { src: string; alt: string; scale?: number; maxWidth?: number; maxHeight?: number; children: Snippet } = $props();
+	let { src, alt, scale = 2, maxWidth = 0, maxHeight = 0, contain = false, children }: { src: string; alt: string; scale?: number; maxWidth?: number; maxHeight?: number; contain?: boolean; children: Snippet } = $props();
 
 	let hovering = $state(false);
 	let mouseX = $state(0);
@@ -36,8 +36,10 @@
 			if (y < 10) y = 10;
 			if (y + height > window.innerHeight - 10) y = window.innerHeight - height - 10;
 
-			portalTarget.style.cssText = `position:fixed;z-index:9999;pointer-events:none;left:${x}px;top:${y}px;width:${width}px;height:${height}px;border-radius:0.5rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);`;
-			portalTarget.innerHTML = `<img src="${src}" alt="${alt}" style="width:100%;height:100%;object-fit:cover;" />`;
+			const fit = contain ? 'contain' : 'cover';
+			const bg = contain ? 'background:#111;' : '';
+			portalTarget.style.cssText = `position:fixed;z-index:9999;pointer-events:none;left:${x}px;top:${y}px;width:${width}px;height:${height}px;border-radius:0.5rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);${bg}`;
+			portalTarget.innerHTML = `<img src="${src}" alt="${alt}" style="width:100%;height:100%;object-fit:${fit};" />`;
 		} else if (portalTarget) {
 			portalTarget.remove();
 			portalTarget = null;
