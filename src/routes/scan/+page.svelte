@@ -359,19 +359,52 @@
 			// Cleanup OpenCV mats
 			src.delete(); gray.delete();
 
-			// OCR each card
-			scanProgress = 'Running OCR...';
-			const worker = await getTesseractWorker();
+			// OCR: use Google Vision for 5+ cards (batch), Tesseract for 1-4
+			const useGoogleVision = detectedCards.length >= 5;
+			let ocrTexts: string[] = [];
+
+			if (useGoogleVision) {
+				scanProgress = `Reading ${detectedCards.length} cards with Google Vision...`;
+				try {
+					const res = await fetch('/api/ocr', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ images: detectedCards.map(c => c.bottomUrl) })
+					});
+					if (res.ok) {
+						const data = await res.json();
+						ocrTexts = data.results;
+					} else {
+						// Fallback to Tesseract if Vision API fails
+						console.warn('Google Vision failed, falling back to Tesseract');
+						ocrTexts = [];
+					}
+				} catch {
+					ocrTexts = [];
+				}
+			}
+
+			const useTesseract = !useGoogleVision || ocrTexts.length === 0;
+			const worker = useTesseract ? await getTesseractWorker() : null;
 
 			for (let i = 0; i < detectedCards.length; i++) {
-				scanProgress = `Reading card ${i + 1} of ${detectedCards.length}...`;
+				scanProgress = `Processing card ${i + 1} of ${detectedCards.length}...`;
 				const card = detectedCards[i];
 
 				try {
-					const result = await worker.recognize(card.bottomUrl);
-					const rawText = result.data.text;
-					// Normalize: collapse newlines and multiple spaces into single spaces
-					const text = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+					let text = '';
+					let tesseractWords: any[] | null = null;
+
+					if (ocrTexts.length > i) {
+						// Google Vision result (already normalized by server)
+						text = ocrTexts[i];
+					} else if (worker) {
+						// Tesseract fallback
+						const result = await worker.recognize(card.bottomUrl);
+						text = result.data.text.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+						tesseractWords = result.data.words;
+					}
+
 					card.ocrText = text;
 
 					// Parse collector info using anchor-based matching.
@@ -380,9 +413,12 @@
 					card.setCode = parsed.setCode;
 					card.collectorNumber = parsed.collectorNumber;
 
-					// Foil detection: combine OCR text hint with pixel analysis
-					const foilFromPixels = detectFoilFromWords(result.data.words, card.bottomUrl, parsed.setCode, langs);
-					card.foil = parsed.foilFromText || foilFromPixels;
+					// Foil detection from text separator
+					card.foil = parsed.foilFromText;
+					// Also try pixel analysis if we have Tesseract word data
+					if (!card.foil && tesseractWords) {
+						card.foil = detectFoilFromWords(tesseractWords, card.bottomUrl, parsed.setCode, langs);
+					}
 
 					if (card.setCode && card.collectorNumber) {
 						const res = await fetch('/scan', {
@@ -401,7 +437,7 @@
 					card.status = 'not_found';
 				}
 
-				detectedCards = [...detectedCards]; // trigger reactivity
+				detectedCards = [...detectedCards];
 			}
 
 			scanProgress = `Done! ${detectedCards.filter((c) => c.status === 'found').length} of ${detectedCards.length} identified.`;
