@@ -213,9 +213,6 @@
 				const warped = new cv.Mat();
 				cv.warpPerspective(src, warped, M, new cv.Size(cardW, cardH));
 
-				// Detect foil before any cleanup
-				const isFoil = detectFoil(cv, warped);
-
 				// Get full card image
 				const cardCanvas = document.createElement('canvas');
 				cv.imshow(cardCanvas, warped);
@@ -244,7 +241,7 @@
 					results: [],
 					matchType: '',
 					status: 'scanning',
-					foil: isFoil
+					foil: false
 				});
 
 				// Cleanup card-specific mats
@@ -271,6 +268,10 @@
 					const result = await worker.recognize(card.bottomUrl);
 					const text = result.data.text;
 					card.ocrText = text;
+
+					// Detect foil: foil cards have a star (★) between collector number and set,
+					// non-foils have a dot (•). OCR may read the star as *, ★, ☆, or similar.
+					card.foil = /[★☆✦✧⭐\*]{1}/.test(text) && !/[•·.●]{1}\s*[A-Z]{3}\b/.test(text);
 
 					// Extract set code and collector number
 					const numMatch = text.match(/\b0*(\d{1,4})\b/);
@@ -314,76 +315,6 @@
 			img.onerror = reject;
 			img.src = URL.createObjectURL(file);
 		});
-	}
-
-	function detectFoil(cv: any, warped: any): boolean {
-		// Foil cards have rainbow/holographic sheen visible as:
-		// 1. Higher color saturation than normal cards
-		// 2. More hue variance (rainbow reflections across the surface)
-		// 3. Bright specular highlights
-
-		// Analyze the art area (top ~60% of card, skip borders)
-		const artY = Math.floor(warped.rows * 0.08);
-		const artH = Math.floor(warped.rows * 0.52);
-		const artX = Math.floor(warped.cols * 0.08);
-		const artW = Math.floor(warped.cols * 0.84);
-		const artRoi = warped.roi(new cv.Rect(artX, artY, artW, artH));
-
-		const hsv = new cv.Mat();
-		cv.cvtColor(artRoi, hsv, cv.COLOR_RGBA2RGB);
-		const hsvConv = new cv.Mat();
-		cv.cvtColor(hsv, hsvConv, cv.COLOR_RGB2HSV);
-
-		// Split into H, S, V channels
-		const channels = new cv.MatVector();
-		cv.split(hsvConv, channels);
-		const hue = channels.get(0);
-		const sat = channels.get(1);
-		const val = channels.get(2);
-
-		// Calculate mean + stddev for saturation and hue
-		const satMean = new cv.Mat();
-		const satStd = new cv.Mat();
-		cv.meanStdDev(sat, satMean, satStd);
-		const avgSat = satMean.data64F[0];
-		const stdSat = satStd.data64F[0];
-
-		const hueMean = new cv.Mat();
-		const hueStd = new cv.Mat();
-		cv.meanStdDev(hue, hueMean, hueStd);
-		const stdHue = hueStd.data64F[0];
-
-		const valMean = new cv.Mat();
-		const valStd = new cv.Mat();
-		cv.meanStdDev(val, valMean, valStd);
-		const avgVal = valMean.data64F[0];
-		const stdVal = valStd.data64F[0];
-
-		// Count high-saturation pixels (> 100 out of 255)
-		const highSatThresh = new cv.Mat();
-		cv.threshold(sat, highSatThresh, 100, 255, cv.THRESH_BINARY);
-		const highSatRatio = cv.countNonZero(highSatThresh) / (artW * artH);
-
-		// Foil detection is inherently unreliable from a single photo.
-		// Use very conservative thresholds — only flag obvious foils.
-		// The user can toggle foil status manually per card.
-		let foilScore = 0;
-		if (avgSat > 120) foilScore++;
-		if (stdHue > 55) foilScore++;
-		if (stdHue > 65) foilScore++;
-		if (stdVal > 65) foilScore++;
-		if (highSatRatio > 0.5) foilScore++;
-		if (highSatRatio > 0.65) foilScore++;
-		if (stdSat > 55) foilScore++;
-
-		// Cleanup
-		artRoi.delete(); hsv.delete(); hsvConv.delete();
-		channels.delete(); hue.delete(); sat.delete(); val.delete();
-		satMean.delete(); satStd.delete(); hueMean.delete(); hueStd.delete();
-		valMean.delete(); valStd.delete(); highSatThresh.delete();
-
-		// Require 5 of 7 indicators — very conservative to avoid false positives
-		return foilScore >= 5;
 	}
 
 	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
