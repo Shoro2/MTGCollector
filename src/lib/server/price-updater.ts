@@ -129,18 +129,17 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 
 		console.log(`[price-updater] Updated prices for ${updated} cards`);
 
-		// 3. Snapshot prices for collection cards only
+		// 3. Snapshot prices for ALL cards
 		const now = new Date().toISOString();
 		const snapshotResult = sqlite.prepare(`
 			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
-			SELECT c.id, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, ?
-			FROM cards c
-			INNER JOIN collection_cards cc ON cc.card_id = c.id
-			GROUP BY c.id
+			SELECT id, price_eur, price_eur_foil, price_usd, price_usd_foil, ?
+			FROM cards
+			WHERE price_eur IS NOT NULL OR price_usd IS NOT NULL
 		`).run(now);
 
 		const snapshotted = snapshotResult.changes;
-		console.log(`[price-updater] Snapshotted prices for ${snapshotted} collection cards`);
+		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards`);
 
 		// 4. Save the bulk data version we just processed
 		writeFileSync(lastBulkUpdatePath, defaultCards.updated_at, 'utf-8');
