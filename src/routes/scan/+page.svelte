@@ -218,14 +218,15 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
-				// Crop bottom 8% for set/number info (collector info lines)
+				// Crop bottom 8%, left half only (right side has copyright text that confuses OCR)
 				const bottomY = Math.floor(cardH * 0.92);
 				const bottomH = cardH - bottomY;
-				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, cardW, bottomH));
+				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, Math.floor(cardW * 0.5), bottomH));
 
 				// Scale up 4x (for better OCR on tiny text), keep original colors
 				const scaled = new cv.Mat();
-				cv.resize(bottomRoi, scaled, new cv.Size(cardW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
+				const roiW = Math.floor(cardW * 0.5);
+				cv.resize(bottomRoi, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
 
 				const bottomCanvas = document.createElement('canvas');
 				cv.imshow(bottomCanvas, scaled);
