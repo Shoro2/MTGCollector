@@ -23,7 +23,7 @@ export async function load({ params, locals }) {
 			`SELECT price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at
 			 FROM price_history
 			 WHERE card_id = ?
-			 AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at))
+			 AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END))
 			 ORDER BY recorded_at ASC`
 		)
 		.all(params.id) as Array<Record<string, unknown>>;
