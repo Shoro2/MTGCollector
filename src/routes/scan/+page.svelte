@@ -290,9 +290,9 @@
 					card.setCode = parsed.setCode;
 					card.collectorNumber = parsed.collectorNumber;
 
-					// Foil detection via pixel analysis of separator area between SET and LANG.
-					// Star (★) has significantly more pixels than dot (•).
-					card.foil = detectFoilFromWords(result.data.words, card.bottomUrl, parsed.setCode, langs);
+					// Foil detection: combine OCR text hint with pixel analysis
+					const foilFromPixels = detectFoilFromWords(result.data.words, card.bottomUrl, parsed.setCode, langs);
+					card.foil = parsed.foilFromText || foilFromPixels;
 
 					if (card.setCode && card.collectorNumber) {
 						const res = await fetch('/scan', {
@@ -331,34 +331,40 @@
 		});
 	}
 
-	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string } {
-		const result = { setCode: '', collectorNumber: '' };
+	function stripLeadingZeros(s: string): string {
+		const stripped = s.replace(/^0+/, '');
+		return stripped || '0';
+	}
+
+	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string; foilFromText: boolean } {
+		const result = { setCode: '', collectorNumber: '', foilFromText: false };
 
 		// Step 1: Find anchor — <SET 3-letter> followed by <LANG 2-letter> within a few chars
-		// This is the most reliable anchor point in any era
-		const anchor = new RegExp(`([A-Z]{3})\\s*\\S?\\s*(?:${langs})\\b`, 'i');
+		const anchor = new RegExp(`([A-Z]{3})\\s*(\\S?)\\s*(?:${langs})\\b`, 'i');
 		const anchorMatch = text.match(anchor);
 
 		if (anchorMatch) {
 			result.setCode = anchorMatch[1].toLowerCase();
 
+			// Check separator character for foil hint
+			const sep = anchorMatch[2] || '';
+			result.foilFromText = /[*#&xX]/.test(sep);
+
 			// Step 2: Extract collector number from text BEFORE the set code
 			const before = text.substring(0, anchorMatch.index);
 
-			// Look for 1-4 digits, possibly with rarity letter nearby
-			// Allow optional rarity letter (C/U/R/M) before or after digits
-			const numPatterns = [
-				/[CURM]\s*0*(\d{1,4})\s*$/i,    // Era 5: "R 0241" at end
-				/0*(\d{1,4})\s*[CURM]\s*$/i,     // Era 4: "123 R" at end
-				/0*(\d{1,4})\s*$/,                // Just digits at end
-				/0*(\d{1,4})/                     // Any digits anywhere
-			];
-
-			for (const pattern of numPatterns) {
-				const numMatch = before.match(pattern);
-				if (numMatch) {
-					result.collectorNumber = numMatch[1];
-					break;
+			// Handle fraction format first (Era 3): "010/277"
+			const fractionMatch = before.match(/(\d{1,4})\/\d{1,4}/);
+			if (fractionMatch) {
+				result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
+			} else {
+				// Find all digit sequences in before text, take the longest/last one
+				// This avoids 0* prefix eating digits (e.g. "0085" → want "85" not "5")
+				const allDigits = [...before.matchAll(/(\d{1,4})/g)];
+				if (allDigits.length > 0) {
+					// Take the last digit sequence (closest to set code)
+					const lastDigits = allDigits[allDigits.length - 1][1];
+					result.collectorNumber = stripLeadingZeros(lastDigits);
 				}
 			}
 		}
@@ -366,9 +372,14 @@
 		// Fallback: any 3-letter uppercase + any number
 		if (!result.setCode) {
 			const setMatch = text.match(/\b([A-Z]{3})\b/);
-			const numMatch = text.match(/\b0*(\d{1,4})\b/);
 			if (setMatch) result.setCode = setMatch[1].toLowerCase();
-			if (numMatch) result.collectorNumber = numMatch[1];
+			const fractionMatch = text.match(/(\d{1,4})\/\d{1,4}/);
+			if (fractionMatch) {
+				result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
+			} else {
+				const numMatch = text.match(/(\d{1,4})/);
+				if (numMatch) result.collectorNumber = stripLeadingZeros(numMatch[1]);
+			}
 		}
 
 		return result;
