@@ -17,13 +17,15 @@ export async function load({ params, locals }) {
 			.all(card.oracle_id, params.id) as Array<Record<string, unknown>>;
 	}
 
-	// Get price history (deduplicated to one per day)
+	// Get price history (deduplicated to one per day by effective date)
 	const priceHistory = sqlite
 		.prepare(
-			`SELECT price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at
+			`SELECT MAX(price_eur) as price_eur, MAX(price_eur_foil) as price_eur_foil,
+			        MAX(price_usd) as price_usd, MAX(price_usd_foil) as price_usd_foil,
+			        MAX(recorded_at) as recorded_at
 			 FROM price_history
 			 WHERE card_id = ?
-			 AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END))
+			 GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)
 			 ORDER BY recorded_at ASC`
 		)
 		.all(params.id) as Array<Record<string, unknown>>;

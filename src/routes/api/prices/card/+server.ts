@@ -12,9 +12,10 @@ export async function GET({ url, locals }) {
 
 	const history = sqlite
 		.prepare(
-			`SELECT price_eur, price_eur_foil, recorded_at FROM price_history
+			`SELECT MAX(price_eur) as price_eur, MAX(price_eur_foil) as price_eur_foil, MAX(recorded_at) as recorded_at
+			 FROM price_history
 			 WHERE card_id = ?
-			 AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END))
+			 GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)
 			 ORDER BY recorded_at ASC`
 		)
 		.all(cardId) as Array<{ price_eur: number | null; price_eur_foil: number | null; recorded_at: string }>;

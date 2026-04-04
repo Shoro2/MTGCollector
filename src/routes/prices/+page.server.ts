@@ -31,7 +31,7 @@ export async function load({ url, locals }) {
 	if (cardId) {
 		selectedCard = sqlite.prepare('SELECT id, name, set_name FROM cards WHERE id = ?').get(cardId) as Record<string, unknown> | null;
 		cardPriceHistory = sqlite
-			.prepare(`SELECT price_eur, price_eur_foil, recorded_at FROM price_history WHERE card_id = ? AND recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)) ORDER BY recorded_at ASC`)
+			.prepare(`SELECT MAX(price_eur) as price_eur, MAX(price_eur_foil) as price_eur_foil, MAX(recorded_at) as recorded_at FROM price_history WHERE card_id = ? GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) ORDER BY recorded_at ASC`)
 			.all(cardId) as Array<Record<string, unknown>>;
 	}
 
@@ -63,7 +63,7 @@ export async function load({ url, locals }) {
 	const profitHistory = sqlite
 		.prepare(
 			`SELECT
-				ph.recorded_at,
+				MAX(ph.recorded_at) as recorded_at,
 				SUM(COALESCE(
 					CASE WHEN cc.foil = 1 THEN ph.price_eur_foil ELSE ph.price_eur END,
 					CASE WHEN cc.foil = 1 THEN ph.price_usd_foil ELSE ph.price_usd END * ?
@@ -73,9 +73,8 @@ export async function load({ url, locals }) {
 			JOIN collection_cards cc ON ph.card_id = cc.card_id
 			JOIN cards c ON cc.card_id = c.id
 			WHERE cc.user_id = ? AND cc.purchase_price IS NOT NULL
-			AND ph.recorded_at IN (SELECT MAX(recorded_at) FROM price_history GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END))
-			GROUP BY ph.recorded_at
-			ORDER BY ph.recorded_at ASC`
+			GROUP BY DATE(ph.recorded_at, CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)
+			ORDER BY recorded_at ASC`
 		)
 		.all(usdToEur, userId) as Array<{ recorded_at: string; total_value: number; total_purchase: number }>;
 
