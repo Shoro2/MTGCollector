@@ -481,7 +481,7 @@
 			<button type="submit" class="bg-[var(--color-primary)] px-4 py-2 rounded-lg text-sm">Search</button>
 		</form>
 		<div class="flex gap-1">
-			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit'], ['set_name', 'Set']] as [key, label]}
+			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit %'], ['profit_total', 'Profit €'], ['set_name', 'Set']] as [key, label]}
 				<button
 					onclick={() => setSort(key)}
 					class="px-3 py-2 rounded-lg text-xs transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)]'}"
