@@ -21,6 +21,7 @@
 		results: Array<Record<string, unknown>>;
 		matchType: string;
 		status: 'scanning' | 'found' | 'not_found';
+		foil: boolean;
 	}>>([]);
 	let debugCanvasUrl = $state('');
 	let adding = $state<string | null>(null);
@@ -212,6 +213,9 @@
 				const warped = new cv.Mat();
 				cv.warpPerspective(src, warped, M, new cv.Size(cardW, cardH));
 
+				// Detect foil before any cleanup
+				const isFoil = detectFoil(cv, warped);
+
 				// Get full card image
 				const cardCanvas = document.createElement('canvas');
 				cv.imshow(cardCanvas, warped);
@@ -239,7 +243,8 @@
 					collectorNumber: '',
 					results: [],
 					matchType: '',
-					status: 'scanning'
+					status: 'scanning',
+					foil: isFoil
 				});
 
 				// Cleanup card-specific mats
@@ -311,6 +316,78 @@
 		});
 	}
 
+	function detectFoil(cv: any, warped: any): boolean {
+		// Foil cards have rainbow/holographic sheen visible as:
+		// 1. Higher color saturation than normal cards
+		// 2. More hue variance (rainbow reflections across the surface)
+		// 3. Bright specular highlights
+
+		// Analyze the art area (top ~60% of card, skip borders)
+		const artY = Math.floor(warped.rows * 0.08);
+		const artH = Math.floor(warped.rows * 0.52);
+		const artX = Math.floor(warped.cols * 0.08);
+		const artW = Math.floor(warped.cols * 0.84);
+		const artRoi = warped.roi(new cv.Rect(artX, artY, artW, artH));
+
+		const hsv = new cv.Mat();
+		cv.cvtColor(artRoi, hsv, cv.COLOR_RGBA2RGB);
+		const hsvConv = new cv.Mat();
+		cv.cvtColor(hsv, hsvConv, cv.COLOR_RGB2HSV);
+
+		// Split into H, S, V channels
+		const channels = new cv.MatVector();
+		cv.split(hsvConv, channels);
+		const hue = channels.get(0);
+		const sat = channels.get(1);
+		const val = channels.get(2);
+
+		// Calculate mean + stddev for saturation and hue
+		const satMean = new cv.Mat();
+		const satStd = new cv.Mat();
+		cv.meanStdDev(sat, satMean, satStd);
+		const avgSat = satMean.data64F[0];
+		const stdSat = satStd.data64F[0];
+
+		const hueMean = new cv.Mat();
+		const hueStd = new cv.Mat();
+		cv.meanStdDev(hue, hueMean, hueStd);
+		const stdHue = hueStd.data64F[0];
+
+		const valMean = new cv.Mat();
+		const valStd = new cv.Mat();
+		cv.meanStdDev(val, valMean, valStd);
+		const avgVal = valMean.data64F[0];
+		const stdVal = valStd.data64F[0];
+
+		// Count high-saturation pixels (> 100 out of 255)
+		const highSatThresh = new cv.Mat();
+		cv.threshold(sat, highSatThresh, 100, 255, cv.THRESH_BINARY);
+		const highSatRatio = cv.countNonZero(highSatThresh) / (artW * artH);
+
+		// Foil indicators:
+		// - Higher average saturation (foils shimmer with more color)
+		// - Higher hue standard deviation (rainbow effect = spread across hues)
+		// - Higher brightness variance (specular highlights)
+		// - More high-saturation pixels
+		let foilScore = 0;
+		if (avgSat > 80) foilScore++;
+		if (avgSat > 110) foilScore++;
+		if (stdHue > 45) foilScore++;
+		if (stdHue > 55) foilScore++;
+		if (stdVal > 55) foilScore++;
+		if (highSatRatio > 0.35) foilScore++;
+		if (highSatRatio > 0.5) foilScore++;
+		if (stdSat > 45) foilScore++;
+
+		// Cleanup
+		artRoi.delete(); hsv.delete(); hsvConv.delete();
+		channels.delete(); hue.delete(); sat.delete(); val.delete();
+		satMean.delete(); satStd.delete(); hueMean.delete(); hueStd.delete();
+		valMean.delete(); valStd.delete(); highSatThresh.delete();
+
+		return foilScore >= 4;
+	}
+
 	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
 		// Sort by sum (x+y) to find TL and BR
 		const sorted = [...pts].sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
@@ -323,12 +400,12 @@
 		return [tl, tr, br, bl];
 	}
 
-	async function addToCollection(cardId: string, cardName: string) {
+	async function addToCollection(cardId: string, cardName: string, foil: boolean = false) {
 		adding = cardId;
 		await fetch('/collection', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ cardId, quantity: 1, condition: 'near_mint', foil: false })
+			body: JSON.stringify({ cardId, quantity: 1, condition: 'near_mint', foil })
 		});
 		adding = null;
 		addedCards = [...addedCards, { id: cardId, name: cardName }];
@@ -395,7 +472,7 @@
 				const id = result.id as string;
 				const name = result.name as string;
 				if (!addedCards.some(a => a.id === id)) {
-					await addToCollection(id, name);
+					await addToCollection(id, name, card.foil);
 				}
 			}
 		}
@@ -425,7 +502,8 @@
 				const name = parts.length === 2 && parts[0] === parts[1] ? parts[0] : rawName;
 				const set = (r.set_code as string).toUpperCase();
 				const num = r.collector_number as string;
-				lines.push(`1 ${name} (${set}) ${num}`);
+				const foilTag = card.foil ? ' *F*' : '';
+				lines.push(`1 ${name} (${set}) ${num}${foilTag}`);
 			}
 		}
 		return lines.join('\n');
@@ -544,6 +622,9 @@
 						<div class="flex-1">
 							<h3 class="text-sm font-semibold mb-2">
 								Card {idx + 1}
+								{#if card.foil}
+									<span class="text-xs bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 px-1.5 py-0.5 rounded font-medium ml-1">FOIL</span>
+								{/if}
 								{#if card.setCode || card.collectorNumber}
 									<span class="text-[var(--color-text-muted)] font-normal">
 										— detected: {card.setCode.toUpperCase()} #{card.collectorNumber}
@@ -578,7 +659,7 @@
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 											{:else}
 												<button
-													onclick={() => addToCollection(result.id as string, result.name as string)}
+													onclick={() => addToCollection(result.id as string, result.name as string, card.foil)}
 													disabled={adding === result.id}
 													class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
 												>
@@ -638,7 +719,7 @@
 															{#if isAdded}
 																<span class="text-green-400 text-xs">Added!</span>
 															{:else}
-																<button onclick={() => addToCollection(result.id as string, result.name as string)}
+																<button onclick={() => addToCollection(result.id as string, result.name as string, card.foil)}
 																	class="bg-green-600 hover:bg-green-700 px-2 py-0.5 rounded text-xs">Add</button>
 															{/if}
 														{/if}
