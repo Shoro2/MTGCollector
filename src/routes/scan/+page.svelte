@@ -273,15 +273,31 @@
 					ordered = [ordered[1], ordered[2], ordered[3], ordered[0]];
 				}
 
-				// Expand corners outward by ~3% to ensure the full card is captured
-				// (edge detection often finds inner edges, cutting off the border)
+				// Expand each corner outward to capture the full card including black border.
+				// The detected contour is usually on the inner colored frame.
+				// The black border is ~3-4% of card width on each side.
+				const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
+				const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
+				const expandX = cardWidth * 0.05; // 5% of card width per side
+				const expandY = cardHeight * 0.05;
+
+				// Move each corner outward along its direction from center
 				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
 				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-				const pad = 0.08;
-				ordered = ordered.map(([x, y]) => [
-					Math.max(0, Math.min(img.width - 1, Math.round(x + (x - cx) * pad))),
-					Math.max(0, Math.min(img.height - 1, Math.round(y + (y - cy) * pad)))
-				]) as Array<[number, number]>;
+				ordered = ordered.map(([x, y]) => {
+					const dx = x - cx;
+					const dy = y - cy;
+					const dist = Math.hypot(dx, dy);
+					if (dist === 0) return [x, y] as [number, number];
+					const expand = Math.hypot(
+						(dx / dist) * expandX,
+						(dy / dist) * expandY
+					);
+					return [
+						Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
+						Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
+					] as [number, number];
+				}) as Array<[number, number]>;
 
 				// Perspective transform to flatten card
 				const cardW = 488;
