@@ -4,6 +4,9 @@ import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
+// Use globalThis.fetch to avoid SvelteKit's SSR fetch warning
+const nativeFetch = globalThis.fetch;
+
 const dataDir = join(process.cwd(), 'data');
 const priceDataPath = join(dataDir, 'scryfall-prices-temp.json');
 const lastBulkUpdatePath = join(dataDir, 'last-bulk-update.txt');
@@ -33,7 +36,7 @@ function getLastBulkUpdate(): string | null {
 /** Check if Scryfall has newer data than what we last downloaded */
 export async function pricesNeedUpdate(): Promise<boolean> {
 	try {
-		const res = await fetch('https://api.scryfall.com/bulk-data');
+		const res = await nativeFetch('https://api.scryfall.com/bulk-data');
 		if (!res.ok) return false;
 		const bulkData = await res.json();
 		const defaultCards = bulkData.data.find((d: { type: string }) => d.type === 'default_cards');
@@ -74,7 +77,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 
 	try {
 		// 1. Check bulk data metadata and download
-		const bulkResponse = await fetch('https://api.scryfall.com/bulk-data');
+		const bulkResponse = await nativeFetch('https://api.scryfall.com/bulk-data');
 		if (!bulkResponse.ok) throw new Error(`Bulk data API failed: ${bulkResponse.status}`);
 
 		const bulkData = await bulkResponse.json();
@@ -89,7 +92,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		}
 
 		console.log(`[price-updater] New data available (${defaultCards.updated_at}), downloading...`);
-		const downloadResponse = await fetch(defaultCards.download_uri);
+		const downloadResponse = await nativeFetch(defaultCards.download_uri);
 		if (!downloadResponse.ok || !downloadResponse.body) {
 			throw new Error(`Download failed: ${downloadResponse.status}`);
 		}

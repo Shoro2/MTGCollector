@@ -1,3 +1,6 @@
+// Use globalThis.fetch to avoid SvelteKit's SSR fetch warning
+const nativeFetch = globalThis.fetch;
+
 let cachedRate: { rate: number; fetchedAt: number } | null = null;
 const CACHE_DURATION = 6 * 60 * 60 * 1000; // 6 hours
 
@@ -7,7 +10,7 @@ export async function getUsdToEurRate(): Promise<number> {
 	}
 
 	try {
-		const res = await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR');
+		const res = await nativeFetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR');
 		const data = await res.json();
 		const rate = data.rates?.EUR;
 		if (typeof rate === 'number') {
