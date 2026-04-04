@@ -218,24 +218,15 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
-				// Crop bottom 8%, left half only (right side has copyright text that confuses OCR)
-				// Crop bottom 10% left half for collector info
+				// Crop bottom 10% left half for collector info (right side has copyright)
 				const bottomY = Math.floor(cardH * 0.90);
 				const bottomH = cardH - bottomY;
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
 
-				// Convert to grayscale, then use adaptive threshold to isolate text.
-				// This handles varying brightness and filters out the colored card frame.
-				const grayRoi = new cv.Mat();
-				cv.cvtColor(bottomRoi, grayRoi, cv.COLOR_RGBA2GRAY);
-				const thresh = new cv.Mat();
-				cv.adaptiveThreshold(grayRoi, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 10);
-
-				// Scale up 4x for better OCR
+				// Scale up 4x for better OCR on tiny text
 				const scaled = new cv.Mat();
-				cv.resize(thresh, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
-				grayRoi.delete(); thresh.delete();
+				cv.resize(bottomRoi, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
 
 				const bottomCanvas = document.createElement('canvas');
 				cv.imshow(bottomCanvas, scaled);
@@ -279,16 +270,14 @@
 					const text = result.data.text;
 					card.ocrText = text;
 
-					// Detect foil: foil cards have a star (★) between collector number and set,
-					// non-foils have a dot (•). OCR may read the star as *, ★, ☆, or similar.
-					card.foil = /[★☆✦✧⭐\*]{1}/.test(text) && !/[•·.●]{1}\s*[A-Z]{3}\b/.test(text);
-
-					// Extract set code and collector number
-					const numMatch = text.match(/\b0*(\d{1,4})\b/);
-					const setMatch = text.match(/\b([A-Z]{3})\b/);
-
-					if (numMatch) card.collectorNumber = numMatch[1];
-					if (setMatch) card.setCode = setMatch[1].toLowerCase();
+					// Parse collector info using anchor-based matching.
+					// Anchor on: <SET 3-letter> <separator> <LANG 2-letter>
+					// Then extract collector number from nearby context.
+					const langs = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
+					const parsed = parseCollectorInfo(text, langs);
+					card.setCode = parsed.setCode;
+					card.collectorNumber = parsed.collectorNumber;
+					card.foil = parsed.foil;
 
 					if (card.setCode && card.collectorNumber) {
 						const res = await fetch('/scan', {
@@ -325,6 +314,67 @@
 			img.onerror = reject;
 			img.src = URL.createObjectURL(file);
 		});
+	}
+
+	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string; foil: boolean } {
+		const result = { setCode: '', collectorNumber: '', foil: false };
+
+		// Era 5 (MOM 2023+): <rarity> <number> <SET> <sep> <LANG>
+		// e.g. "C 0047 TMT • EN" or "R 0123 DSK * EN"
+		const era5 = new RegExp(`[CURM]\\s+0*(\\d{1,4})\\s+([A-Z]{3})\\s*.\\s*(?:${langs})`, 'i');
+		let m = text.match(era5);
+		if (m) {
+			result.collectorNumber = m[1];
+			result.setCode = m[2].toLowerCase();
+		}
+
+		// Era 4 (M15–2022): <number> <rarity> <SET> <sep> <LANG>
+		// e.g. "123 R TSK • EN"
+		if (!result.setCode) {
+			const era4 = new RegExp(`0*(\\d{1,4})\\s+[CURM]\\s+([A-Z]{3})\\s*.\\s*(?:${langs})`, 'i');
+			m = text.match(era4);
+			if (m) {
+				result.collectorNumber = m[1];
+				result.setCode = m[2].toLowerCase();
+			}
+		}
+
+		// Fallback: find <SET> <any separator char> <LANG> anchor, then look for number nearby
+		if (!result.setCode) {
+			const anchor = new RegExp(`([A-Z]{3})\\s*.\\s*(?:${langs})`, 'i');
+			m = text.match(anchor);
+			if (m) {
+				result.setCode = m[1].toLowerCase();
+				// Look for collector number before the set code in the text
+				const before = text.substring(0, m.index);
+				const numMatch = before.match(/0*(\d{1,4})\s*$/);
+				if (numMatch) {
+					result.collectorNumber = numMatch[1];
+				}
+			}
+		}
+
+		// Last resort: any 3-letter uppercase + any number
+		if (!result.setCode) {
+			const setMatch = text.match(/\b([A-Z]{3})\b/);
+			const numMatch = text.match(/\b0*(\d{1,4})\b/);
+			if (setMatch) result.setCode = setMatch[1].toLowerCase();
+			if (numMatch) result.collectorNumber = numMatch[1];
+		}
+
+		// Foil detection: check separator between SET and LANG
+		// Foil = star (★), OCR reads as *, ★, ☆, %, §, x, X
+		// Non-foil = dot (•), OCR reads as ., ·, ,, e
+		if (result.setCode) {
+			const sepPattern = new RegExp(`${result.setCode.toUpperCase()}\\s*(.)\\s*(?:${langs})`, 'i');
+			const sepMatch = text.match(sepPattern);
+			if (sepMatch) {
+				const sep = sepMatch[1];
+				result.foil = /[★☆✦✧⭐*%§xX&]/.test(sep);
+			}
+		}
+
+		return result;
 	}
 
 	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
