@@ -369,7 +369,9 @@
 
 				try {
 					const result = await worker.recognize(card.bottomUrl);
-					const text = result.data.text;
+					const rawText = result.data.text;
+					// Normalize: collapse newlines and multiple spaces into single spaces
+					const text = rawText.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 					card.ocrText = text;
 
 					// Parse collector info using anchor-based matching.
@@ -458,23 +460,35 @@
 			if (fractionMatch) {
 				result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
 			} else {
-				// Find digit sequences. Then check if a single char follows (possibly
-				// separated by space) that's a common OCR misread of a digit.
-				// e.g. "024 J" → J is misread 1, so collector number is 0241
-				const allDigits = [...before.matchAll(/\d{1,4}/g)];
-				if (allDigits.length > 0) {
-					const lastMatch = allDigits[allDigits.length - 1];
-					let raw = lastMatch[0];
-					// Check char(s) right after the digits (skip spaces)
-					const afterIdx = (lastMatch.index ?? 0) + raw.length;
-					const after = before.substring(afterIdx).replace(/^\s+/, '');
-					// If a single OCR-digit-like char follows before non-digit text
-					if (after.length > 0 && /^[JjIil|!)Oo](?:\s|$)/.test(after)) {
-						raw += after[0];
-					}
-					const fixed = fixOcrDigits(raw);
+				// Strategy: find the collector number near the end of `before`.
+				// It may be split by spaces/OCR errors: "C 0 045" or "0045" or "024 J"
+				// Take the last ~20 chars before the set code and extract all digit-like content
+				const tail = before.slice(-20).trim();
+
+				// Try to find a rarity+number pattern: "C 0045", "R 024 J", "M0085"
+				const rarityNumMatch = tail.match(/[CURM]\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
+				if (rarityNumMatch) {
+					const fixed = fixOcrDigits(rarityNumMatch[1].replace(/\s/g, ''));
 					if (fixed.length > 0 && fixed.length <= 4) {
 						result.collectorNumber = stripLeadingZeros(fixed);
+					}
+				}
+
+				// Fallback: just find the last digit sequence
+				if (!result.collectorNumber) {
+					const allDigits = [...before.matchAll(/\d{1,4}/g)];
+					if (allDigits.length > 0) {
+						const lastMatch = allDigits[allDigits.length - 1];
+						let raw = lastMatch[0];
+						const afterIdx = (lastMatch.index ?? 0) + raw.length;
+						const after = before.substring(afterIdx).replace(/^\s+/, '');
+						if (after.length > 0 && /^[JjIil|!)Oo](?:\s|$)/.test(after)) {
+							raw += after[0];
+						}
+						const fixed = fixOcrDigits(raw);
+						if (fixed.length > 0 && fixed.length <= 4) {
+							result.collectorNumber = stripLeadingZeros(fixed);
+						}
 					}
 				}
 			}
