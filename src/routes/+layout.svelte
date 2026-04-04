@@ -22,6 +22,9 @@
 				<a href="/cards" class="{isActive('/cards') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 					Cards
 				</a>
+				<a href="/scan" class="{isActive('/scan') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
+					Scanner
+				</a>
 				{#if data.user}
 					<a href="/collection" class="{isActive('/collection') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 						Collection

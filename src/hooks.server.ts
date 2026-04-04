@@ -10,7 +10,7 @@ initDb();
 setTimeout(() => checkAndUpdatePrices(), 5000);
 
 // Routes that don't require authentication
-const publicRoutes = ['/login', '/auth/', '/cards', '/impressum', '/datenschutz'];
+const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz'];
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const sessionId = event.cookies.get('session');
