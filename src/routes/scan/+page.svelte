@@ -117,43 +117,62 @@
 			// OpenCV processing
 			const src = cv.imread(canvas);
 			const gray = new cv.Mat();
-			const blurred = new cv.Mat();
-			const edges = new cv.Mat();
-			const hierarchy = new cv.Mat();
-			const contours = new cv.MatVector();
 
 			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-			cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-			cv.Canny(blurred, edges, 50, 150);
 
-			// Dilate edges to close gaps
-			const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-			cv.dilate(edges, edges, kernel);
+			// Try multiple Canny threshold pairs to handle different card/background combos
+			const cannyParams = [
+				{ blur: 5, low: 30, high: 100 },   // Sensitive (borderless, low contrast)
+				{ blur: 5, low: 50, high: 150 },   // Standard
+				{ blur: 3, low: 75, high: 200 },   // Sharp edges (high contrast)
+			];
 
-			cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-			// Find card-like rectangles
 			const cardContours: Array<{ corners: any; area: number }> = [];
-			const minArea = (img.width * img.height) * 0.02; // At least 2% of image
+			const minArea = (img.width * img.height) * 0.005; // 0.5% of image (for many cards)
+			const maxArea = (img.width * img.height) * 0.8;   // Max 80% (not the whole image)
+			const seenRects = new Set<string>(); // Deduplicate across runs
 
-			for (let i = 0; i < contours.size(); i++) {
-				const contour = contours.get(i);
-				const area = cv.contourArea(contour);
-				if (area < minArea) continue;
+			for (const params of cannyParams) {
+				const blurMat = new cv.Mat();
+				const edgeMat = new cv.Mat();
+				cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
+				cv.Canny(blurMat, edgeMat, params.low, params.high);
 
-				const perimeter = cv.arcLength(contour, true);
-				const approx = new cv.Mat();
-				cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
+				// Dilate to close gaps
+				const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+				cv.dilate(edgeMat, edgeMat, kernel);
 
-				if (approx.rows === 4) {
-					// Check aspect ratio (~0.7 for MTG cards, allow some tolerance)
-					const rect = cv.boundingRect(approx);
-					const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-					if (aspect > 0.5 && aspect < 0.9) {
-						cardContours.push({ corners: approx.clone(), area });
+				const conts = new cv.MatVector();
+				const hier = new cv.Mat();
+				// Use RETR_LIST to find all contours, not just external
+				cv.findContours(edgeMat, conts, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+				for (let i = 0; i < conts.size(); i++) {
+					const contour = conts.get(i);
+					const area = cv.contourArea(contour);
+					if (area < minArea || area > maxArea) continue;
+
+					const perimeter = cv.arcLength(contour, true);
+					const approx = new cv.Mat();
+					cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
+
+					if (approx.rows === 4) {
+						const rect = cv.boundingRect(approx);
+						const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
+						if (aspect > 0.5 && aspect < 0.9) {
+							// Deduplicate: skip if we already have a similar rectangle
+							const key = `${Math.round(rect.x / 20)}_${Math.round(rect.y / 20)}_${Math.round(rect.width / 20)}`;
+							if (!seenRects.has(key)) {
+								seenRects.add(key);
+								cardContours.push({ corners: approx.clone(), area });
+							}
+						}
 					}
+					approx.delete();
 				}
-				approx.delete();
+
+				blurMat.delete(); edgeMat.delete(); kernel.delete();
+				conts.delete(); hier.delete();
 			}
 
 			// Sort by area (largest first)
@@ -181,9 +200,7 @@
 			if (cardContours.length === 0) {
 				scanProgress = 'No cards detected. Try a clearer photo.';
 				scanning = false;
-				// Cleanup
-				src.delete(); gray.delete(); blurred.delete(); edges.delete();
-				hierarchy.delete(); contours.delete(); kernel.delete();
+				src.delete(); gray.delete();
 				return;
 			}
 
@@ -206,9 +223,18 @@
 				const edgeTop = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
 				if (edgeTop > edgeLeft) {
-					// Card is landscape - rotate corners 90° clockwise to portrait
 					ordered = [ordered[1], ordered[2], ordered[3], ordered[0]];
 				}
+
+				// Expand corners outward by ~3% to ensure the full card is captured
+				// (edge detection often finds inner edges, cutting off the border)
+				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
+				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
+				const pad = 0.03;
+				ordered = ordered.map(([x, y]) => [
+					Math.max(0, Math.min(img.width - 1, Math.round(x + (x - cx) * pad))),
+					Math.max(0, Math.min(img.height - 1, Math.round(y + (y - cy) * pad)))
+				]) as Array<[number, number]>;
 
 				// Perspective transform to flatten card
 				const cardW = 488;
@@ -268,8 +294,7 @@
 			detectedCards = cards;
 
 			// Cleanup OpenCV mats
-			src.delete(); gray.delete(); blurred.delete(); edges.delete();
-			hierarchy.delete(); contours.delete(); kernel.delete();
+			src.delete(); gray.delete();
 
 			// OCR each card
 			scanProgress = 'Running OCR...';
