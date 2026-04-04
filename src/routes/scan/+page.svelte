@@ -120,17 +120,31 @@
 
 			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-			// Try multiple Canny threshold pairs to handle different card/background combos
+			// === Strategy 1: Canny edge detection with multiple thresholds ===
 			const cannyParams = [
-				{ blur: 5, low: 30, high: 100 },   // Sensitive (borderless, low contrast)
-				{ blur: 5, low: 50, high: 150 },   // Standard
-				{ blur: 3, low: 75, high: 200 },   // Sharp edges (high contrast)
+				{ blur: 5, low: 30, high: 100 },
+				{ blur: 5, low: 50, high: 150 },
+				{ blur: 3, low: 75, high: 200 },
 			];
 
-			let allCandidates: Array<{ corners: any; area: number; rect: { x: number; y: number; width: number; height: number } }> = [];
-			const minArea = (img.width * img.height) * 0.015; // 1.5% of image
-			const maxArea = (img.width * img.height) * 0.5;   // Max 50%
+			type CardCandidate = { corners: any; area: number; rect: { x: number; y: number; width: number; height: number } };
+			let allCandidates: CardCandidate[] = [];
+			const imgArea = img.width * img.height;
+			const minArea = imgArea * 0.008;
+			const maxArea = imgArea * 0.5;
 			const seenRects = new Set<string>();
+
+			function addCandidate(approx: any) {
+				const rect = cv.boundingRect(approx);
+				const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
+				if (aspect > 0.5 && aspect < 0.9) {
+					const key = `${Math.round(rect.x / 15)}_${Math.round(rect.y / 15)}_${Math.round(rect.width / 15)}`;
+					if (!seenRects.has(key)) {
+						seenRects.add(key);
+						allCandidates.push({ corners: approx.clone(), area: cv.contourArea(approx), rect });
+					}
+				}
+			}
 
 			for (const params of cannyParams) {
 				const blurMat = new cv.Mat();
@@ -138,6 +152,7 @@
 				cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
 				cv.Canny(blurMat, edgeMat, params.low, params.high);
 
+				// Close gaps with dilation, then find contours
 				const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
 				cv.dilate(edgeMat, edgeMat, kernel);
 
@@ -154,17 +169,7 @@
 					const approx = new cv.Mat();
 					cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
 
-					if (approx.rows === 4) {
-						const rect = cv.boundingRect(approx);
-						const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-						if (aspect > 0.55 && aspect < 0.85) {
-							const key = `${Math.round(rect.x / 20)}_${Math.round(rect.y / 20)}_${Math.round(rect.width / 20)}`;
-							if (!seenRects.has(key)) {
-								seenRects.add(key);
-								allCandidates.push({ corners: approx.clone(), area, rect });
-							}
-						}
-					}
+					if (approx.rows === 4) addCandidate(approx);
 					approx.delete();
 				}
 
@@ -172,14 +177,45 @@
 				conts.delete(); hier.delete();
 			}
 
-			// Filter out contours contained within larger ones (text boxes inside cards)
+			// === Strategy 2: Threshold segmentation for tightly packed cards ===
+			// Cards are brighter than the dark background between them
+			const blurForThresh = new cv.Mat();
+			cv.GaussianBlur(gray, blurForThresh, new cv.Size(5, 5), 0);
+			const threshMat = new cv.Mat();
+			cv.adaptiveThreshold(blurForThresh, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, -5);
+
+			// Erode to create gaps between touching cards, then dilate back
+			const sepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+			cv.erode(threshMat, threshMat, sepKernel);
+			cv.dilate(threshMat, threshMat, sepKernel);
+
+			const threshConts = new cv.MatVector();
+			const threshHier = new cv.Mat();
+			cv.findContours(threshMat, threshConts, threshHier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+			for (let i = 0; i < threshConts.size(); i++) {
+				const contour = threshConts.get(i);
+				const area = cv.contourArea(contour);
+				if (area < minArea || area > maxArea) continue;
+
+				const perimeter = cv.arcLength(contour, true);
+				const approx = new cv.Mat();
+				cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
+
+				if (approx.rows === 4) addCandidate(approx);
+				approx.delete();
+			}
+
+			blurForThresh.delete(); threshMat.delete(); sepKernel.delete();
+			threshConts.delete(); threshHier.delete();
+
+			// Filter out contours contained within larger ones
 			allCandidates.sort((a, b) => b.area - a.area);
-			const cardContours: typeof allCandidates = [];
+			const cardContours: CardCandidate[] = [];
 			for (const candidate of allCandidates) {
 				const r = candidate.rect;
 				const isInside = cardContours.some(card => {
 					const c = card.rect;
-					// Check if candidate center is inside an existing larger card
 					const cx = r.x + r.width / 2;
 					const cy = r.y + r.height / 2;
 					return cx > c.x && cx < c.x + c.width && cy > c.y && cy < c.y + c.height;
@@ -241,7 +277,7 @@
 				// (edge detection often finds inner edges, cutting off the border)
 				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
 				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-				const pad = 0.05;
+				const pad = 0.08;
 				ordered = ordered.map(([x, y]) => [
 					Math.max(0, Math.min(img.width - 1, Math.round(x + (x - cx) * pad))),
 					Math.max(0, Math.min(img.height - 1, Math.round(y + (y - cy) * pad)))
