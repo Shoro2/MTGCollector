@@ -35,6 +35,11 @@
 					<a href="/prices" class="{isActive('/prices') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 						Prices
 					</a>
+						{#if data.user.isAdmin}
+						<a href="/admin" class="{isActive('/admin') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
+							Admin
+						</a>
+					{/if}
 				{/if}
 			</div>
 			<div class="flex items-center gap-3">

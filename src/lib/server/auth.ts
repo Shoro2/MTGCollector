@@ -17,7 +17,7 @@ export function createSession(userId: string): string {
 	return id;
 }
 
-export function validateSession(sessionId: string): { id: string; name: string; email: string; avatarUrl: string | null } | null {
+export function validateSession(sessionId: string): { id: string; name: string; email: string; avatarUrl: string | null; isAdmin: boolean } | null {
 	const row = sqlite.prepare(
 		`SELECT u.id, u.name, u.email, u.avatar_url
 		 FROM sessions s JOIN users u ON s.user_id = u.id
@@ -25,7 +25,8 @@ export function validateSession(sessionId: string): { id: string; name: string; 
 	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null } | undefined;
 
 	if (!row) return null;
-	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url };
+	const adminEmail = env.ADMIN_EMAIL || '';
+	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: row.email === adminEmail };
 }
 
 export function deleteSession(sessionId: string) {

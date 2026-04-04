@@ -25,5 +25,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(302, '/login');
 	}
 
+	// Admin routes
+	if (path.startsWith('/admin') && (!event.locals.user || !event.locals.user.isAdmin)) {
+		throw redirect(302, '/');
+	}
+
 	return resolve(event);
 };
