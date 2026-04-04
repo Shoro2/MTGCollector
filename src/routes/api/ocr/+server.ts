@@ -1,8 +1,9 @@
 import { json, error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import { sqlite } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
 	const apiKey = env.GOOGLE_VISION_API_KEY;
 	if (!apiKey) {
 		throw error(500, 'GOOGLE_VISION_API_KEY not configured');
@@ -41,6 +42,13 @@ export const POST: RequestHandler = async ({ request }) => {
 		const text = r.textAnnotations?.[0]?.description ?? '';
 		return text.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 	});
+
+	// Track API usage
+	try {
+		sqlite.prepare(
+			'INSERT INTO api_usage (service, endpoint, request_count, image_count, user_id) VALUES (?, ?, ?, ?, ?)'
+		).run('google_vision', 'TEXT_DETECTION', 1, images.length, locals.user?.id ?? null);
+	} catch { /* don't fail the request if tracking fails */ }
 
 	return json({ results });
 };

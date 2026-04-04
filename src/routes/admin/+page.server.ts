@@ -67,8 +67,30 @@ export async function load({ locals }) {
 		 LIMIT 10`
 	).all() as Array<{ snapshot_date: string; cards_snapshotted: number }>;
 
+	// Google Vision API usage
+	const visionUsage = {
+		total: (sqlite.prepare(
+			"SELECT COALESCE(SUM(request_count), 0) as c FROM api_usage WHERE service = 'google_vision'"
+		).get() as { c: number }).c,
+		totalImages: (sqlite.prepare(
+			"SELECT COALESCE(SUM(image_count), 0) as c FROM api_usage WHERE service = 'google_vision'"
+		).get() as { c: number }).c,
+		thisMonth: (sqlite.prepare(
+			"SELECT COALESCE(SUM(request_count), 0) as c FROM api_usage WHERE service = 'google_vision' AND created_at >= date('now', 'start of month')"
+		).get() as { c: number }).c,
+		thisMonthImages: (sqlite.prepare(
+			"SELECT COALESCE(SUM(image_count), 0) as c FROM api_usage WHERE service = 'google_vision' AND created_at >= date('now', 'start of month')"
+		).get() as { c: number }).c,
+		recentCalls: sqlite.prepare(
+			`SELECT created_at, request_count, image_count, user_id
+			 FROM api_usage WHERE service = 'google_vision'
+			 ORDER BY created_at DESC LIMIT 20`
+		).all() as Array<{ created_at: string; request_count: number; image_count: number; user_id: string | null }>
+	};
+
 	return {
 		users,
+		visionUsage,
 		dbStats: {
 			cardCount,
 			collectionCount,

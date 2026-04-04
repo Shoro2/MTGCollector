@@ -165,6 +165,19 @@ export function initDb() {
 		sqlite.exec('CREATE INDEX IF NOT EXISTS idx_collection_cards_user_id ON collection_cards(user_id)');
 		sqlite.exec('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
 	} catch { /* Indexes already exist */ }
+
+	// API usage tracking
+	sqlite.exec(`
+		CREATE TABLE IF NOT EXISTS api_usage (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			service TEXT NOT NULL,
+			endpoint TEXT,
+			request_count INTEGER DEFAULT 1,
+			image_count INTEGER DEFAULT 0,
+			user_id TEXT,
+			created_at TEXT DEFAULT (datetime('now'))
+		)
+	`);
 }
 
 export { sqlite };
