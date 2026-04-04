@@ -54,3 +54,14 @@ export function conditionLabel(condition: string): string {
 	};
 	return labels[condition] || condition;
 }
+
+/** Format a price history timestamp as a date label.
+ *  Timestamps before 10:00 UTC are shown as the previous day,
+ *  since Scryfall prices haven't updated yet at that point. */
+export function priceDate(isoString: string): string {
+	const d = new Date(isoString);
+	if (d.getUTCHours() < 10) {
+		d.setUTCDate(d.getUTCDate() - 1);
+	}
+	return d.toLocaleDateString();
+}

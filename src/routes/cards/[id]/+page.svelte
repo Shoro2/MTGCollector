@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatManaCost, formatPrice, getRarityColor, conditionLabel } from '$lib/utils';
+	import { formatManaCost, formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { Chart, registerables } from 'chart.js';
@@ -82,7 +82,7 @@
 		priceChart = null;
 		if (!priceChartCanvas || data.priceHistory.length === 0) return;
 
-		const labels = data.priceHistory.map((h) => new Date(h.recorded_at as string).toLocaleDateString());
+		const labels = data.priceHistory.map((h) => priceDate(h.recorded_at as string));
 		const eurKey = chartType === 'foil' ? 'price_eur_foil' : 'price_eur';
 		const usdKey = chartType === 'foil' ? 'price_usd_foil' : 'price_usd';
 

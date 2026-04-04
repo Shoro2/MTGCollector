@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatPrice } from '$lib/utils';
+	import { formatPrice, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import { onMount } from 'svelte';
 	import { Chart, registerables } from 'chart.js';
@@ -36,7 +36,7 @@
 			modalChart = new Chart(modalChartCanvas, {
 				type: 'line',
 				data: {
-					labels: result.history.map((h: Record<string, unknown>) => new Date(h.recorded_at as string).toLocaleDateString()),
+					labels: result.history.map((h: Record<string, unknown>) => priceDate(h.recorded_at as string)),
 					datasets: [
 						{
 							label: 'Price (EUR)',
@@ -135,7 +135,7 @@
 		profitChart?.destroy();
 		if (data.profitHistory.length > 0 && profitChartCanvas) {
 			const profitData = data.profitHistory.map((h) => ({
-				date: new Date(h.recorded_at).toLocaleDateString(),
+				date: priceDate(h.recorded_at),
 				profit: (h.total_value ?? 0) - (h.total_purchase ?? 0)
 			}));
 			profitChart = new Chart(profitChartCanvas, {
@@ -189,7 +189,7 @@
 			cardChart = new Chart(cardChartCanvas, {
 				type: 'line',
 				data: {
-					labels: data.cardPriceHistory.map((h) => new Date(h.recorded_at as string).toLocaleDateString()),
+					labels: data.cardPriceHistory.map((h) => priceDate(h.recorded_at as string)),
 					datasets: [
 						{
 							label: 'Price (EUR)',
