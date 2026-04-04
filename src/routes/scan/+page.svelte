@@ -219,15 +219,23 @@
 				const croppedUrl = cardCanvas.toDataURL();
 
 				// Crop bottom 8%, left half only (right side has copyright text that confuses OCR)
-				// Crop only the black info bar at very bottom (skip card frame/border above it)
-				const bottomY = Math.floor(cardH * 0.945);
-				const bottomH = Math.floor(cardH * 0.99) - bottomY;
-				const bottomRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.05), bottomY, Math.floor(cardW * 0.45), bottomH));
+				// Crop bottom 10% left half for collector info
+				const bottomY = Math.floor(cardH * 0.90);
+				const bottomH = cardH - bottomY;
+				const roiW = Math.floor(cardW * 0.5);
+				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
 
-				// Scale up 4x (for better OCR on tiny text), keep original colors
+				// Convert to grayscale and threshold to isolate white text on dark background.
+				// This filters out the colored card frame automatically.
+				const gray = new cv.Mat();
+				cv.cvtColor(bottomRoi, gray, cv.COLOR_RGBA2GRAY);
+				const thresh = new cv.Mat();
+				cv.threshold(gray, thresh, 180, 255, cv.THRESH_BINARY);
+
+				// Scale up 4x for better OCR
 				const scaled = new cv.Mat();
-				const roiW = Math.floor(cardW * 0.45);
-				cv.resize(bottomRoi, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
+				cv.resize(thresh, scaled, new cv.Size(roiW * 4, bottomH * 4), 0, 0, cv.INTER_CUBIC);
+				gray.delete(); thresh.delete();
 
 				const bottomCanvas = document.createElement('canvas');
 				cv.imshow(bottomCanvas, scaled);
