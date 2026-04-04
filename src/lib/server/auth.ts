@@ -25,8 +25,8 @@ export function validateSession(sessionId: string): { id: string; name: string; 
 	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null } | undefined;
 
 	if (!row) return null;
-	const adminEmail = env.ADMIN_EMAIL || '';
-	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: row.email === adminEmail };
+	const adminEmail = (env.ADMIN_EMAIL || '').toLowerCase();
+	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: row.email.toLowerCase() === adminEmail };
 }
 
 export function deleteSession(sessionId: string) {
