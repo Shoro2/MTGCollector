@@ -315,11 +315,12 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
-				// Crop top name area (~3-8% height, skip border, left 75%)
-				const nameY = Math.floor(cardH * 0.03);
-				const nameH = Math.floor(cardH * 0.055);
-				const nameW = Math.floor(cardW * 0.75);
-				const nameRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.05), nameY, nameW, nameH));
+				// Crop name area — skip black border + frame top, capture name text line
+				// With 5% corner padding the border is ~7-8% of card height
+				const nameY = Math.floor(cardH * 0.07);
+				const nameH = Math.floor(cardH * 0.065);
+				const nameW = Math.floor(cardW * 0.72);
+				const nameRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.08), nameY, nameW, nameH));
 				const grayName = new cv.Mat();
 				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
 				const nameScaled = new cv.Mat();
