@@ -442,7 +442,7 @@
 		const result = { setCode: '', collectorNumber: '', foilFromText: false };
 
 		// Step 1: Find anchor — <SET 3-letter> followed by <LANG 2-letter> within a few chars
-		const anchor = new RegExp(`([A-Z]{3})\\s*(\\S?)\\s*(?:${langs})\\b`, 'i');
+		const anchor = new RegExp(`\\b([A-Z]{3})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'i');
 		const anchorMatch = text.match(anchor);
 
 		if (anchorMatch) {
@@ -450,7 +450,7 @@
 
 			// Check separator character for foil hint
 			const sep = anchorMatch[2] || '';
-			result.foilFromText = /[*#&xX]/.test(sep);
+			result.foilFromText = /[*#&]/.test(sep);
 
 			// Step 2: Extract collector number from text BEFORE the set code
 			const before = text.substring(0, anchorMatch.index);
