@@ -20,13 +20,18 @@ export async function load({ params, locals }) {
 	// Get price history (deduplicated to one per day by effective date)
 	const priceHistory = sqlite
 		.prepare(
-			`SELECT MAX(price_eur) as price_eur, MAX(price_eur_foil) as price_eur_foil,
-			        MAX(price_usd) as price_usd, MAX(price_usd_foil) as price_usd_foil,
-			        MAX(recorded_at) as recorded_at
-			 FROM price_history
-			 WHERE card_id = ?
-			 GROUP BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)
-			 ORDER BY recorded_at ASC`
+			`WITH dp AS (
+				SELECT price_eur, price_eur_foil, price_usd, price_usd_foil,
+					DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) as effective_date,
+					ROW_NUMBER() OVER (
+						PARTITION BY DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)
+						ORDER BY recorded_at DESC
+					) as rn
+				FROM price_history WHERE card_id = ?
+			)
+			SELECT price_eur, price_eur_foil, price_usd, price_usd_foil, effective_date as recorded_at
+			FROM dp WHERE rn = 1
+			ORDER BY effective_date ASC`
 		)
 		.all(params.id) as Array<Record<string, unknown>>;
 

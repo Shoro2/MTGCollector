@@ -55,11 +55,15 @@ export function conditionLabel(condition: string): string {
 	return labels[condition] || condition;
 }
 
-/** Format a price history timestamp as a date label.
- *  Timestamps before 10:00 UTC are shown as the previous day,
- *  since Scryfall prices haven't updated yet at that point. */
-export function priceDate(isoString: string): string {
-	const d = new Date(isoString);
+/** Format a price history date for chart labels.
+ *  Accepts both effective date strings ("2026-04-03") and full ISO timestamps. */
+export function priceDate(dateString: string): string {
+	// If it's a plain date (YYYY-MM-DD), parse as noon UTC to avoid timezone shifts
+	if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+		return new Date(dateString + 'T12:00:00Z').toLocaleDateString();
+	}
+	// Full ISO timestamp: shift back if before 10:00 UTC
+	const d = new Date(dateString);
 	if (d.getUTCHours() < 10) {
 		d.setUTCDate(d.getUTCDate() - 1);
 	}
