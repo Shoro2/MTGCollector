@@ -138,7 +138,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
 			SELECT id, price_eur, price_eur_foil, price_usd, price_usd_foil, ?
 			FROM cards
-			WHERE price_eur IS NOT NULL OR price_usd IS NOT NULL
+			WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL OR price_usd IS NOT NULL OR price_usd_foil IS NOT NULL
 		`).run(now);
 
 		const snapshotted = snapshotResult.changes;
