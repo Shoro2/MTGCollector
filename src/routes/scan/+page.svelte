@@ -885,6 +885,23 @@
 		selectedCards = new Set();
 	}
 
+	let scanSort = $state<'default' | 'price'>('default');
+	let sortedCards = $derived(() => {
+		if (scanSort === 'price') {
+			return [...detectedCards].map((c, i) => ({ card: c, origIdx: i }))
+				.sort((a, b) => {
+					const priceA = a.card.results.length > 0 ? getCardPrice(a.card.results[a.card.selectedResultIdx]) : 0;
+					const priceB = b.card.results.length > 0 ? getCardPrice(b.card.results[b.card.selectedResultIdx]) : 0;
+					return priceB - priceA;
+				});
+		}
+		return detectedCards.map((c, i) => ({ card: c, origIdx: i }));
+	});
+
+	function getCardPrice(result: Record<string, unknown>): number {
+		return (result.price_eur as number | null) ?? (result.price_usd as number | null) ?? 0;
+	}
+
 	let copied = $state(false);
 
 	function getMoxfieldText(): string {
@@ -977,6 +994,21 @@
 					{/if}
 				{/if}
 				{#if hasIdentified}
+					<div class="flex items-center gap-1 ml-auto">
+						<span class="text-xs text-[var(--color-text-muted)] mr-1">Sort:</span>
+						<button onclick={() => scanSort = 'default'}
+							class="px-2 py-1 rounded text-xs border transition-colors {scanSort === 'default'
+								? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
+								: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}">
+							Scan order
+						</button>
+						<button onclick={() => scanSort = 'price'}
+							class="px-2 py-1 rounded text-xs border transition-colors {scanSort === 'price'
+								? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
+								: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}">
+							Price
+						</button>
+					</div>
 					<button onclick={copyMoxfieldText}
 						class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2">
 						{#if copied}
@@ -991,25 +1023,25 @@
 			</div>
 		{/if}
 		<div class="space-y-4">
-			{#each detectedCards as card, idx}
-				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 {selectedCards.has(idx) ? 'ring-2 ring-green-500/50' : ''}">
+			{#each sortedCards() as { card, origIdx }, idx}
+				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''}">
 					<div class="flex gap-4">
 						<!-- Selection checkbox for identified cards -->
 						{#if loggedIn && card.status === 'found' && card.results.length > 0 && !addedCards.some(a => a.id === card.results[card.selectedResultIdx].id)}
 							<div class="flex-shrink-0 pt-1">
-								<input type="checkbox" checked={selectedCards.has(idx)} onchange={() => toggleSelect(idx)}
+								<input type="checkbox" checked={selectedCards.has(origIdx)} onchange={() => toggleSelect(origIdx)}
 									class="w-5 h-5 rounded border-[var(--color-border)] accent-green-600 cursor-pointer" />
 							</div>
 						{/if}
 						<!-- Debug: Cropped card + bottom scan -->
 						<div class="flex-shrink-0 space-y-2">
-							<CardPreview src={card.croppedUrl} alt="Card {idx + 1}" scale={1.5}>
-								<img src={card.croppedUrl} alt="Card {idx + 1}" class="w-32 rounded" />
+							<CardPreview src={card.croppedUrl} alt="Card {origIdx + 1}" scale={1.5}>
+								<img src={card.croppedUrl} alt="Card {origIdx + 1}" class="w-32 rounded" />
 							</CardPreview>
 							<div>
 								<p class="text-xs text-[var(--color-text-muted)] mb-1">Name:</p>
-								<CardPreview src={card.nameUrl} alt="Name scan {idx + 1}" maxWidth={600} maxHeight={150} contain>
-									<img src={card.nameUrl} alt="Name scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
+								<CardPreview src={card.nameUrl} alt="Name scan {origIdx + 1}" maxWidth={600} maxHeight={150} contain>
+									<img src={card.nameUrl} alt="Name scan {origIdx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
 								</CardPreview>
 								{#if card.nameText}
 									<p class="text-xs text-[var(--color-text-muted)] font-mono break-all w-32 mt-0.5">"{card.nameText}"</p>
@@ -1017,8 +1049,8 @@
 							</div>
 							<div>
 								<p class="text-xs text-[var(--color-text-muted)] mb-1">Bottom:</p>
-								<CardPreview src={card.bottomUrl} alt="Bottom scan {idx + 1}" maxWidth={600} maxHeight={200} contain>
-									<img src={card.bottomUrl} alt="Bottom scan {idx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
+								<CardPreview src={card.bottomUrl} alt="Bottom scan {origIdx + 1}" maxWidth={600} maxHeight={200} contain>
+									<img src={card.bottomUrl} alt="Bottom scan {origIdx + 1}" class="w-32 rounded border border-[var(--color-border)]" />
 								</CardPreview>
 								{#if card.ocrText}
 									<p class="text-xs text-[var(--color-text-muted)] font-mono break-all w-32 mt-0.5">{card.ocrText.trim()}</p>
@@ -1029,7 +1061,7 @@
 						<!-- Result -->
 						<div class="flex-1">
 							<h3 class="text-sm font-semibold mb-2">
-								Card {idx + 1}
+								Card {origIdx + 1}
 								<button
 									onclick={() => { card.foil = !card.foil; }}
 									class="text-xs px-1.5 py-0.5 rounded font-medium ml-1 border transition-colors {card.foil
@@ -1097,7 +1129,7 @@
 								{/each}
 							{:else}
 								<p class="text-sm text-[var(--color-text-muted)] mb-2">Not identified automatically.</p>
-								{#if manualCardIndex === idx}
+								{#if manualCardIndex === origIdx}
 									<!-- Manual search form -->
 									<div class="space-y-2">
 										<div class="flex gap-2 text-xs">
@@ -1155,7 +1187,7 @@
 										{/if}
 									</div>
 								{:else}
-									<button onclick={() => openManualSearch(idx)}
+									<button onclick={() => openManualSearch(origIdx)}
 										class="text-sm text-[var(--color-primary)] hover:underline">
 										Search manually
 									</button>
