@@ -508,7 +508,7 @@
 					}
 
 					if (match) {
-						card.results = [match, ...card.results.filter(r => r !== match)];
+						card.results = [match];
 						card.matchType = 'reprint_match';
 					}
 					card.status = 'found';
