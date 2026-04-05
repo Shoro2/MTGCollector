@@ -2,8 +2,19 @@
 	import type { PageData } from './$types';
 	import { formatPrice, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
+	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { Chart, registerables } from 'chart.js';
+	import {
+		Chart,
+		LineController,
+		LineElement,
+		PointElement,
+		LinearScale,
+		CategoryScale,
+		Filler,
+		Legend,
+		Tooltip
+	} from 'chart.js';
 
 	let { data }: { data: PageData } = $props();
 
@@ -54,10 +65,10 @@
 				},
 				options: {
 					responsive: true,
-					plugins: { legend: { labels: { color: '#94a3b8' } } },
+					plugins: { legend: { labels: { color: '#b0bec5' } } },
 					scales: {
-						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
+						x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
+						y: { ticks: { color: '#b0bec5', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
 					}
 				}
 			});
@@ -87,7 +98,7 @@
 						updateMessage = 'Prices are already up to date (no new Scryfall data).';
 					} else {
 						updateMessage = 'Prices updated successfully!';
-						window.location.reload();
+						await invalidateAll();
 					}
 				}
 			}, 5000);
@@ -194,7 +205,7 @@
 						{
 							label: 'Purchase Price (EUR)',
 							data: data.profitHistory.map((h) => h.total_purchase),
-							borderColor: '#94a3b8',
+							borderColor: '#b0bec5',
 							borderDash: [5, 5],
 							tension: 0.3,
 							pointRadius: 0
@@ -210,10 +221,10 @@
 				},
 				options: {
 					responsive: true,
-					plugins: { legend: { labels: { color: '#94a3b8' } } },
+					plugins: { legend: { labels: { color: '#b0bec5' } } },
 					scales: {
-						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
+						x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
+						y: { ticks: { color: '#b0bec5', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
 					}
 				}
 			});
@@ -221,7 +232,7 @@
 	}
 
 	onMount(() => {
-		Chart.register(...registerables);
+		Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Legend, Tooltip);
 		buildProfitChart();
 
 		// Single card price chart
@@ -247,10 +258,10 @@
 				},
 				options: {
 					responsive: true,
-					plugins: { legend: { labels: { color: '#94a3b8' } } },
+					plugins: { legend: { labels: { color: '#b0bec5' } } },
 					scales: {
-						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
+						x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
+						y: { ticks: { color: '#b0bec5', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
 					}
 				}
 			});
@@ -332,7 +343,9 @@
 				</div>
 			{/if}
 
-			<canvas bind:this={profitChartCanvas}></canvas>
+			<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
+				<canvas bind:this={profitChartCanvas}></canvas>
+			</div>
 		</div>
 	{:else}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
@@ -349,7 +362,9 @@
 				<span class="text-sm text-[var(--color-text-muted)] font-normal">({data.selectedCard.set_name})</span>
 			</h2>
 			{#if data.cardPriceHistory.length > 0}
-				<canvas bind:this={cardChartCanvas}></canvas>
+				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
+					<canvas bind:this={cardChartCanvas}></canvas>
+				</div>
 			{:else}
 				<p class="text-[var(--color-text-muted)]">No price history available for this card.</p>
 			{/if}
@@ -462,9 +477,12 @@
 
 <!-- Card Price History Modal -->
 {#if modalOpen}
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Card price history"
+		tabindex="-1"
 		onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
 		onkeydown={(e) => { if (e.key === 'Escape') closeModal(); }}
 	>
@@ -483,7 +501,9 @@
 			{#if modalLoading}
 				<p class="text-[var(--color-text-muted)] text-center py-8">Loading price data...</p>
 			{:else if modalCard}
-				<canvas bind:this={modalChartCanvas}></canvas>
+				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
+					<canvas bind:this={modalChartCanvas}></canvas>
+				</div>
 			{/if}
 		</div>
 	</div>
