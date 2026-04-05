@@ -50,6 +50,9 @@
 						{/if}
 						<span class="text-sm text-[var(--color-text-muted)] hidden sm:inline">{data.user.name}</span>
 					</div>
+					<a href="/settings" class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
+						Einstellungen
+					</a>
 					<form method="POST" action="/auth/logout">
 						<button type="submit" class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
 							Logout
@@ -71,5 +74,11 @@
 			<a href="/impressum" class="hover:text-[var(--color-text)] transition-colors">Impressum</a>
 			<a href="/datenschutz" class="hover:text-[var(--color-text)] transition-colors">Datenschutz</a>
 		</div>
+		<p class="mt-2 max-w-3xl mx-auto leading-relaxed">
+			mtg-collector.com is unofficial Fan Content permitted under the
+			<a href="https://company.wizards.com/en/legal/fancontentpolicy" class="underline hover:text-[var(--color-text)] transition-colors" target="_blank" rel="noopener noreferrer">Fan Content Policy</a>.
+			Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast.
+			&copy;Wizards of the Coast LLC.
+		</p>
 	</footer>
 </div>
