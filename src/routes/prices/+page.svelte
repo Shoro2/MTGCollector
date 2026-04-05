@@ -97,20 +97,53 @@
 		}
 	}
 
-	function priceChange(card: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
+	function cardValue(card: Record<string, unknown>): number {
+		const price = card.price as number | null;
+		const priceUsd = card.price_usd as number | null;
+		return (price ?? (priceUsd != null ? priceUsd * data.usdToEur : 0)) * (card.quantity as number);
+	}
+
+	function cardProfit(card: Record<string, unknown>): number | null {
 		const purchasePrice = card.purchase_price as number | null;
-		let currentPrice = card.price as number | null;
-		// Fallback: convert USD to EUR if no EUR price
-		if (currentPrice == null) {
-			const usdPrice = card.price_usd as number | null;
-			if (usdPrice != null) currentPrice = usdPrice * data.usdToEur;
-		}
-		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
-		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
-		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };
-		if (percent < 0) return { percent, direction: '▼', color: 'text-red-400' };
+		if (purchasePrice == null || !purchasePrice) return null;
+		const price = card.price as number | null;
+		const priceUsd = card.price_usd as number | null;
+		const currentPrice = price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
+		if (currentPrice == null) return null;
+		return (currentPrice - purchasePrice) * (card.quantity as number);
+	}
+
+	function cardProfitPct(card: Record<string, unknown>): number | null {
+		const purchasePrice = card.purchase_price as number | null;
+		if (purchasePrice == null || !purchasePrice) return null;
+		const price = card.price as number | null;
+		const priceUsd = card.price_usd as number | null;
+		const currentPrice = price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
+		if (currentPrice == null) return null;
+		return ((currentPrice - purchasePrice) / purchasePrice) * 100;
+	}
+
+	function priceChange(card: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
+		const pct = cardProfitPct(card);
+		if (pct == null) return null;
+		if (pct > 0) return { percent: pct, direction: '▲', color: 'text-green-400' };
+		if (pct < 0) return { percent: pct, direction: '▼', color: 'text-red-400' };
 		return { percent: 0, direction: '—', color: 'text-[var(--color-text-muted)]' };
 	}
+
+	let topSort = $state<'value' | 'profit' | 'profit_pct'>('value');
+
+	let sortedTopCards = $derived.by(() => {
+		const cards = [...data.topCards];
+		if (topSort === 'value') {
+			cards.sort((a, b) => cardValue(b) - cardValue(a));
+		} else if (topSort === 'profit') {
+			cards.sort((a, b) => (cardProfit(b) ?? -Infinity) - (cardProfit(a) ?? -Infinity));
+		} else {
+			cards.sort((a, b) => (cardProfitPct(b) ?? -Infinity) - (cardProfitPct(a) ?? -Infinity));
+		}
+		return cards.slice(0, 20);
+	});
 
 	let totalChange = $derived(
 		data.stats.totalPurchaseValue > 0
@@ -311,12 +344,30 @@
 		</div>
 	{/if}
 
-	<!-- Top Cards by Value -->
+	<!-- Top Cards -->
 	{#if data.topCards.length > 0}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h2 class="text-lg font-semibold mb-4">Most Valuable Cards</h2>
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold">
+					{topSort === 'value' ? 'Most Valuable Cards' : topSort === 'profit' ? 'Top Profit Cards' : 'Top Profit Cards (%)'}
+				</h2>
+				<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
+					<button
+						onclick={() => topSort = 'value'}
+						class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>Value</button>
+					<button
+						onclick={() => topSort = 'profit'}
+						class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>Profit</button>
+					<button
+						onclick={() => topSort = 'profit_pct'}
+						class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>Profit %</button>
+				</div>
+			</div>
 			<div class="space-y-2">
-				{#each data.topCards as card, i}
+				{#each sortedTopCards as card, i}
 					<div class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors">
 						<a
 							href="/collection?edit={card.collection_id}"
@@ -340,11 +391,29 @@
 								</p>
 							</div>
 							<div class="text-right flex-shrink-0">
-								<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
-								{#if priceChange(card)}
-									<p class="text-xs {priceChange(card)!.color}">
-										{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
-									</p>
+								{#if topSort === 'value'}
+									<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
+									{#if priceChange(card)}
+										<p class="text-xs {priceChange(card)!.color}">
+											{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
+										</p>
+									{/if}
+								{:else if topSort === 'profit'}
+									{@const profit = cardProfit(card)}
+									{#if profit != null}
+										<span class="font-medium {profit >= 0 ? 'text-green-400' : 'text-red-400'}">
+											{profit >= 0 ? '+' : ''}{formatPrice(profit)}
+										</span>
+									{/if}
+									<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
+								{:else}
+									{@const pct = cardProfitPct(card)}
+									{#if pct != null}
+										<span class="font-medium {pct >= 0 ? 'text-green-400' : 'text-red-400'}">
+											{pct >= 0 ? '▲' : '▼'} {Math.abs(pct).toFixed(1)}%
+										</span>
+									{/if}
+									<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
 								{/if}
 							</div>
 						</a>
