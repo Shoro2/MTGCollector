@@ -20,6 +20,7 @@ npm run check                # TypeScript + Svelte validation
 GOOGLE_CLIENT_ID=...         # Google OAuth credentials
 GOOGLE_CLIENT_SECRET=...     # From console.cloud.google.com/apis/credentials
 ORIGIN=http://localhost:5173 # App URL (used for OAuth callback)
+GOOGLE_VISION_API_KEY=...    # Google Cloud Vision API (batch OCR for card scanner)
 ```
 
 Google OAuth redirect URI: `{ORIGIN}/auth/callback/google`
@@ -31,7 +32,7 @@ Google OAuth redirect URI: `{ORIGIN}/auth/callback/google`
 - **Styling**: Tailwind CSS 4 with CSS custom properties (dark theme)
 - **Auth**: Google OAuth 2.0 via `arctic` (PKCE flow)
 - **Adapter**: `@sveltejs/adapter-node` for production
-- **External**: Scryfall API, OpenCV.js (CDN), Tesseract.js (CDN), Chart.js, Frankfurter API (exchange rates)
+- **External**: Scryfall API, Google Cloud Vision API, OpenCV.js (CDN), Tesseract.js (CDN), Chart.js, Frankfurter API (exchange rates)
 
 ## Architecture
 
@@ -54,7 +55,7 @@ Two query patterns coexist:
 - **Drizzle ORM** for simple queries (`src/routes/+page.server.ts`)
 - **Raw SQL** via `sqlite.prepare()` for complex queries (FTS5, joins, aggregations)
 
-**Tables**: `cards`, `card_faces`, `users`, `sessions`, `collection_cards`, `wishlist_cards`, `tags`, `collection_card_tags`, `price_history`
+**Tables**: `cards`, `card_faces`, `users`, `sessions`, `collection_cards`, `wishlist_cards`, `tags`, `collection_card_tags`, `price_history`, `api_usage`
 
 **FTS5**: `cards_fts` virtual table for full-text search (name, type_line, oracle_text)
 
@@ -70,6 +71,7 @@ Google OAuth with session cookies:
 
 **Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`
 **Protected routes**: `/collection`, `/wishlist`, `/prices`, `/tags` — redirect to `/login`
+**Admin routes**: `/admin`, `/admin/api/*` — redirect non-admins to `/`. User must have `isAdmin: true` in `App.Locals`.
 
 ### Multi-User Collections
 
@@ -91,8 +93,8 @@ Background job checks Scryfall `bulk-data` API for new data, downloads only when
 ```
 src/
 ├── app.css                          # Dark theme, Tailwind imports
-├── app.d.ts                         # App.Locals type (user)
-├── hooks.server.ts                  # Auth middleware, DB init, price check
+├── app.d.ts                         # App.Locals type (user, isAdmin)
+├── hooks.server.ts                  # Auth middleware, DB init, price check, admin guard
 ├── lib/
 │   ├── components/
 │   │   └── CardPreview.svelte       # Hover zoom (portal to document.body)
@@ -104,18 +106,23 @@ src/
 │   │   ├── price-updater.ts         # Scryfall bulk price updates
 │   │   ├── schema.ts               # Drizzle ORM table definitions
 │   │   └── seed.ts                  # Scryfall import script
-│   ├── types.ts                     # Card, CollectionCard, Tag interfaces
-│   └── utils.ts                     # formatPrice, formatManaCost, conditionLabel
+│   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
+│   └── utils.ts                     # formatPrice, formatManaCost, conditionLabel, getColorName, getColorClass, getRarityColor, priceDate
 └── routes/
     ├── +layout.svelte               # Nav bar, footer (Impressum/Datenschutz)
+    ├── +layout.server.ts            # Passes user to all pages via layout data
     ├── +page.svelte                 # Homepage with stats
+    ├── admin/                       # Admin dashboard (users, DB stats, API usage) — admin only
     ├── api/
+    │   ├── import/+server.ts        # Admin DB-init trigger
+    │   ├── ocr/+server.ts           # Google Vision batch OCR endpoint
     │   └── prices/
     │       ├── +server.ts           # Price update trigger
     │       └── card/+server.ts      # Single card price history API
     ├── auth/                        # Google OAuth flow
     ├── cards/                       # Public card browser + detail pages
-    ├── collection/                  # Collection CRUD, import, export
+    ├── collection/                  # Collection CRUD, import, export, scan
+    │   └── scan/                    # Collection-specific card scanner
     ├── scan/                        # Card scanner (public, no auth required)
     ├── wishlist/                    # Wishlist CRUD with priority
     ├── prices/                      # Price charts, top cards, profit/loss
@@ -137,6 +144,10 @@ src/
 | `/collection/export` | Moxfield CSV export |
 | `/wishlist` | Wishlist with priority, collect-to-collection with purchase price prompt |
 | `/prices` | Collection value over time (Chart.js), profit/loss chart toggle, top cards with per-card price history popup |
+| `/admin` | Admin dashboard — user management, DB statistics, API usage tracking (admin only) |
+| `/collection/scan` | Collection-specific card scanner |
+| `/api/ocr` | Google Vision batch OCR endpoint (TEXT_DETECTION, max 16 images) |
+| `/api/import` | Admin-only DB init trigger |
 
 ## Important Patterns
 
@@ -146,16 +157,22 @@ src/
 
 ### Card Scanner Flow
 
-1. User uploads photo → OpenCV detects card rectangles via Canny edge + contour detection
-2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9)
+1. User uploads photo → OpenCV detects card rectangles via **5 detection strategies**:
+   - Canny edge detection with multiple thresholds (3 parameter sets)
+   - Adaptive threshold segmentation (for tightly packed cards)
+   - Histogram equalization + Canny (for low-contrast cards)
+   - Otsu global threshold
+   - Color saturation mask (for colored card borders)
+2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9), IoU deduplication
 3. Orientation detection: if top edge > left edge → card is sideways → rotate corners 90° clockwise
 4. Perspective transform to 488×680 flat image
-5. **Foil detection**: HSV color analysis on art area — checks saturation, hue variance (rainbow effect), brightness variance (specular highlights). Scoring: ≥4 of 8 indicators = foil
-6. Crop bottom 8% → scale 4× → Tesseract OCR for set code + collector number
-7. API search with fallbacks: set+number → name → FTS
-8. Manual search fallback for unidentified cards
-9. Select all / import all buttons for bulk adding (auth required)
-10. **Copy for Moxfield**: generates text in `1 Name (SET) number` format, appends `*F*` for foils
+5. **Name OCR**: Tesseract.js on cropped name area → API search by name → FTS fallback
+6. **Bottom OCR** (hybrid): If 5+ cards → Google Vision API batch OCR via `/api/ocr`; otherwise Tesseract.js fallback
+7. **Foil detection** (dual): HSV color analysis on art area (saturation, hue/brightness variance) + text-based detection from separator char (`*` = foil, `.` = non-foil)
+8. API search with fallbacks: set+number → name → FTS
+9. Manual search fallback for unidentified cards
+10. Select all / import all buttons for bulk adding (auth required)
+11. **Copy for Moxfield**: generates text in `1 Name (SET) number` format, appends `*F*` for foils
 
 ### Price Change Indicator
 
@@ -181,9 +198,10 @@ Prices page offers a toggle between "Value" and "Profit/Loss" charts. Profit cha
 
 - **Scryfall API** (`api.scryfall.com`) — Card data, bulk downloads, price data. Rate limit: 200ms between image downloads.
 - **Google OAuth** — User authentication (PKCE flow via `arctic`)
+- **Google Cloud Vision API** (`vision.googleapis.com`) — Batch OCR (TEXT_DETECTION) for card scanning. Usage tracked in `api_usage` table. Requires `GOOGLE_VISION_API_KEY`.
 - **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`), card rectangle detection + foil detection (HSV analysis)
-- **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`), OCR for collector numbers
-- **Frankfurter API** (`api.frankfurter.dev`) — USD/EUR exchange rate, cached 6 hours
+- **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`), OCR fallback for collector numbers/names
+- **Frankfurter API** (`api.frankfurter.dev/v1/latest`) — USD/EUR exchange rate, cached 6 hours
 
 ## Database Migrations
 
