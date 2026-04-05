@@ -24,6 +24,7 @@
 		matchType: string;
 		status: 'scanning' | 'found' | 'not_found';
 		foil: boolean;
+		selectedResultIdx: number;
 	}>>([]);
 	let debugCanvasUrl = $state('');
 	let adding = $state<string | null>(null);
@@ -364,7 +365,8 @@
 					results: [],
 					matchType: '',
 					status: 'scanning',
-					foil: false
+					foil: false,
+					selectedResultIdx: 0
 				});
 
 				// Cleanup card-specific mats
@@ -498,12 +500,8 @@
 				card.setCode = parsed.setCode;
 				card.collectorNumber = parsed.collectorNumber;
 
-				// Foil detection: text-based only reliable with Google Vision
-				if (tesseractWords) {
-					card.foil = detectFoilFromWords(tesseractWords, card.bottomUrl, parsed.setCode, langs);
-				} else {
-					card.foil = parsed.foilFromText;
-				}
+				// Foil detection from separator char (* = foil, . = non-foil)
+				card.foil = parsed.foilFromText;
 
 				if (card.results.length === 1) {
 					// Unique card from name search — done
@@ -843,8 +841,8 @@
 		for (let i = 0; i < detectedCards.length; i++) {
 			const card = detectedCards[i];
 			if (card.status === 'found' && card.results.length > 0) {
-				const firstResult = card.results[0];
-				if (!addedCards.some(a => a.id === firstResult.id)) {
+				const selectedResult = card.results[card.selectedResultIdx];
+				if (!addedCards.some(a => a.id === selectedResult.id)) {
 					next.add(i);
 				}
 			}
@@ -857,7 +855,7 @@
 		for (const idx of selectedCards) {
 			const card = detectedCards[idx];
 			if (card.status === 'found' && card.results.length > 0) {
-				const result = card.results[0];
+				const result = card.results[card.selectedResultIdx];
 				const id = result.id as string;
 				const name = result.name as string;
 				if (!addedCards.some(a => a.id === id)) {
@@ -885,7 +883,7 @@
 		const lines: string[] = [];
 		for (const card of detectedCards) {
 			if (card.status === 'found' && card.results.length > 0) {
-				const r = card.results[0];
+				const r = card.results[card.selectedResultIdx];
 				const rawName = r.name as string;
 				const parts = rawName.split(' // ');
 				const name = parts.length === 2 && parts[0] === parts[1] ? parts[0] : rawName;
@@ -949,7 +947,7 @@
 
 	<!-- Detected Cards -->
 	{#if detectedCards.length > 0}
-		{@const identifiedCount = detectedCards.filter(c => c.status === 'found' && c.results.length > 0 && !addedCards.some(a => a.id === c.results[0].id)).length}
+		{@const identifiedCount = detectedCards.filter(c => c.status === 'found' && c.results.length > 0 && !addedCards.some(a => a.id === c.results[c.selectedResultIdx].id)).length}
 		{@const hasIdentified = detectedCards.some(c => c.status === 'found' && c.results.length > 0)}
 		{#if !scanning && (identifiedCount > 0 || hasIdentified)}
 			<div class="flex gap-3 items-center flex-wrap">
@@ -989,7 +987,7 @@
 				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 {selectedCards.has(idx) ? 'ring-2 ring-green-500/50' : ''}">
 					<div class="flex gap-4">
 						<!-- Selection checkbox for identified cards -->
-						{#if loggedIn && card.status === 'found' && card.results.length > 0 && !addedCards.some(a => a.id === card.results[0].id)}
+						{#if loggedIn && card.status === 'found' && card.results.length > 0 && !addedCards.some(a => a.id === card.results[card.selectedResultIdx].id)}
 							<div class="flex-shrink-0 pt-1">
 								<input type="checkbox" checked={selectedCards.has(idx)} onchange={() => toggleSelect(idx)}
 									class="w-5 h-5 rounded border-[var(--color-border)] accent-green-600 cursor-pointer" />
@@ -1045,10 +1043,23 @@
 									Scanning...
 								</div>
 							{:else if card.status === 'found' && card.results.length > 0}
-								{#each card.results as result}
+								{#each card.results as result, rIdx}
 									{@const imgSrc = getImageSrc(result)}
 									{@const isAdded = addedCards.some((a) => a.id === result.id)}
-									<div class="flex items-center gap-4 p-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+									{@const isSelected = rIdx === card.selectedResultIdx}
+									{@const hasMultiple = card.results.length > 1}
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div
+										onclick={() => { if (hasMultiple) { card.selectedResultIdx = rIdx; detectedCards = [...detectedCards]; } }}
+										class="flex items-center gap-4 p-2 rounded-lg border transition-all
+											{hasMultiple ? 'cursor-pointer' : ''}
+											{isSelected
+												? 'bg-[var(--color-bg)] border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]'
+												: hasMultiple
+													? 'bg-[var(--color-bg)] border-[var(--color-border)] opacity-40 hover:opacity-70'
+													: 'bg-[var(--color-bg)] border-[var(--color-border)]'}"
+									>
 										{#if imgSrc}
 											<CardPreview src={imgSrc} alt={result.name as string} scale={2}>
 												<img src={imgSrc} alt={result.name as string} class="w-12 h-16 object-cover rounded" loading="lazy" />
@@ -1061,12 +1072,12 @@
 											</p>
 										</div>
 										<span class="text-sm text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null, result.price_usd as number | null)}</span>
-										{#if loggedIn}
+										{#if loggedIn && isSelected}
 											{#if isAdded}
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 											{:else}
 												<button
-													onclick={() => addToCollection(result.id as string, result.name as string, card.foil)}
+													onclick={(e) => { e.stopPropagation(); addToCollection(result.id as string, result.name as string, card.foil); }}
 													disabled={adding === result.id}
 													class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
 												>
