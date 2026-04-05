@@ -124,7 +124,7 @@
 
 			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-			type CardCandidate = { corners: any; area: number; rect: { x: number; y: number; width: number; height: number } };
+			type CardCandidate = { corners: any; area: number; rect: { x: number; y: number; width: number; height: number }; synthetic?: boolean };
 			let allCandidates: CardCandidate[] = [];
 			const imgArea = img.width * img.height;
 
@@ -270,6 +270,53 @@
 			findCardContours(otsuMat, minArea, maxArea);
 
 			otsuBlur.delete(); otsuMat.delete(); otsuSepKernel.delete();
+
+			// === Strategy 5: Color saturation mask ===
+			// Cards have colored frames/art that are more saturated than a plain background.
+			// This helps detect light-bordered cards that blend with the background in grayscale.
+			const hsv = new cv.Mat();
+			cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+			const hsvMat = new cv.Mat();
+			cv.cvtColor(hsv, hsvMat, cv.COLOR_RGB2HSV);
+			hsv.delete();
+
+			const channels = new cv.MatVector();
+			cv.split(hsvMat, channels);
+			const saturation = channels.get(1);
+			hsvMat.delete();
+
+			// Threshold on saturation — cards with colored borders will have higher saturation
+			const satThresh = new cv.Mat();
+			cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
+
+			// Morphological close to fill gaps within cards, then erode to separate
+			const satCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
+			cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
+			const satSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+			cv.erode(satThresh, satThresh, satSepKernel);
+			cv.dilate(satThresh, satThresh, satSepKernel);
+
+			findCardContours(satThresh, minArea, maxArea);
+
+			saturation.delete(); satThresh.delete();
+			satCloseKernel.delete(); satSepKernel.delete();
+			channels.delete();
+
+			// === Strategy 6: Inverted Otsu for light cards on light backgrounds ===
+			// Some cards (lands with light borders) blend with white backgrounds.
+			// Inverted threshold can catch them.
+			const invOtsuBlur = new cv.Mat();
+			cv.GaussianBlur(gray, invOtsuBlur, new cv.Size(5, 5), 0);
+			const invOtsuMat = new cv.Mat();
+			cv.threshold(invOtsuBlur, invOtsuMat, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+			const invSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+			cv.erode(invOtsuMat, invOtsuMat, invSepKernel);
+			cv.dilate(invOtsuMat, invOtsuMat, invSepKernel);
+
+			findCardContours(invOtsuMat, minArea, maxArea);
+
+			invOtsuBlur.delete(); invOtsuMat.delete(); invSepKernel.delete();
 
 			// Filter out contours contained within larger ones
 			allCandidates.sort((a, b) => b.area - a.area);
@@ -451,7 +498,8 @@
 								cardContours.push({
 									corners,
 									area: (x2 - x1) * (y2 - y1),
-									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 }
+									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
+									synthetic: true
 								});
 							}
 						}
@@ -509,29 +557,30 @@
 
 				// Expand each corner outward to capture the full card including black border.
 				// The detected contour is usually on the inner colored frame.
-				// The black border is ~3-4% of card width on each side.
-				const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
-				const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-				const expandX = cardWidth * 0.05; // 5% of card width per side
-				const expandY = cardHeight * 0.05;
+				// Skip expansion for grid-inferred (synthetic) cards — they already cover the full card area.
+				if (!cardContours[i].synthetic) {
+					const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
+					const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
+					const expandX = cardWidth * 0.05;
+					const expandY = cardHeight * 0.05;
 
-				// Move each corner outward along its direction from center
-				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
-				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-				ordered = ordered.map(([x, y]) => {
-					const dx = x - cx;
-					const dy = y - cy;
-					const dist = Math.hypot(dx, dy);
-					if (dist === 0) return [x, y] as [number, number];
-					const expand = Math.hypot(
-						(dx / dist) * expandX,
-						(dy / dist) * expandY
-					);
-					return [
-						Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
-						Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
-					] as [number, number];
-				}) as Array<[number, number]>;
+					const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
+					const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
+					ordered = ordered.map(([x, y]) => {
+						const dx = x - cx;
+						const dy = y - cy;
+						const dist = Math.hypot(dx, dy);
+						if (dist === 0) return [x, y] as [number, number];
+						const expand = Math.hypot(
+							(dx / dist) * expandX,
+							(dy / dist) * expandY
+						);
+						return [
+							Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
+							Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
+						] as [number, number];
+					}) as Array<[number, number]>;
+				}
 
 				// Perspective transform to flatten card
 				const cardW = 488;
