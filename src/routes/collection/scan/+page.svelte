@@ -557,11 +557,11 @@
 									<div class="space-y-2">
 										<div class="flex gap-2 text-xs">
 											<button onclick={() => manualMode = 'set'}
-												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'set' ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'border-[var(--color-border)]'}">
+												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'set' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'border-[var(--color-border)]'}">
 												Set + #
 											</button>
 											<button onclick={() => manualMode = 'name'}
-												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'name' ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'border-[var(--color-border)]'}">
+												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'name' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'border-[var(--color-border)]'}">
 												Name
 											</button>
 										</div>
@@ -571,13 +571,13 @@
 													class="w-20 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm uppercase focus:outline-none focus:border-[var(--color-primary)]" />
 												<input type="text" bind:value={manualNumber} placeholder="#"
 													class="w-20 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm focus:outline-none focus:border-[var(--color-primary)]" />
-												<button type="submit" class="bg-[var(--color-primary)] px-3 py-1 rounded text-sm">Search</button>
+												<button type="submit" class="bg-[var(--color-primary-button)] px-3 py-1 rounded text-sm">Search</button>
 											</form>
 										{:else}
 											<form onsubmit={(e) => { e.preventDefault(); doManualSearch(); }} class="flex gap-2">
 												<input type="text" bind:value={manualQuery} placeholder="Card name..."
 													class="flex-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm focus:outline-none focus:border-[var(--color-primary)]" />
-												<button type="submit" class="bg-[var(--color-primary)] px-3 py-1 rounded text-sm">Search</button>
+												<button type="submit" class="bg-[var(--color-primary-button)] px-3 py-1 rounded text-sm">Search</button>
 											</form>
 										{/if}
 										{#if manualResults.length > 0}
@@ -644,7 +644,7 @@
 	{#if imagePreview && !scanning}
 		<div class="flex gap-3">
 			<button onclick={reset}
-				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
+				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
 				Scan new photo
 			</button>
 			<a href="/collection"

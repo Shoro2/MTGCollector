@@ -295,13 +295,13 @@
 						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-0.5">
 							<button
 								onclick={() => switchChartType('normal')}
-								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'normal' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'normal' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 							>
 								Normal
 							</button>
 							<button
 								onclick={() => switchChartType('foil')}
-								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'foil' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'foil' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 							>
 								Foil
 							</button>
@@ -353,7 +353,7 @@
 					<h3 class="font-semibold">Collection</h3>
 					<button
 						onclick={() => showAddForm = !showAddForm}
-						class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-3 py-1.5 rounded text-sm transition-colors"
+						class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-3 py-1.5 rounded text-sm transition-colors"
 					>
 						+ Add to Collection
 					</button>

@@ -436,7 +436,7 @@
 					<button
 						onclick={saveEdit}
 						disabled={saving}
-						class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-6 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+						class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
 					>
 						{saving ? 'Saving...' : 'Save'}
 					</button>
@@ -500,7 +500,7 @@
 		<span class="text-sm text-[var(--color-text-muted)]">Tags:</span>
 		<button
 			onclick={() => filterByTag(null)}
-			class="px-3 py-1 rounded-full text-xs transition-colors {!data.filters.tagFilter ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]'}"
+			class="px-3 py-1 rounded-full text-xs transition-colors {!data.filters.tagFilter ? 'bg-[var(--color-primary-button)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]'}"
 		>
 			All
 		</button>
@@ -529,7 +529,7 @@
 				class="bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm"
 			/>
 			<input type="color" bind:value={newTagColor} class="w-8 h-8 rounded cursor-pointer" />
-			<button onclick={createTag} class="bg-[var(--color-primary)] px-3 py-1 rounded text-sm">Create</button>
+			<button onclick={createTag} class="bg-[var(--color-primary-button)] px-3 py-1 rounded text-sm">Create</button>
 		</div>
 	{/if}
 
@@ -542,13 +542,13 @@
 				placeholder="Search collection..."
 				class="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)]"
 			/>
-			<button type="submit" class="bg-[var(--color-primary)] px-4 py-2 rounded-lg text-sm">Search</button>
+			<button type="submit" class="bg-[var(--color-primary-button)] px-4 py-2 rounded-lg text-sm">Search</button>
 		</form>
 		<div class="flex gap-1">
 			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit %'], ['profit_total', 'Profit €'], ['quantity', 'Amount'], ['set_name', 'Set']] as [key, label]}
 				<button
 					onclick={() => setSort(key)}
-					class="px-3 py-2 rounded-lg text-xs transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)]'}"
+					class="px-3 py-2 rounded-lg text-xs transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)]'}"
 				>
 					{label} {data.filters.sortBy === key ? (data.filters.sortDir === 'asc' ? '▲' : '▼') : ''}
 				</button>

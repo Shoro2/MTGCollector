@@ -62,7 +62,7 @@
 		<div class="flex gap-4">
 			<a
 				href="/cards"
-				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-6 py-3 rounded-lg font-medium transition-colors"
+				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-3 rounded-lg font-medium transition-colors"
 			>
 				Browse Cards
 			</a>

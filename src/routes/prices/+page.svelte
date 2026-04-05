@@ -290,7 +290,7 @@
 			<button
 				onclick={triggerPriceUpdate}
 				disabled={updating || data.priceStatus.inProgress || !data.hasNewData}
-				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 			>
 				{updating || data.priceStatus.inProgress ? 'Updating...' : data.hasNewData ? 'Update Prices' : 'Prices up to date'}
 			</button>
@@ -383,26 +383,26 @@
 						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
 							<button
 								onclick={() => changeMode = 'purchase'}
-								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'purchase' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'purchase' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 							>vs. Kauf</button>
 							<button
 								onclick={() => changeMode = 'daily'}
-								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'daily' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'daily' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 							>vs. Gestern</button>
 						</div>
 					{/if}
 					<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
 						<button
 							onclick={() => topSort = 'value'}
-							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 						>Value</button>
 						<button
 							onclick={() => topSort = 'profit'}
-							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 						>Profit</button>
 						<button
 							onclick={() => topSort = 'profit_pct'}
-							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 						>Profit %</button>
 					</div>
 				</div>
