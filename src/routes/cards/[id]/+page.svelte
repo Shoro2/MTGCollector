@@ -3,7 +3,17 @@
 	import { formatManaCost, formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { Chart, registerables } from 'chart.js';
+	import {
+		Chart,
+		LineController,
+		LineElement,
+		PointElement,
+		LinearScale,
+		CategoryScale,
+		Filler,
+		Legend,
+		Tooltip
+	} from 'chart.js';
 
 	let { data }: { data: PageData } = $props();
 
@@ -116,10 +126,10 @@
 			data: { labels, datasets },
 			options: {
 				responsive: true,
-				plugins: { legend: { labels: { color: '#94a3b8' } } },
+				plugins: { legend: { labels: { color: '#b0bec5' } } },
 				scales: {
-					x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-					y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+					x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
+					y: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } }
 				}
 			}
 		});
@@ -142,7 +152,7 @@
 	});
 
 	onMount(() => {
-		Chart.register(...registerables);
+		Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Legend, Tooltip);
 		buildPriceChart();
 		return () => priceChart?.destroy();
 	});

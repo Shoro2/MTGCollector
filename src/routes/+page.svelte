@@ -10,6 +10,9 @@
 	<title>MTG Collector - Magic: The Gathering Collection Tracker & Price Database</title>
 	<meta name="description" content="Track your Magic: The Gathering collection, monitor card prices, and browse over {data.totalCards.toLocaleString()} MTG cards. Free online MTG collection manager with price history and card scanner." />
 	<link rel="canonical" href="https://mtg-collector.com/" />
+	<meta property="og:title" content="MTG Collector - Magic: The Gathering Collection Tracker & Price Database" />
+	<meta property="og:description" content="Track your Magic: The Gathering collection, monitor card prices, and browse over {data.totalCards.toLocaleString()} MTG cards. Free online MTG collection manager with price history and card scanner." />
+	<meta property="og:url" content="https://mtg-collector.com/" />
 </svelte:head>
 
 <div class="space-y-8">

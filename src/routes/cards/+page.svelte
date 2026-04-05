@@ -136,6 +136,9 @@
 	<title>{pageTitle}</title>
 	<meta name="description" content="Browse and search {data.totalCards.toLocaleString()} Magic: The Gathering cards. Filter by color, type, set, rarity, mana cost, and format legality." />
 	<link rel="canonical" href="https://mtg-collector.com/cards" />
+	<meta property="og:title" content={pageTitle} />
+	<meta property="og:description" content="Browse and search {data.totalCards.toLocaleString()} Magic: The Gathering cards. Filter by color, type, set, rarity, mana cost, and format legality." />
+	<meta property="og:url" content="https://mtg-collector.com/cards" />
 </svelte:head>
 
 <div class="space-y-6">

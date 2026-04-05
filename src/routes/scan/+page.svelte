@@ -1194,6 +1194,9 @@
 	<title>MTG Card Scanner - Scan & Identify Cards | MTG Collector</title>
 	<meta name="description" content="Scan Magic: The Gathering cards with your camera. Automatic card detection, OCR recognition, foil detection, and price lookup." />
 	<link rel="canonical" href="https://mtg-collector.com/scan" />
+	<meta property="og:title" content="MTG Card Scanner - Scan & Identify Cards | MTG Collector" />
+	<meta property="og:description" content="Scan Magic: The Gathering cards with your camera. Automatic card detection, OCR recognition, foil detection, and price lookup." />
+	<meta property="og:url" content="https://mtg-collector.com/scan" />
 </svelte:head>
 
 <div class="space-y-6">
