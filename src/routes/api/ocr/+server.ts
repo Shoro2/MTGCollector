@@ -9,9 +9,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		throw error(500, 'GOOGLE_VISION_API_KEY not configured');
 	}
 
+	if (!locals.user) {
+		throw error(401, 'Unauthorized');
+	}
+
 	const { images } = await request.json() as { images: string[] };
 	if (!images?.length) {
 		throw error(400, 'No images provided');
+	}
+	if (images.length > 16) {
+		throw error(400, 'Maximum 16 images per request');
 	}
 
 	// Build batch request (up to 16 images per API call)

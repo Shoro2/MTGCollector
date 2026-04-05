@@ -1,9 +1,9 @@
 import { sqlite } from '$lib/server/db';
-import { json, redirect } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ locals, request }) => {
-	if (!locals.user?.isAdmin) throw redirect(302, '/');
+	if (!locals.user?.isAdmin) throw error(403, 'Forbidden');
 
 	const { action } = await request.json();
 
