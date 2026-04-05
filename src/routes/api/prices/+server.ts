@@ -1,4 +1,4 @@
-import { json } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
 import { getPriceUpdateStatus, runPriceUpdate } from '$lib/server/price-updater';
 
 let lastSkipped = false;
@@ -8,7 +8,11 @@ export async function GET() {
 	return json({ ...status, skipped: lastSkipped });
 }
 
-export async function POST() {
+export async function POST({ locals }) {
+	if (!locals.user?.isAdmin) {
+		throw error(403, 'Forbidden');
+	}
+
 	const status = getPriceUpdateStatus();
 	if (status.inProgress) {
 		return json({ success: false, message: 'Update already in progress' }, { status: 409 });

@@ -1,4 +1,5 @@
 import { Google } from 'arctic';
+import { randomBytes } from 'node:crypto';
 import { sqlite } from './db.js';
 import { env } from '$env/dynamic/private';
 
@@ -11,7 +12,7 @@ export function getGoogleClient() {
 }
 
 export function createSession(userId: string): string {
-	const id = crypto.randomUUID();
+	const id = randomBytes(32).toString('hex');
 	const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
 	sqlite.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').run(id, userId, expiresAt);
 	return id;
@@ -25,8 +26,8 @@ export function validateSession(sessionId: string): { id: string; name: string; 
 	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null } | undefined;
 
 	if (!row) return null;
-	const adminEmail = (env.ADMIN_EMAIL || '').toLowerCase();
-	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: row.email.toLowerCase() === adminEmail };
+	const adminEmail = env.ADMIN_EMAIL?.toLowerCase();
+	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail };
 }
 
 export function deleteSession(sessionId: string) {
