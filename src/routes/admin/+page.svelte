@@ -34,6 +34,11 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Admin Dashboard | MTG Collector</title>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <div class="space-y-8">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Admin Dashboard</h1>

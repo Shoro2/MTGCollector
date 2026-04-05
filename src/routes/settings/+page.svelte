@@ -32,6 +32,11 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Einstellungen | MTG Collector</title>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <div class="max-w-2xl mx-auto space-y-6">
 	<h1 class="text-2xl font-bold">Einstellungen</h1>
 

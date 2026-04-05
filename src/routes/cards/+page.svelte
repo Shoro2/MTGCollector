@@ -9,6 +9,14 @@
 	let collectedSet = $derived(new Set(data.collectedCardIds));
 	let wishlistSet = $derived(new Set(data.wishlistCardIds));
 
+	let pageTitle = $derived.by(() => {
+		const parts = ['MTG Cards'];
+		if (data.filters.query) parts.push(`"${data.filters.query}"`);
+		if (data.filters.setCode) parts.push(data.filters.setCode.toUpperCase());
+		if (data.page > 1) parts.push(`Page ${data.page}`);
+		return parts.join(' - ') + ' | MTG Collector';
+	});
+
 	let query = $state('');
 	let selectedColors = $state<string[]>([]);
 	let colorMode = $state('include');
@@ -123,6 +131,12 @@
 		return '';
 	}
 </script>
+
+<svelte:head>
+	<title>{pageTitle}</title>
+	<meta name="description" content="Browse and search {data.totalCards.toLocaleString()} Magic: The Gathering cards. Filter by color, type, set, rarity, mana cost, and format legality." />
+	<link rel="canonical" href="https://mtg-collector.com/cards" />
+</svelte:head>
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
@@ -290,10 +304,10 @@
 			>
 				<div class="relative">
 					{#if imgSrc}
-						<CardPreview src={imgSrc} alt={card.name as string} scale={2}>
+						<CardPreview src={imgSrc} alt={"Magic: The Gathering - " + (card.name as string)} scale={2}>
 							<img
 								src={imgSrc}
-								alt={card.name as string}
+								alt="Magic: The Gathering - {card.name}"
 								class="w-full aspect-[488/680] object-cover"
 								loading="lazy"
 							/>

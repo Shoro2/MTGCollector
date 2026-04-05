@@ -1,3 +1,9 @@
+<svelte:head>
+	<title>Impressum | MTG Collector</title>
+	<meta name="description" content="Impressum und Anbieterkennzeichnung von MTG Collector gemäß § 5 DDG." />
+	<link rel="canonical" href="https://mtg-collector.com/impressum" />
+</svelte:head>
+
 <div class="prose prose-invert max-w-4xl mx-auto">
 <h1>Impressum</h1>
 

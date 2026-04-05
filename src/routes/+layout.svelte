@@ -12,6 +12,8 @@
 
 <svelte:head>
 	<title>MTG Collector</title>
+	<meta property="og:site_name" content="MTG Collector" />
+	<meta property="og:type" content="website" />
 </svelte:head>
 
 <div class="min-h-screen flex flex-col">
