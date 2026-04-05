@@ -10,16 +10,29 @@ export async function load({ url, locals }) {
 
 	const cardId = url.searchParams.get('card');
 
-	// Most valuable cards in collection
+	// Most valuable cards in collection, with previous day's price for daily change
 	const topCards = sqlite
 		.prepare(
 			`SELECT c.id, c.name, c.set_name, c.image_uri, c.local_image_path,
 				CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END as price,
 				CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END as price_usd,
-				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price
+				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price,
+				CASE WHEN cc.foil = 1 THEN prev.price_eur_foil ELSE prev.price_eur END as prev_price,
+				CASE WHEN cc.foil = 1 THEN prev.price_usd_foil ELSE prev.price_usd END as prev_price_usd
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
-			WHERE (price IS NOT NULL OR price_usd IS NOT NULL) AND cc.user_id = ?`
+			LEFT JOIN (
+				SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil
+				FROM (
+					SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil,
+						ROW_NUMBER() OVER (PARTITION BY card_id ORDER BY recorded_at DESC) as rn
+					FROM price_history
+					WHERE DATE(recorded_at) < DATE('now')
+				) WHERE rn = 1
+			) prev ON prev.card_id = c.id
+			WHERE (CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END IS NOT NULL
+				OR CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END IS NOT NULL)
+				AND cc.user_id = ?`
 		)
 		.all(userId) as Array<Record<string, unknown>>;
 

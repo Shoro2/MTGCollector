@@ -97,30 +97,36 @@
 		}
 	}
 
-	function cardValue(card: Record<string, unknown>): number {
+	function currentPrice(card: Record<string, unknown>): number | null {
 		const price = card.price as number | null;
 		const priceUsd = card.price_usd as number | null;
-		return (price ?? (priceUsd != null ? priceUsd * data.usdToEur : 0)) * (card.quantity as number);
+		return price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
+	}
+
+	function prevPrice(card: Record<string, unknown>): number | null {
+		const price = card.prev_price as number | null;
+		const priceUsd = card.prev_price_usd as number | null;
+		return price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
+	}
+
+	function cardValue(card: Record<string, unknown>): number {
+		return (currentPrice(card) ?? 0) * (card.quantity as number);
 	}
 
 	function cardProfit(card: Record<string, unknown>): number | null {
-		const purchasePrice = card.purchase_price as number | null;
-		if (purchasePrice == null || !purchasePrice) return null;
-		const price = card.price as number | null;
-		const priceUsd = card.price_usd as number | null;
-		const currentPrice = price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
-		if (currentPrice == null) return null;
-		return (currentPrice - purchasePrice) * (card.quantity as number);
+		const base = changeMode === 'purchase' ? card.purchase_price as number | null : prevPrice(card);
+		if (base == null || !base) return null;
+		const cur = currentPrice(card);
+		if (cur == null) return null;
+		return (cur - base) * (card.quantity as number);
 	}
 
 	function cardProfitPct(card: Record<string, unknown>): number | null {
-		const purchasePrice = card.purchase_price as number | null;
-		if (purchasePrice == null || !purchasePrice) return null;
-		const price = card.price as number | null;
-		const priceUsd = card.price_usd as number | null;
-		const currentPrice = price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
-		if (currentPrice == null) return null;
-		return ((currentPrice - purchasePrice) / purchasePrice) * 100;
+		const base = changeMode === 'purchase' ? card.purchase_price as number | null : prevPrice(card);
+		if (base == null || !base) return null;
+		const cur = currentPrice(card);
+		if (cur == null) return null;
+		return ((cur - base) / base) * 100;
 	}
 
 	function priceChange(card: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
@@ -132,6 +138,7 @@
 	}
 
 	let topSort = $state<'value' | 'profit' | 'profit_pct'>('value');
+	let changeMode = $state<'purchase' | 'daily'>('purchase');
 
 	let sortedTopCards = $derived.by(() => {
 		const cards = [...data.topCards];
@@ -347,23 +354,37 @@
 	<!-- Top Cards -->
 	{#if data.topCards.length > 0}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<div class="flex items-center justify-between mb-4">
+			<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
 				<h2 class="text-lg font-semibold">
 					{topSort === 'value' ? 'Most Valuable Cards' : topSort === 'profit' ? 'Top Profit Cards' : 'Top Profit Cards (%)'}
 				</h2>
-				<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
-					<button
-						onclick={() => topSort = 'value'}
-						class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-					>Value</button>
-					<button
-						onclick={() => topSort = 'profit'}
-						class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-					>Profit</button>
-					<button
-						onclick={() => topSort = 'profit_pct'}
-						class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-					>Profit %</button>
+				<div class="flex items-center gap-3">
+					{#if topSort !== 'value'}
+						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
+							<button
+								onclick={() => changeMode = 'purchase'}
+								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'purchase' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>vs. Kauf</button>
+							<button
+								onclick={() => changeMode = 'daily'}
+								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'daily' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>vs. Gestern</button>
+						</div>
+					{/if}
+					<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
+						<button
+							onclick={() => topSort = 'value'}
+							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+						>Value</button>
+						<button
+							onclick={() => topSort = 'profit'}
+							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+						>Profit</button>
+						<button
+							onclick={() => topSort = 'profit_pct'}
+							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+						>Profit %</button>
+					</div>
 				</div>
 			</div>
 			<div class="space-y-2">
