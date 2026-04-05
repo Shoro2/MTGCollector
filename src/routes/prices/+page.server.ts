@@ -84,6 +84,11 @@ export async function load({ url, locals }) {
 						ORDER BY recorded_at DESC
 					) as rn
 				FROM price_history
+			),
+			purchase_total AS (
+				SELECT COALESCE(SUM(cc2.purchase_price * cc2.quantity), 0) as total
+				FROM collection_cards cc2
+				WHERE cc2.user_id = ? AND cc2.purchase_price IS NOT NULL
 			)
 			SELECT
 				dp.effective_date as recorded_at,
@@ -91,14 +96,15 @@ export async function load({ url, locals }) {
 					CASE WHEN cc.foil = 1 THEN dp.price_eur_foil ELSE dp.price_eur END,
 					CASE WHEN cc.foil = 1 THEN dp.price_usd_foil ELSE dp.price_usd END * ?
 				) * cc.quantity) as total_value,
-				SUM(cc.purchase_price * cc.quantity) as total_purchase
+				pt.total as total_purchase
 			FROM daily_prices dp
 			JOIN collection_cards cc ON dp.card_id = cc.card_id
+			CROSS JOIN purchase_total pt
 			WHERE dp.rn = 1 AND cc.user_id = ? AND cc.purchase_price IS NOT NULL
 			GROUP BY dp.effective_date
 			ORDER BY dp.effective_date ASC`
 		)
-		.all(usdToEur, userId) as Array<{ recorded_at: string; total_value: number; total_purchase: number }>;
+		.all(userId, usdToEur, userId) as Array<{ recorded_at: string; total_value: number; total_purchase: number }>;
 
 	const priceStatus = getPriceUpdateStatus();
 	const hasNewData = await pricesNeedUpdate();
