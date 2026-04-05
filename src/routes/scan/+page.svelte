@@ -464,9 +464,9 @@
 						return xs[Math.floor(xs.length / 2)];
 					});
 
-					// Shrink synthetic rect by 5% to avoid overshooting into neighbor cards
-					const synthW = Math.round(medW * 0.95);
-					const synthH = Math.round(medH * 0.95);
+					// Use contour-equivalent dimensions (no shrink — expansion happens later like for detected cards)
+					const synthW = Math.round(medW);
+					const synthH = Math.round(medH);
 
 					for (const ry of rowYs) {
 						for (const cx of colXs) {
@@ -556,31 +556,28 @@
 				}
 
 				// Expand each corner outward to capture the full card including black border.
-				// The detected contour is usually on the inner colored frame.
-				// Skip expansion for grid-inferred (synthetic) cards — they already cover the full card area.
-				if (!cardContours[i].synthetic) {
-					const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
-					const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-					const expandX = cardWidth * 0.05;
-					const expandY = cardHeight * 0.05;
+				// The detected contour (or grid-inferred rect) is on the inner colored frame.
+				const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
+				const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
+				const expandX = cardWidth * 0.05;
+				const expandY = cardHeight * 0.05;
 
-					const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
-					const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-					ordered = ordered.map(([x, y]) => {
-						const dx = x - cx;
-						const dy = y - cy;
-						const dist = Math.hypot(dx, dy);
-						if (dist === 0) return [x, y] as [number, number];
-						const expand = Math.hypot(
-							(dx / dist) * expandX,
-							(dy / dist) * expandY
-						);
-						return [
-							Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
-							Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
-						] as [number, number];
-					}) as Array<[number, number]>;
-				}
+				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
+				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
+				ordered = ordered.map(([x, y]) => {
+					const dx = x - cx;
+					const dy = y - cy;
+					const dist = Math.hypot(dx, dy);
+					if (dist === 0) return [x, y] as [number, number];
+					const expand = Math.hypot(
+						(dx / dist) * expandX,
+						(dy / dist) * expandY
+					);
+					return [
+						Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
+						Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
+					] as [number, number];
+				}) as Array<[number, number]>;
 
 				// Perspective transform to flatten card
 				const cardW = 488;
