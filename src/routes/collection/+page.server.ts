@@ -1,6 +1,7 @@
 import { sqlite } from '$lib/server/db';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { redirect } from '@sveltejs/kit';
+import { tagsCache } from '$lib/server/cache';
 
 export async function load({ url, locals }) {
 	if (!locals.user) throw redirect(302, '/login');
@@ -70,18 +71,31 @@ export async function load({ url, locals }) {
 		)
 		.all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
-	// Get tags for each collection card
-	const itemsWithTags = items.map((item) => {
-		const cardTags = sqlite
+	// Get tags for all collection cards in a single batch query (avoids N+1)
+	const itemIds = items.map((item) => item.id as number);
+	const tagsMap = new Map<number, Array<Record<string, unknown>>>();
+	if (itemIds.length > 0) {
+		const placeholders = itemIds.map(() => '?').join(',');
+		const tagRows = sqlite
 			.prepare(
-				`SELECT t.* FROM tags t JOIN collection_card_tags cct ON t.id = cct.tag_id WHERE cct.collection_card_id = ?`
+				`SELECT cct.collection_card_id, t.id, t.name, t.color
+				FROM collection_card_tags cct
+				JOIN tags t ON t.id = cct.tag_id
+				WHERE cct.collection_card_id IN (${placeholders})`
 			)
-			.all(item.id) as Array<Record<string, unknown>>;
-		return { ...item, tags: cardTags } as Record<string, unknown> & { tags: Array<Record<string, unknown>> };
-	});
+			.all(...itemIds) as Array<{ collection_card_id: number; id: number; name: string; color: string }>;
+		for (const row of tagRows) {
+			if (!tagsMap.has(row.collection_card_id)) tagsMap.set(row.collection_card_id, []);
+			tagsMap.get(row.collection_card_id)!.push({ id: row.id, name: row.name, color: row.color });
+		}
+	}
+	const itemsWithTags = items.map((item) => ({
+		...item,
+		tags: tagsMap.get(item.id as number) || []
+	})) as Array<Record<string, unknown> & { tags: Array<Record<string, unknown>> }>;
 
-	// Get all tags
-	const allTags = sqlite.prepare('SELECT * FROM tags ORDER BY name').all() as Array<Record<string, unknown>>;
+	// Get all tags (cached, short TTL)
+	const allTags = tagsCache.get();
 
 	// Get collection stats
 	const stats = sqlite

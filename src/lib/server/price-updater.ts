@@ -128,6 +128,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 				}
 			});
 			transaction();
+			// Yield to event loop between batches so HTTP requests can be processed
+			await new Promise((resolve) => setImmediate(resolve));
 		}
 
 		console.log(`[price-updater] Updated prices for ${updated} cards`);

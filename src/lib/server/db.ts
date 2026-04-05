@@ -136,6 +136,28 @@ export function initDb() {
 		);
 	`);
 
+	// FTS5 sync triggers for incremental updates
+	try {
+		sqlite.exec(`
+			CREATE TRIGGER IF NOT EXISTS cards_fts_insert AFTER INSERT ON cards BEGIN
+				INSERT INTO cards_fts(card_id, name, type_line, oracle_text)
+				VALUES (NEW.id, NEW.name, COALESCE(NEW.type_line, ''), COALESCE(NEW.oracle_text, ''));
+			END;
+		`);
+		sqlite.exec(`
+			CREATE TRIGGER IF NOT EXISTS cards_fts_update AFTER UPDATE OF name, type_line, oracle_text ON cards BEGIN
+				DELETE FROM cards_fts WHERE card_id = OLD.id;
+				INSERT INTO cards_fts(card_id, name, type_line, oracle_text)
+				VALUES (NEW.id, NEW.name, COALESCE(NEW.type_line, ''), COALESCE(NEW.oracle_text, ''));
+			END;
+		`);
+		sqlite.exec(`
+			CREATE TRIGGER IF NOT EXISTS cards_fts_delete AFTER DELETE ON cards BEGIN
+				DELETE FROM cards_fts WHERE card_id = OLD.id;
+			END;
+		`);
+	} catch { /* Triggers already exist or SQLite version doesn't support IF NOT EXISTS on triggers */ }
+
 	// Migrations for existing databases
 	try {
 		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN purchase_price REAL');

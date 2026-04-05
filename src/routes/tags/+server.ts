@@ -1,10 +1,12 @@
 import { json, error } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
+import { tagsCache } from '$lib/server/cache';
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
 	const { name, color } = await request.json();
 	sqlite.prepare('INSERT INTO tags (name, color) VALUES (?, ?)').run(name, color || '#3b82f6');
+	tagsCache.invalidate();
 	return json({ success: true });
 }
 
@@ -34,5 +36,6 @@ export async function DELETE({ request, locals }) {
 	const { id } = await request.json();
 	sqlite.prepare('DELETE FROM collection_card_tags WHERE tag_id = ?').run(id);
 	sqlite.prepare('DELETE FROM tags WHERE id = ?').run(id);
+	tagsCache.invalidate();
 	return json({ success: true });
 }

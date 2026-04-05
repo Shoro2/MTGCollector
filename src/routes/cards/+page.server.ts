@@ -1,6 +1,13 @@
 import { db, sqlite } from '$lib/server/db';
 import { cards } from '$lib/server/schema';
 import { sql } from 'drizzle-orm';
+import { createCache } from '$lib/server/cache';
+
+const setsCache = createCache(
+	() => sqlite.prepare('SELECT DISTINCT set_code, set_name FROM cards ORDER BY set_name ASC')
+		.all() as Array<{ set_code: string; set_name: string }>,
+	60 * 60 * 1000 // 1 hour
+);
 
 export async function load({ url, locals }) {
 	const query = url.searchParams.get('q') || '';
@@ -37,13 +44,13 @@ export async function load({ url, locals }) {
 		params.push(ftsQuery);
 	}
 
-	// Color filter
+	// Color filter (using json_each for proper JSON array querying)
 	if (colors.length > 0) {
 		if (colorMode === 'exact') {
 			// Exact: card has exactly these colors
 			for (const c of colors) {
-				conditions.push(`cards.colors LIKE ?`);
-				params.push(`%"${c}"%`);
+				conditions.push(`EXISTS (SELECT 1 FROM json_each(cards.colors) WHERE json_each.value = ?)`);
+				params.push(c);
 			}
 			conditions.push(`json_array_length(cards.colors) = ?`);
 			params.push(colors.length);
@@ -52,14 +59,14 @@ export async function load({ url, locals }) {
 			const allColors = ['W', 'U', 'B', 'R', 'G'];
 			const excluded = allColors.filter((c) => !colors.includes(c));
 			for (const c of excluded) {
-				conditions.push(`(cards.colors IS NULL OR cards.colors NOT LIKE ?)`);
-				params.push(`%"${c}"%`);
+				conditions.push(`NOT EXISTS (SELECT 1 FROM json_each(cards.colors) WHERE json_each.value = ?)`);
+				params.push(c);
 			}
 		} else {
 			// Include: card has at least these colors
 			for (const c of colors) {
-				conditions.push(`cards.colors LIKE ?`);
-				params.push(`%"${c}"%`);
+				conditions.push(`EXISTS (SELECT 1 FROM json_each(cards.colors) WHERE json_each.value = ?)`);
+				params.push(c);
 			}
 		}
 	}
@@ -129,23 +136,27 @@ export async function load({ url, locals }) {
 	const resultSql = `SELECT cards.* FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
-	// Get all unique sets for the filter dropdown
-	const sets = sqlite
-		.prepare('SELECT DISTINCT set_code, set_name FROM cards ORDER BY set_name ASC')
-		.all() as Array<{ set_code: string; set_name: string }>;
+	// Get all unique sets for the filter dropdown (cached, changes only on import)
+	const sets = setsCache.get();
 
-	// Get card IDs in collection for marking (user-specific)
+	// Get card IDs in collection/wishlist for marking (only for current page)
 	const userId = locals?.user?.id;
-	const collectedRows = userId
-		? sqlite.prepare('SELECT DISTINCT card_id FROM collection_cards WHERE user_id = ?').all(userId) as Array<{ card_id: string }>
-		: [];
-	const collectedCardIds = new Set(collectedRows.map((r) => r.card_id));
+	const pageCardIds = results.map((r) => r.id as string);
+	let collectedCardIds = new Set<string>();
+	let wishlistCardIds = new Set<string>();
 
-	// Get card IDs on wishlist (user-specific)
-	const wishlistRows = userId
-		? sqlite.prepare('SELECT DISTINCT card_id FROM wishlist_cards WHERE user_id = ?').all(userId) as Array<{ card_id: string }>
-		: [];
-	const wishlistCardIds = new Set(wishlistRows.map((r) => r.card_id));
+	if (userId && pageCardIds.length > 0) {
+		const placeholders = pageCardIds.map(() => '?').join(',');
+		const collectedRows = sqlite
+			.prepare(`SELECT DISTINCT card_id FROM collection_cards WHERE user_id = ? AND card_id IN (${placeholders})`)
+			.all(userId, ...pageCardIds) as Array<{ card_id: string }>;
+		collectedCardIds = new Set(collectedRows.map((r) => r.card_id));
+
+		const wishlistRows = sqlite
+			.prepare(`SELECT DISTINCT card_id FROM wishlist_cards WHERE user_id = ? AND card_id IN (${placeholders})`)
+			.all(userId, ...pageCardIds) as Array<{ card_id: string }>;
+		wishlistCardIds = new Set(wishlistRows.map((r) => r.card_id));
+	}
 
 	return {
 		cards: results,
