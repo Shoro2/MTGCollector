@@ -33,7 +33,7 @@ interface ScryfallCard {
 	legalities?: Record<string, string>;
 	released_at?: string;
 	scryfall_uri?: string;
-	prices?: { eur?: string | null; eur_foil?: string | null };
+	prices?: { eur?: string | null; eur_foil?: string | null; usd?: string | null; usd_foil?: string | null };
 	lang: string;
 	card_faces?: Array<{
 		name?: string;
