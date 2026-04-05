@@ -157,7 +157,7 @@
 		/>
 		<button
 			type="submit"
-			class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-6 py-2 rounded-lg font-medium transition-colors"
+			class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2 rounded-lg font-medium transition-colors"
 		>
 			Search
 		</button>
@@ -186,7 +186,7 @@
 						</button>
 					{/each}
 					{#if selectedColors.length > 0}
-						<select bind:value={colorMode} class="ml-4 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm">
+						<select aria-label="Color filter mode" bind:value={colorMode} class="ml-4 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm">
 							<option value="include">Include these</option>
 							<option value="exact">Exactly these</option>
 							<option value="at_most">At most these</option>
@@ -262,7 +262,7 @@
 			</div>
 
 			<div class="flex gap-2">
-				<button onclick={search} class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
+				<button onclick={search} class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
 					Apply Filters
 				</button>
 				<button onclick={clearFilters} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2 text-sm transition-colors">
@@ -278,7 +278,7 @@
 		{#each [['name', 'Name'], ['price', 'Price'], ['cmc', 'CMC'], ['power', 'Power'], ['toughness', 'Toughness'], ['rarity', 'Rarity'], ['set', 'Set'], ['released', 'Released']] as [key, label]}
 			<button
 				onclick={() => setSort(key)}
-				class="px-3 py-1 rounded-lg border transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
+				class="px-3 py-1 rounded-lg border transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
 			>
 				{label}
 				{#if data.filters.sortBy === key}
@@ -289,7 +289,7 @@
 		<span class="mx-2 text-[var(--color-border)]">|</span>
 		<button
 			onclick={toggleUnique}
-			class="px-3 py-1 rounded-lg border transition-colors {data.filters.unique ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
+			class="px-3 py-1 rounded-lg border transition-colors {data.filters.unique ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
 		>
 			Unique only
 		</button>
@@ -297,7 +297,7 @@
 
 	<!-- Card Grid -->
 	<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-		{#each data.cards as card}
+		{#each data.cards as card, i}
 			{@const imgSrc = getImageSrc(card)}
 			{@const inCollection = collectedSet.has(card.id as string)}
 			{@const onWishlist = wishlistSet.has(card.id as string)}
@@ -312,7 +312,8 @@
 								src={imgSrc}
 								alt="Magic: The Gathering - {card.name}"
 								class="w-full aspect-[488/680] object-cover"
-								loading="lazy"
+								loading={i < 10 ? "eager" : "lazy"}
+								fetchpriority={i < 2 ? "high" : "auto"}
 							/>
 						</CardPreview>
 					{:else}
@@ -373,6 +374,7 @@
 				Next
 			</button>
 			<select
+				aria-label="Results per page"
 				onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
 				class="ml-4 px-2 py-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-sm"
 			>

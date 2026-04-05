@@ -7,8 +7,10 @@
 	--color-border: #475569;
 	--color-text: #f8fafc;
 	--color-text-muted: #b0bec5;
-	--color-primary: #3b82f6;
-	--color-primary-hover: #2563eb;
+	--color-primary: #60a5fa;
+	--color-primary-hover: #93bbfd;
+	--color-primary-button: #2563eb;
+	--color-primary-button-hover: #1d4ed8;
 	--color-accent: #f59e0b;
 }
 

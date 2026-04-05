@@ -101,20 +101,20 @@
 				placeholder="Search wishlist..."
 				class="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[var(--color-primary)]"
 			/>
-			<button type="submit" class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
+			<button type="submit" class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
 				Search
 			</button>
 		</form>
-		<button onclick={() => sort('name')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'name' ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+		<button onclick={() => sort('name')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'name' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
 			Name{sortIndicator('name')}
 		</button>
-		<button onclick={() => sort('added_at')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'added_at' ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+		<button onclick={() => sort('added_at')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'added_at' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
 			Date{sortIndicator('added_at')}
 		</button>
-		<button onclick={() => sort('price')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'price' ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+		<button onclick={() => sort('price')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'price' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
 			Price{sortIndicator('price')}
 		</button>
-		<button onclick={() => sort('priority')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'priority' ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+		<button onclick={() => sort('priority')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'priority' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
 			Priority{sortIndicator('priority')}
 		</button>
 	</div>

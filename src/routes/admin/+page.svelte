@@ -58,7 +58,7 @@
 			<button
 				onclick={triggerPriceUpdate}
 				disabled={updating}
-				class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50"
+				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50"
 			>
 				{updating ? 'Updating...' : 'Trigger Price Update'}
 			</button>

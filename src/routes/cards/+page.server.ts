@@ -133,7 +133,7 @@ export async function load({ url, locals }) {
 	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
 	// Get paginated results
-	const resultSql = `SELECT cards.* FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
+	const resultSql = `SELECT cards.id, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get all unique sets for the filter dropdown (cached, changes only on import)

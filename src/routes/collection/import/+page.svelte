@@ -112,7 +112,7 @@
 			bind:this={fileInput}
 			class="block w-full text-sm text-[var(--color-text-muted)]
 				file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0
-				file:text-sm file:font-medium file:bg-[var(--color-primary)]
+				file:text-sm file:font-medium file:bg-[var(--color-primary-button)]
 				file:text-white file:cursor-pointer hover:file:bg-[var(--color-primary-hover)]"
 		/>
 		{#if selectedFile}
@@ -145,7 +145,7 @@
 		<button
 			onclick={doImport}
 			disabled={!selectedFile || importing}
-			class="bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50"
+			class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50"
 		>
 			{importing ? 'Importing...' : `Import (${mode === 'sync' ? 'Sync' : 'Append'})`}
 		</button>
