@@ -356,17 +356,37 @@
 
 			// === Grid inference: fill missing positions if cards form a grid ===
 			if (expectedCardCount && cardContours.length < expectedCardCount && cardContours.length >= 3) {
-				// Compute median card dimensions
-				const widths = cardContours.map(c => c.rect.width).sort((a, b) => a - b);
-				const heights = cardContours.map(c => c.rect.height).sort((a, b) => a - b);
-				const medW = widths[Math.floor(widths.length / 2)];
-				const medH = heights[Math.floor(heights.length / 2)];
+				// Compute actual card dimensions from corner points (not bounding rect which is inflated for rotated cards)
+				const cardDims = cardContours.map(c => {
+					const pts = c.corners;
+					// Corners are stored as [x0,y0, x1,y1, x2,y2, x3,y3]
+					// Compute edge lengths to get actual card width/height
+					const edges: number[] = [];
+					for (let j = 0; j < 4; j++) {
+						const nx = (j + 1) % 4;
+						edges.push(Math.hypot(
+							pts.data32S[nx * 2] - pts.data32S[j * 2],
+							pts.data32S[nx * 2 + 1] - pts.data32S[j * 2 + 1]
+						));
+					}
+					// Shorter pair = width, longer pair = height
+					const sorted = [...edges].sort((a, b) => a - b);
+					return { w: (sorted[0] + sorted[1]) / 2, h: (sorted[2] + sorted[3]) / 2 };
+				});
 
-				// Get card centers
-				const centers = cardContours.map(c => ({
-					x: c.rect.x + c.rect.width / 2,
-					y: c.rect.y + c.rect.height / 2
-				}));
+				// Use center of actual corners (not bounding rect)
+				const centers = cardContours.map(c => {
+					const pts = c.corners;
+					return {
+						x: (pts.data32S[0] + pts.data32S[2] + pts.data32S[4] + pts.data32S[6]) / 4,
+						y: (pts.data32S[1] + pts.data32S[3] + pts.data32S[5] + pts.data32S[7]) / 4
+					};
+				});
+
+				const cws = cardDims.map(d => d.w).sort((a, b) => a - b);
+				const chs = cardDims.map(d => d.h).sort((a, b) => a - b);
+				const medW = cws[Math.floor(cws.length / 2)];
+				const medH = chs[Math.floor(chs.length / 2)];
 
 				// Cluster into rows (by Y) and columns (by X)
 				function cluster1D(values: number[], threshold: number): number[][] {
@@ -397,17 +417,26 @@
 						return xs[Math.floor(xs.length / 2)];
 					});
 
+					// Shrink synthetic rect by 5% to avoid overshooting into neighbor cards
+					const synthW = Math.round(medW * 0.95);
+					const synthH = Math.round(medH * 0.95);
+
 					for (const ry of rowYs) {
 						for (const cx of colXs) {
 							if (cardContours.length >= expectedCardCount) break;
 							const syntheticRect = {
-								x: Math.round(cx - medW / 2),
-								y: Math.round(ry - medH / 2),
-								width: medW,
-								height: medH
+								x: Math.round(cx - synthW / 2),
+								y: Math.round(ry - synthH / 2),
+								width: synthW,
+								height: synthH
 							};
 							// Check this position isn't already occupied
-							const alreadyFound = cardContours.some(c => computeIoU(c.rect, syntheticRect) > 0.2);
+							const alreadyFound = cardContours.some(c => {
+								const ccx = (c.corners.data32S[0] + c.corners.data32S[2] + c.corners.data32S[4] + c.corners.data32S[6]) / 4;
+								const ccy = (c.corners.data32S[1] + c.corners.data32S[3] + c.corners.data32S[5] + c.corners.data32S[7]) / 4;
+								// Check if centers are close (within half a card dimension)
+								return Math.abs(ccx - cx) < medW * 0.4 && Math.abs(ccy - ry) < medH * 0.4;
+							});
 							if (!alreadyFound) {
 								// Clamp to image bounds
 								const x1 = Math.max(0, syntheticRect.x);
