@@ -464,32 +464,114 @@
 						return xs[Math.floor(xs.length / 2)];
 					});
 
-					// Use contour-equivalent dimensions (no shrink — expansion happens later like for detected cards)
-					const synthW = Math.round(medW);
-					const synthH = Math.round(medH);
-
 					for (const ry of rowYs) {
 						for (const cx of colXs) {
 							if (cardContours.length >= expectedCardCount) break;
-							const syntheticRect = {
-								x: Math.round(cx - synthW / 2),
-								y: Math.round(ry - synthH / 2),
-								width: synthW,
-								height: synthH
-							};
 							// Check this position isn't already occupied
 							const alreadyFound = cardContours.some(c => {
 								const ccx = (c.corners.data32S[0] + c.corners.data32S[2] + c.corners.data32S[4] + c.corners.data32S[6]) / 4;
 								const ccy = (c.corners.data32S[1] + c.corners.data32S[3] + c.corners.data32S[5] + c.corners.data32S[7]) / 4;
-								// Check if centers are close (within half a card dimension)
 								return Math.abs(ccx - cx) < medW * 0.4 && Math.abs(ccy - ry) < medH * 0.4;
 							});
-							if (!alreadyFound) {
-								// Clamp to image bounds
-								const x1 = Math.max(0, syntheticRect.x);
-								const y1 = Math.max(0, syntheticRect.y);
-								const x2 = Math.min(img.width - 1, syntheticRect.x + syntheticRect.width);
-								const y2 = Math.min(img.height - 1, syntheticRect.y + syntheticRect.height);
+							if (alreadyFound) continue;
+
+							// Try localized contour search in the expected region first.
+							// Expand search area by 20% to account for grid alignment imprecision.
+							const searchPad = 0.2;
+							const roiX = Math.max(0, Math.round(cx - medW * (0.5 + searchPad)));
+							const roiY = Math.max(0, Math.round(ry - medH * (0.5 + searchPad)));
+							const roiW = Math.min(Math.round(medW * (1 + 2 * searchPad)), img.width - roiX);
+							const roiH = Math.min(Math.round(medH * (1 + 2 * searchPad)), img.height - roiY);
+
+							const roi = gray.roi(new cv.Rect(roiX, roiY, roiW, roiH));
+							let localFound = false;
+
+							// Try multiple detection methods on the small ROI
+							const localMats: any[] = [];
+							// Canny on ROI
+							const lb = new cv.Mat(); const le = new cv.Mat();
+							cv.GaussianBlur(roi, lb, new cv.Size(5, 5), 0);
+							cv.Canny(lb, le, 30, 100);
+							const lk = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+							cv.dilate(le, le, lk);
+							localMats.push(le);
+							// EqualizeHist + Canny on ROI
+							const leq = new cv.Mat(); const leqb = new cv.Mat(); const leqe = new cv.Mat();
+							cv.equalizeHist(roi, leq);
+							cv.GaussianBlur(leq, leqb, new cv.Size(5, 5), 0);
+							cv.Canny(leqb, leqe, 30, 100);
+							cv.dilate(leqe, leqe, lk);
+							localMats.push(leqe);
+
+							type LocalCandidate = { corners: any; area: number };
+							const localCandidates: LocalCandidate[] = [];
+
+							for (const lmat of localMats) {
+								const lc = new cv.MatVector();
+								const lh = new cv.Mat();
+								cv.findContours(lmat, lc, lh, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+								for (let li = 0; li < lc.size(); li++) {
+									const cnt = lc.get(li);
+									const a = cv.contourArea(cnt);
+									// Must be at least 30% of expected card area
+									if (a < medW * medH * 0.3) continue;
+									const p = cv.arcLength(cnt, true);
+									for (const eps of [0.015, 0.02, 0.03, 0.04]) {
+										const ap = new cv.Mat();
+										cv.approxPolyDP(cnt, ap, eps * p, true);
+										if (ap.rows >= 4 && ap.rows <= 8) {
+											const rect = cv.boundingRect(ap);
+											const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
+											if (aspect > 0.45 && aspect < 0.95) {
+												// Convert ROI-local coords to image-global coords
+												let cornerMat: any;
+												if (ap.rows === 4) {
+													cornerMat = new cv.Mat(4, 1, cv.CV_32SC2);
+													for (let k = 0; k < 4; k++) {
+														cornerMat.data32S[k * 2] = ap.data32S[k * 2] + roiX;
+														cornerMat.data32S[k * 2 + 1] = ap.data32S[k * 2 + 1] + roiY;
+													}
+												} else {
+													const rr = cv.minAreaRect(cnt);
+													const verts = cv.RotatedRect.points(rr);
+													cornerMat = new cv.Mat(4, 1, cv.CV_32SC2);
+													for (let k = 0; k < 4; k++) {
+														cornerMat.data32S[k * 2] = Math.round(verts[k].x) + roiX;
+														cornerMat.data32S[k * 2 + 1] = Math.round(verts[k].y) + roiY;
+													}
+												}
+												localCandidates.push({ corners: cornerMat, area: a });
+											}
+										}
+										ap.delete();
+									}
+								}
+								lc.delete(); lh.delete();
+							}
+
+							// Pick the largest local candidate
+							if (localCandidates.length > 0) {
+								localCandidates.sort((a, b) => b.area - a.area);
+								const best = localCandidates[0];
+								const brect = cv.boundingRect(best.corners);
+								cardContours.push({
+									corners: best.corners,
+									area: best.area,
+									rect: brect
+								});
+								localFound = true;
+								// Clean up unused candidates
+								for (let li = 1; li < localCandidates.length; li++) {
+									localCandidates[li].corners.delete();
+								}
+							}
+
+							// Fallback: use synthetic rectangle if local search failed
+							if (!localFound) {
+								const x1 = Math.max(0, Math.round(cx - medW / 2));
+								const y1 = Math.max(0, Math.round(ry - medH / 2));
+								const x2 = Math.min(img.width - 1, x1 + Math.round(medW));
+								const y2 = Math.min(img.height - 1, y1 + Math.round(medH));
 								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
 								corners.data32S[0] = x1; corners.data32S[1] = y1;
 								corners.data32S[2] = x2; corners.data32S[3] = y1;
@@ -498,10 +580,14 @@
 								cardContours.push({
 									corners,
 									area: (x2 - x1) * (y2 - y1),
-									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
-									synthetic: true
+									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 }
 								});
 							}
+
+							// Cleanup
+							roi.delete(); lb.delete(); lk.delete();
+							leq.delete(); leqb.delete();
+							for (const m of localMats) m.delete();
 						}
 					}
 				}
