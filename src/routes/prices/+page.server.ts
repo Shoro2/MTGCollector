@@ -19,11 +19,9 @@ export async function load({ url, locals }) {
 				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
-			WHERE (price IS NOT NULL OR price_usd IS NOT NULL) AND cc.user_id = ?
-			ORDER BY COALESCE(price, price_usd * ?) * cc.quantity DESC
-			LIMIT 20`
+			WHERE (price IS NOT NULL OR price_usd IS NOT NULL) AND cc.user_id = ?`
 		)
-		.all(userId, usdToEur) as Array<Record<string, unknown>>;
+		.all(userId) as Array<Record<string, unknown>>;
 
 	// Single card price history
 	let cardPriceHistory: Array<Record<string, unknown>> = [];
