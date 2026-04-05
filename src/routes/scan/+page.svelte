@@ -287,6 +287,14 @@
 				}
 			}
 
+			// === Size consistency filter: remove detections much smaller than median ===
+			// This catches text-block false positives (e.g. only the text area of a card detected)
+			if (cardContours.length >= 3) {
+				const areas = cardContours.map(c => c.area).sort((a, b) => a - b);
+				const medianArea = areas[Math.floor(areas.length / 2)];
+				cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
+			}
+
 			// === Progressive relaxation if expected card count not met ===
 			if (expectedCardCount && cardContours.length < expectedCardCount) {
 				const relaxedMinArea = imgArea * 0.004;
@@ -335,6 +343,89 @@
 					});
 					if (!isInside) {
 						cardContours.push(candidate);
+					}
+				}
+
+				// Apply size filter again after relaxed detection
+				if (cardContours.length >= 3) {
+					const areas = cardContours.map(c => c.area).sort((a, b) => a - b);
+					const medianArea = areas[Math.floor(areas.length / 2)];
+					cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
+				}
+			}
+
+			// === Grid inference: fill missing positions if cards form a grid ===
+			if (expectedCardCount && cardContours.length < expectedCardCount && cardContours.length >= 3) {
+				// Compute median card dimensions
+				const widths = cardContours.map(c => c.rect.width).sort((a, b) => a - b);
+				const heights = cardContours.map(c => c.rect.height).sort((a, b) => a - b);
+				const medW = widths[Math.floor(widths.length / 2)];
+				const medH = heights[Math.floor(heights.length / 2)];
+
+				// Get card centers
+				const centers = cardContours.map(c => ({
+					x: c.rect.x + c.rect.width / 2,
+					y: c.rect.y + c.rect.height / 2
+				}));
+
+				// Cluster into rows (by Y) and columns (by X)
+				function cluster1D(values: number[], threshold: number): number[][] {
+					const sorted = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
+					const groups: number[][] = [[]];
+					groups[0].push(sorted[0].i);
+					for (let i = 1; i < sorted.length; i++) {
+						if (sorted[i].v - sorted[i - 1].v > threshold) {
+							groups.push([]);
+						}
+						groups[groups.length - 1].push(sorted[i].i);
+					}
+					return groups;
+				}
+
+				const rows = cluster1D(centers.map(c => c.y), medH * 0.4);
+				const cols = cluster1D(centers.map(c => c.x), medW * 0.4);
+
+				// Only infer if grid is plausible (rows * cols >= expectedCardCount)
+				if (rows.length >= 2 && cols.length >= 2 && rows.length * cols.length >= expectedCardCount * 0.8) {
+					// Median Y per row, median X per column
+					const rowYs = rows.map(r => {
+						const ys = r.map(i => centers[i].y).sort((a, b) => a - b);
+						return ys[Math.floor(ys.length / 2)];
+					});
+					const colXs = cols.map(c => {
+						const xs = c.map(i => centers[i].x).sort((a, b) => a - b);
+						return xs[Math.floor(xs.length / 2)];
+					});
+
+					for (const ry of rowYs) {
+						for (const cx of colXs) {
+							if (cardContours.length >= expectedCardCount) break;
+							const syntheticRect = {
+								x: Math.round(cx - medW / 2),
+								y: Math.round(ry - medH / 2),
+								width: medW,
+								height: medH
+							};
+							// Check this position isn't already occupied
+							const alreadyFound = cardContours.some(c => computeIoU(c.rect, syntheticRect) > 0.2);
+							if (!alreadyFound) {
+								// Clamp to image bounds
+								const x1 = Math.max(0, syntheticRect.x);
+								const y1 = Math.max(0, syntheticRect.y);
+								const x2 = Math.min(img.width - 1, syntheticRect.x + syntheticRect.width);
+								const y2 = Math.min(img.height - 1, syntheticRect.y + syntheticRect.height);
+								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
+								corners.data32S[0] = x1; corners.data32S[1] = y1;
+								corners.data32S[2] = x2; corners.data32S[3] = y1;
+								corners.data32S[4] = x2; corners.data32S[5] = y2;
+								corners.data32S[6] = x1; corners.data32S[7] = y2;
+								cardContours.push({
+									corners,
+									area: (x2 - x1) * (y2 - y1),
+									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 }
+								});
+							}
+						}
 					}
 				}
 			}
