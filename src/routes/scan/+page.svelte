@@ -477,27 +477,40 @@
 				if (card.results.length === 1) {
 					// Unique card from name search — done
 					card.status = 'found';
-				} else if (card.results.length > 1 && card.setCode) {
-					// Multiple reprints — match by set code + collector number
-					let match = card.results.find(r =>
-						(r.set_code as string).toLowerCase() === card.setCode.toLowerCase() &&
-						card.collectorNumber &&
-						(String(r.collector_number) === card.collectorNumber ||
-						 String(r.collector_number) === card.collectorNumber.replace(/^0+/, '') ||
-						 String(r.collector_number).padStart(3, '0') === card.collectorNumber.padStart(3, '0'))
-					);
-					if (!match) {
-						// Try just set code match
-						match = card.results.find(r => (r.set_code as string).toLowerCase() === card.setCode.toLowerCase());
+				} else if (card.results.length > 1) {
+					// Multiple reprints — try to narrow down to one
+					let match: Record<string, unknown> | undefined;
+
+					// 1. Try set code + collector number
+					if (card.setCode && card.collectorNumber) {
+						match = card.results.find(r =>
+							(r.set_code as string).toLowerCase() === card.setCode.toLowerCase() &&
+							(String(r.collector_number) === card.collectorNumber ||
+							 String(r.collector_number) === card.collectorNumber.replace(/^0+/, '') ||
+							 String(r.collector_number).padStart(3, '0') === card.collectorNumber.padStart(3, '0'))
+						);
 					}
+
+					// 2. Try collector number alone (OCR often misreads set code)
+					if (!match && card.collectorNumber) {
+						const numMatches = card.results.filter(r =>
+							String(r.collector_number) === card.collectorNumber ||
+							String(r.collector_number) === card.collectorNumber.replace(/^0+/, '') ||
+							String(r.collector_number).padStart(3, '0') === card.collectorNumber.padStart(3, '0')
+						);
+						if (numMatches.length === 1) match = numMatches[0];
+					}
+
+					// 3. Try just set code
+					if (!match && card.setCode) {
+						const setMatches = card.results.filter(r => (r.set_code as string).toLowerCase() === card.setCode.toLowerCase());
+						if (setMatches.length === 1) match = setMatches[0];
+					}
+
 					if (match) {
-						// Move matched reprint to front
 						card.results = [match, ...card.results.filter(r => r !== match)];
 						card.matchType = 'reprint_match';
 					}
-					card.status = 'found';
-				} else if (card.results.length > 1) {
-					// Multiple reprints, no set code — show most recent first
 					card.status = 'found';
 				} else if (card.setCode && card.collectorNumber) {
 					// Name OCR failed — try set+number directly (old fallback)
