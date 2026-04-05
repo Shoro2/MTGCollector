@@ -401,12 +401,19 @@
 				const card = detectedCards[i];
 				if (!card.nameText || card.nameText.length < 2) continue;
 
-				scanProgress = `Searching "${card.nameText}"...`;
+				// Clean name: remove trailing single chars (mana cost symbols bleeding in)
+				// and leading junk chars (OCR artifacts before actual name)
+				let cleanName = card.nameText
+					.replace(/\s+[A-Z]$/i, '')   // trailing single letter (mana cost)
+					.replace(/^[^A-Za-z]+/, '')    // leading non-letter junk
+					.trim();
+
+				scanProgress = `Searching "${cleanName}"...`;
 				try {
 					const res = await fetch('/scan', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ query: card.nameText })
+						body: JSON.stringify({ query: cleanName })
 					});
 					const searchData = await res.json();
 					if (searchData.results.length > 0) {
@@ -512,8 +519,9 @@
 						card.matchType = 'reprint_match';
 					}
 					card.status = 'found';
-				} else if (card.setCode && card.collectorNumber) {
-					// Name OCR failed — try set+number directly (old fallback)
+				} else if (card.setCode && card.collectorNumber && !card.nameText) {
+					// Name OCR completely failed — try set+number directly (old fallback)
+					// Only when nameText is empty, never override a name match
 					try {
 						const res = await fetch('/scan', {
 							method: 'POST',
