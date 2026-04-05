@@ -1,7 +1,7 @@
 <div class="prose prose-invert max-w-4xl mx-auto">
 <h1>Impressum</h1>
 
-<h2>Angaben gemäß § 5 TMG</h2>
+<h2>Angaben gemäß § 5 DDG</h2>
 <p>mustermann max<br>musterstraße 1<br>12345 musterstadt<br>Deutschland</p>
 
 <h2>Kontakt</h2>
