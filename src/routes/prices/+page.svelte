@@ -375,7 +375,7 @@
 						>
 							<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
 							{#if card.image_uri || card.local_image_path}
-								<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={3.6}>
+								<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={2.4}>
 									<img
 										src={(card.local_image_path || card.image_uri) as string}
 										alt={card.name as string}
