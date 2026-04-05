@@ -509,30 +509,36 @@
 					// Unique card from name search — done
 					card.status = 'found';
 				} else if (card.results.length > 1) {
-					// Multiple reprints — try to narrow down to one
+					// Multiple reprints — match known collector numbers/set codes against bottom text
 					let match: Record<string, unknown> | undefined;
+					const bottomText = card.ocrText;
 
-					// 1. Try set code + collector number
-					if (card.setCode && card.collectorNumber) {
+					// Extract all digit sequences from bottom text for matching
+					const digitSeqs = [...bottomText.matchAll(/\d+/g)].map(m => m[0]);
+
+					// 1. Try matching known collector numbers in bottom text
+					const numMatches = card.results.filter(r => {
+						const cn = String(r.collector_number);
+						const cnPadded = cn.padStart(3, '0');
+						// Check if collector number appears as digit sequence (with/without leading zeros)
+						return digitSeqs.some(d =>
+							d === cn || d === cnPadded ||
+							d.replace(/^0+/, '') === cn ||
+							d === cn.padStart(4, '0')
+						);
+					});
+					if (numMatches.length === 1) match = numMatches[0];
+
+					// 2. Try set code + collector number from generic parser
+					if (!match && card.setCode && card.collectorNumber) {
 						match = card.results.find(r =>
 							(r.set_code as string).toLowerCase() === card.setCode.toLowerCase() &&
 							(String(r.collector_number) === card.collectorNumber ||
-							 String(r.collector_number) === card.collectorNumber.replace(/^0+/, '') ||
-							 String(r.collector_number).padStart(3, '0') === card.collectorNumber.padStart(3, '0'))
+							 String(r.collector_number) === card.collectorNumber.replace(/^0+/, ''))
 						);
 					}
 
-					// 2. Try collector number alone (OCR often misreads set code)
-					if (!match && card.collectorNumber) {
-						const numMatches = card.results.filter(r =>
-							String(r.collector_number) === card.collectorNumber ||
-							String(r.collector_number) === card.collectorNumber.replace(/^0+/, '') ||
-							String(r.collector_number).padStart(3, '0') === card.collectorNumber.padStart(3, '0')
-						);
-						if (numMatches.length === 1) match = numMatches[0];
-					}
-
-					// 3. Try just set code
+					// 3. Try just set code from generic parser
 					if (!match && card.setCode) {
 						const setMatches = card.results.filter(r => (r.set_code as string).toLowerCase() === card.setCode.toLowerCase());
 						if (setMatches.length === 1) match = setMatches[0];
