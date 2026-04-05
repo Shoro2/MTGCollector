@@ -572,9 +572,9 @@
 				const croppedUrl = cardCanvas.toDataURL();
 
 				// Crop name area — skip black border + frame top, capture name text line
-				// With 5% corner padding the border is ~7-8% of card height
-				const nameY = Math.floor(cardH * 0.07);
-				const nameH = Math.floor(cardH * 0.065);
+				// Expanded cards have ~7-8% border at top; synthetic cards have less (~3%)
+				const nameY = Math.floor(cardH * (cardContours[i].synthetic ? 0.03 : 0.07));
+				const nameH = Math.floor(cardH * (cardContours[i].synthetic ? 0.08 : 0.065));
 				const nameW = Math.floor(cardW * 0.72);
 				const nameRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.08), nameY, nameW, nameH));
 				const grayName = new cv.Mat();
