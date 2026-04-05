@@ -417,10 +417,35 @@
 					});
 					const searchData = await res.json();
 					if (searchData.results.length > 0) {
-						// Filter to exact name matches only (these are reprints of the same card)
-						const bestName = (searchData.results[0].name as string);
-						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === bestName);
-						card.matchType = searchData.matchType;
+						// Pick best matching name by similarity score
+						const best = bestNameMatch(searchData.results, cleanName);
+						if (best.score >= 0.6) {
+							card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
+							card.matchType = searchData.matchType;
+						}
+					}
+
+					// Fallback: search by longest word if full name didn't match well
+					if (card.results.length === 0) {
+						const words = cleanName.split(/\s+/).filter(w => w.length >= 3);
+						// Try longest word first (most distinctive)
+						words.sort((a, b) => b.length - a.length);
+						for (const word of words.slice(0, 2)) {
+							const wRes = await fetch('/scan', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ query: word })
+							});
+							const wData = await wRes.json();
+							if (wData.results.length > 0) {
+								const best = bestNameMatch(wData.results, cleanName);
+								if (best.score >= 0.6) {
+									card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
+									card.matchType = 'similarity';
+									break;
+								}
+							}
+						}
 					}
 				} catch { /* */ }
 				detectedCards = [...detectedCards];
@@ -703,6 +728,48 @@
 		} catch {
 			return false;
 		}
+	}
+
+	// Normalized similarity score (0-1) based on Levenshtein distance
+	function similarity(a: string, b: string): number {
+		const al = a.toLowerCase();
+		const bl = b.toLowerCase();
+		if (al === bl) return 1;
+		const maxLen = Math.max(al.length, bl.length);
+		if (maxLen === 0) return 1;
+
+		// Levenshtein distance via dynamic programming
+		const prev = Array.from({ length: bl.length + 1 }, (_, i) => i);
+		for (let i = 1; i <= al.length; i++) {
+			let prevDiag = prev[0];
+			prev[0] = i;
+			for (let j = 1; j <= bl.length; j++) {
+				const temp = prev[j];
+				prev[j] = al[i - 1] === bl[j - 1]
+					? prevDiag
+					: 1 + Math.min(prev[j], prev[j - 1], prevDiag);
+				prevDiag = temp;
+			}
+		}
+		return 1 - prev[bl.length] / maxLen;
+	}
+
+	// Pick best matching card name from results by similarity score
+	function bestNameMatch(results: Array<Record<string, unknown>>, query: string): { name: string; score: number } {
+		let bestName = '';
+		let bestScore = 0;
+		const seen = new Set<string>();
+		for (const r of results) {
+			const name = r.name as string;
+			if (seen.has(name)) continue;
+			seen.add(name);
+			const score = similarity(query, name);
+			if (score > bestScore) {
+				bestScore = score;
+				bestName = name;
+			}
+		}
+		return { name: bestName, score: bestScore };
 	}
 
 	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
