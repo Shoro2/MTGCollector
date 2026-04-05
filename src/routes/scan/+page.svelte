@@ -403,39 +403,17 @@
 
 			// === Grid inference: fill missing positions if cards form a grid ===
 			if (expectedCardCount && cardContours.length < expectedCardCount && cardContours.length >= 3) {
-				// Compute actual card dimensions from corner points (not bounding rect which is inflated for rotated cards)
-				const cardDims = cardContours.map(c => {
-					const pts = c.corners;
-					// Corners are stored as [x0,y0, x1,y1, x2,y2, x3,y3]
-					// Compute edge lengths to get actual card width/height
-					const edges: number[] = [];
-					for (let j = 0; j < 4; j++) {
-						const nx = (j + 1) % 4;
-						edges.push(Math.hypot(
-							pts.data32S[nx * 2] - pts.data32S[j * 2],
-							pts.data32S[nx * 2 + 1] - pts.data32S[j * 2 + 1]
-						));
-					}
-					// Shorter pair = width, longer pair = height
-					const sorted = [...edges].sort((a, b) => a - b);
-					return { w: (sorted[0] + sorted[1]) / 2, h: (sorted[2] + sorted[3]) / 2 };
-				});
+				// Use bounding rect centers for grid layout (stable for upright cards)
+				const gridRects = cardContours.map(c => c.rect);
+				const gridCenters = gridRects.map(r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
 
-				// Use center of actual corners (not bounding rect)
-				const centers = cardContours.map(c => {
-					const pts = c.corners;
-					return {
-						x: (pts.data32S[0] + pts.data32S[2] + pts.data32S[4] + pts.data32S[6]) / 4,
-						y: (pts.data32S[1] + pts.data32S[3] + pts.data32S[5] + pts.data32S[7]) / 4
-					};
-				});
+				// Median card dimensions from bounding rects
+				const bws = gridRects.map(r => r.width).sort((a, b) => a - b);
+				const bhs = gridRects.map(r => r.height).sort((a, b) => a - b);
+				const medW = bws[Math.floor(bws.length / 2)];
+				const medH = bhs[Math.floor(bhs.length / 2)];
 
-				const cws = cardDims.map(d => d.w).sort((a, b) => a - b);
-				const chs = cardDims.map(d => d.h).sort((a, b) => a - b);
-				const medW = cws[Math.floor(cws.length / 2)];
-				const medH = chs[Math.floor(chs.length / 2)];
-
-				// Cluster into rows (by Y) and columns (by X)
+				// Cluster into rows (by Y center) and columns (by X center)
 				function cluster1D(values: number[], threshold: number): number[][] {
 					const sorted = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
 					const groups: number[][] = [[]];
@@ -449,145 +427,56 @@
 					return groups;
 				}
 
-				const rows = cluster1D(centers.map(c => c.y), medH * 0.4);
-				const cols = cluster1D(centers.map(c => c.x), medW * 0.4);
+				const rows = cluster1D(gridCenters.map(c => c.y), medH * 0.4);
+				const cols = cluster1D(gridCenters.map(c => c.x), medW * 0.4);
 
-				// Only infer if grid is plausible (rows * cols >= expectedCardCount)
 				if (rows.length >= 2 && cols.length >= 2 && rows.length * cols.length >= expectedCardCount * 0.8) {
-					// Median Y per row, median X per column
-					const rowYs = rows.map(r => {
-						const ys = r.map(i => centers[i].y).sort((a, b) => a - b);
-						return ys[Math.floor(ys.length / 2)];
-					});
-					const colXs = cols.map(c => {
-						const xs = c.map(i => centers[i].x).sort((a, b) => a - b);
-						return xs[Math.floor(xs.length / 2)];
-					});
+					// Assign each card to a (row, col) index
+					const cardGrid: { [key: string]: number } = {}; // "row,col" -> card index
+					for (let ci = 0; ci < cardContours.length; ci++) {
+						const rowIdx = rows.findIndex(r => r.includes(ci));
+						const colIdx = cols.findIndex(c => c.includes(ci));
+						if (rowIdx >= 0 && colIdx >= 0) {
+							cardGrid[`${rowIdx},${colIdx}`] = ci;
+						}
+					}
 
-					for (const ry of rowYs) {
-						for (const cx of colXs) {
+					// For each empty cell, compute position from same-row and same-col neighbors
+					for (let ri = 0; ri < rows.length; ri++) {
+						for (let ci = 0; ci < cols.length; ci++) {
 							if (cardContours.length >= expectedCardCount) break;
-							// Check this position isn't already occupied
-							const alreadyFound = cardContours.some(c => {
-								const ccx = (c.corners.data32S[0] + c.corners.data32S[2] + c.corners.data32S[4] + c.corners.data32S[6]) / 4;
-								const ccy = (c.corners.data32S[1] + c.corners.data32S[3] + c.corners.data32S[5] + c.corners.data32S[7]) / 4;
-								return Math.abs(ccx - cx) < medW * 0.4 && Math.abs(ccy - ry) < medH * 0.4;
+							if (cardGrid[`${ri},${ci}`] !== undefined) continue;
+
+							// Get X from same-column neighbors (cards in column ci, any row)
+							const colNeighbors = cols[ci].map(idx => gridCenters[idx].x);
+							const inferX = colNeighbors.length > 0
+								? colNeighbors.reduce((a, b) => a + b, 0) / colNeighbors.length
+								: null;
+
+							// Get Y from same-row neighbors (cards in row ri, any column)
+							const rowNeighbors = rows[ri].map(idx => gridCenters[idx].y);
+							const inferY = rowNeighbors.length > 0
+								? rowNeighbors.reduce((a, b) => a + b, 0) / rowNeighbors.length
+								: null;
+
+							if (inferX === null || inferY === null) continue;
+
+							// Use median bounding rect dimensions (not corner edge lengths)
+							const x1 = Math.max(0, Math.round(inferX - medW / 2));
+							const y1 = Math.max(0, Math.round(inferY - medH / 2));
+							const x2 = Math.min(img.width - 1, x1 + medW);
+							const y2 = Math.min(img.height - 1, y1 + medH);
+							const corners = new cv.Mat(4, 1, cv.CV_32SC2);
+							corners.data32S[0] = x1; corners.data32S[1] = y1;
+							corners.data32S[2] = x2; corners.data32S[3] = y1;
+							corners.data32S[4] = x2; corners.data32S[5] = y2;
+							corners.data32S[6] = x1; corners.data32S[7] = y2;
+							cardContours.push({
+								corners,
+								area: (x2 - x1) * (y2 - y1),
+								rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
+								synthetic: true
 							});
-							if (alreadyFound) continue;
-
-							// Try localized contour search in the expected region first.
-							// Expand search area by 20% to account for grid alignment imprecision.
-							const searchPad = 0.2;
-							const roiX = Math.max(0, Math.round(cx - medW * (0.5 + searchPad)));
-							const roiY = Math.max(0, Math.round(ry - medH * (0.5 + searchPad)));
-							const roiW = Math.min(Math.round(medW * (1 + 2 * searchPad)), img.width - roiX);
-							const roiH = Math.min(Math.round(medH * (1 + 2 * searchPad)), img.height - roiY);
-
-							const roi = gray.roi(new cv.Rect(roiX, roiY, roiW, roiH));
-							let localFound = false;
-
-							// Try multiple detection methods on the small ROI
-							const localMats: any[] = [];
-							// Canny on ROI
-							const lb = new cv.Mat(); const le = new cv.Mat();
-							cv.GaussianBlur(roi, lb, new cv.Size(5, 5), 0);
-							cv.Canny(lb, le, 30, 100);
-							const lk = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-							cv.dilate(le, le, lk);
-							localMats.push(le);
-							// EqualizeHist + Canny on ROI
-							const leq = new cv.Mat(); const leqb = new cv.Mat(); const leqe = new cv.Mat();
-							cv.equalizeHist(roi, leq);
-							cv.GaussianBlur(leq, leqb, new cv.Size(5, 5), 0);
-							cv.Canny(leqb, leqe, 30, 100);
-							cv.dilate(leqe, leqe, lk);
-							localMats.push(leqe);
-
-							type LocalCandidate = { corners: any; area: number };
-							const localCandidates: LocalCandidate[] = [];
-
-							for (const lmat of localMats) {
-								const lc = new cv.MatVector();
-								const lh = new cv.Mat();
-								cv.findContours(lmat, lc, lh, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-								for (let li = 0; li < lc.size(); li++) {
-									const cnt = lc.get(li);
-									const a = cv.contourArea(cnt);
-									// Must be at least 30% of expected card area
-									if (a < medW * medH * 0.3) continue;
-									const p = cv.arcLength(cnt, true);
-									for (const eps of [0.015, 0.02, 0.03, 0.04]) {
-										const ap = new cv.Mat();
-										cv.approxPolyDP(cnt, ap, eps * p, true);
-										if (ap.rows >= 4 && ap.rows <= 8) {
-											const rect = cv.boundingRect(ap);
-											const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-											if (aspect > 0.45 && aspect < 0.95) {
-												// Convert ROI-local coords to image-global coords
-												let cornerMat: any;
-												if (ap.rows === 4) {
-													cornerMat = new cv.Mat(4, 1, cv.CV_32SC2);
-													for (let k = 0; k < 4; k++) {
-														cornerMat.data32S[k * 2] = ap.data32S[k * 2] + roiX;
-														cornerMat.data32S[k * 2 + 1] = ap.data32S[k * 2 + 1] + roiY;
-													}
-												} else {
-													const rr = cv.minAreaRect(cnt);
-													const verts = cv.RotatedRect.points(rr);
-													cornerMat = new cv.Mat(4, 1, cv.CV_32SC2);
-													for (let k = 0; k < 4; k++) {
-														cornerMat.data32S[k * 2] = Math.round(verts[k].x) + roiX;
-														cornerMat.data32S[k * 2 + 1] = Math.round(verts[k].y) + roiY;
-													}
-												}
-												localCandidates.push({ corners: cornerMat, area: a });
-											}
-										}
-										ap.delete();
-									}
-								}
-								lc.delete(); lh.delete();
-							}
-
-							// Pick the largest local candidate
-							if (localCandidates.length > 0) {
-								localCandidates.sort((a, b) => b.area - a.area);
-								const best = localCandidates[0];
-								const brect = cv.boundingRect(best.corners);
-								cardContours.push({
-									corners: best.corners,
-									area: best.area,
-									rect: brect
-								});
-								localFound = true;
-								// Clean up unused candidates
-								for (let li = 1; li < localCandidates.length; li++) {
-									localCandidates[li].corners.delete();
-								}
-							}
-
-							// Fallback: use synthetic rectangle if local search failed
-							if (!localFound) {
-								const x1 = Math.max(0, Math.round(cx - medW / 2));
-								const y1 = Math.max(0, Math.round(ry - medH / 2));
-								const x2 = Math.min(img.width - 1, x1 + Math.round(medW));
-								const y2 = Math.min(img.height - 1, y1 + Math.round(medH));
-								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
-								corners.data32S[0] = x1; corners.data32S[1] = y1;
-								corners.data32S[2] = x2; corners.data32S[3] = y1;
-								corners.data32S[4] = x2; corners.data32S[5] = y2;
-								corners.data32S[6] = x1; corners.data32S[7] = y2;
-								cardContours.push({
-									corners,
-									area: (x2 - x1) * (y2 - y1),
-									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 }
-								});
-							}
-
-							// Cleanup
-							roi.delete(); lb.delete(); lk.delete();
-							leq.delete(); leqb.delete();
-							for (const m of localMats) m.delete();
 						}
 					}
 				}
@@ -642,28 +531,31 @@
 				}
 
 				// Expand each corner outward to capture the full card including black border.
-				// The detected contour (or grid-inferred rect) is on the inner colored frame.
-				const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
-				const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-				const expandX = cardWidth * 0.05;
-				const expandY = cardHeight * 0.05;
+				// The detected contour is on the inner colored frame — expand 5% to get the black border.
+				// Skip for synthetic (grid-inferred) cards — their bounding rect already covers the full card.
+				if (!cardContours[i].synthetic) {
+					const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
+					const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
+					const expandX = cardWidth * 0.05;
+					const expandY = cardHeight * 0.05;
 
-				const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
-				const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-				ordered = ordered.map(([x, y]) => {
-					const dx = x - cx;
-					const dy = y - cy;
-					const dist = Math.hypot(dx, dy);
-					if (dist === 0) return [x, y] as [number, number];
-					const expand = Math.hypot(
-						(dx / dist) * expandX,
-						(dy / dist) * expandY
-					);
-					return [
-						Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
-						Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
-					] as [number, number];
-				}) as Array<[number, number]>;
+					const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
+					const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
+					ordered = ordered.map(([x, y]) => {
+						const dx = x - cx;
+						const dy = y - cy;
+						const dist = Math.hypot(dx, dy);
+						if (dist === 0) return [x, y] as [number, number];
+						const expand = Math.hypot(
+							(dx / dist) * expandX,
+							(dy / dist) * expandY
+						);
+						return [
+							Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
+							Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
+						] as [number, number];
+					}) as Array<[number, number]>;
+				}
 
 				// Perspective transform to flatten card
 				const cardW = 488;
