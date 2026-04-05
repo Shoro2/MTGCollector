@@ -401,11 +401,10 @@
 				const card = detectedCards[i];
 				if (!card.nameText || card.nameText.length < 2) continue;
 
-				// Clean name: remove trailing single chars (mana cost symbols bleeding in)
-				// and leading junk chars (OCR artifacts before actual name)
+				// Only strip leading non-letter junk (OCR artifacts)
+				// Don't remove trailing chars — similarity scoring handles OCR noise
 				let cleanName = card.nameText
-					.replace(/\s+[A-Z]$/i, '')   // trailing single letter (mana cost)
-					.replace(/^[^A-Za-z]+/, '')    // leading non-letter junk
+					.replace(/^[^A-Za-z]+/, '')
 					.trim();
 
 				scanProgress = `Searching "${cleanName}"...`;
