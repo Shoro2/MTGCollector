@@ -1190,6 +1190,12 @@
 	}
 </script>
 
+<svelte:head>
+	<title>MTG Card Scanner - Scan & Identify Cards | MTG Collector</title>
+	<meta name="description" content="Scan Magic: The Gathering cards with your camera. Automatic card detection, OCR recognition, foil detection, and price lookup." />
+	<link rel="canonical" href="https://mtg-collector.com/scan" />
+</svelte:head>
+
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Card Scanner</h1>

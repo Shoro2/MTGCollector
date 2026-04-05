@@ -416,6 +416,11 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Scan Cards | MTG Collector</title>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Scan Cards</h1>

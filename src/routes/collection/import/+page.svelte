@@ -51,6 +51,11 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Import Collection | MTG Collector</title>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <div class="space-y-6 max-w-2xl">
 	<div>
 		<a href="/collection" class="text-[var(--color-primary)] hover:underline text-sm">&larr; Back to collection</a>

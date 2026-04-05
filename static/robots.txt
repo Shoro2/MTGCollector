@@ -1,3 +1,11 @@
-# allow crawling everything by default
 User-agent: *
-Disallow:
+Disallow: /collection
+Disallow: /wishlist
+Disallow: /auth
+Disallow: /api
+Disallow: /settings
+Disallow: /prices
+Disallow: /login
+Disallow: /tags
+
+Sitemap: https://mtg-collector.com/sitemap.xml

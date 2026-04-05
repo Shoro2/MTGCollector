@@ -4,6 +4,11 @@
 	const error = $derived(page.url.searchParams.get('error'));
 </script>
 
+<svelte:head>
+	<title>Sign In | MTG Collector</title>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <div class="min-h-[70vh] flex items-center justify-center">
 	<div class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-8 w-full max-w-sm text-center space-y-6">
 		<div>

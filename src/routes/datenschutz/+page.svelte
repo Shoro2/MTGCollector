@@ -2,6 +2,12 @@
 	let { data } = $props();
 </script>
 
+<svelte:head>
+	<title>Datenschutz | MTG Collector</title>
+	<meta name="description" content="Datenschutzerklärung von MTG Collector. Informationen zum Umgang mit personenbezogenen Daten." />
+	<link rel="canonical" href="https://mtg-collector.com/datenschutz" />
+</svelte:head>
+
 <div class="legal-content max-w-4xl mx-auto">
 	{@html data.content}
 </div>

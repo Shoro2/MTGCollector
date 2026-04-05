@@ -130,6 +130,17 @@
 		setTimeout(() => buildPriceChart(), 0);
 	}
 
+	let metaDescription = $derived.by(() => {
+		const parts: string[] = [];
+		if (card.type_line) parts.push(card.type_line as string);
+		if (card.oracle_text) {
+			const text = card.oracle_text as string;
+			parts.push(text.length > 100 ? text.slice(0, 100) + '...' : text);
+		}
+		parts.push(`Set: ${card.set_name}`);
+		return parts.join(' - ').slice(0, 155);
+	});
+
 	onMount(() => {
 		Chart.register(...registerables);
 		buildPriceChart();
@@ -137,14 +148,50 @@
 	});
 </script>
 
-<div class="space-y-6">
+<svelte:head>
+	<title>{card.name} - {card.set_name} | MTG Collector</title>
+	<meta name="description" content={metaDescription} />
+	<link rel="canonical" href="https://mtg-collector.com/cards/{card.id}" />
+	<meta property="og:title" content="{card.name} - {card.set_name}" />
+	<meta property="og:description" content={metaDescription} />
+	<meta property="og:type" content="product" />
+	<meta property="og:url" content="https://mtg-collector.com/cards/{card.id}" />
+	{#if getImageSrc()}
+		<meta property="og:image" content={getImageSrc()} />
+	{/if}
+	{@html `<script type="application/ld+json">${JSON.stringify({
+		"@context": "https://schema.org",
+		"@type": "Product",
+		"name": card.name,
+		"description": card.oracle_text || card.type_line || "Magic: The Gathering card",
+		"image": getImageSrc() || undefined,
+		"brand": {
+			"@type": "Brand",
+			"name": "Magic: The Gathering"
+		},
+		"category": card.type_line || undefined,
+		"offers": card.price_eur ? {
+			"@type": "Offer",
+			"priceCurrency": "EUR",
+			"price": (card.price_eur as number).toFixed(2),
+			"availability": "https://schema.org/InStock"
+		} : undefined,
+		"additionalProperty": [
+			{ "@type": "PropertyValue", "name": "Set", "value": card.set_name },
+			{ "@type": "PropertyValue", "name": "Rarity", "value": card.rarity },
+			{ "@type": "PropertyValue", "name": "Collector Number", "value": card.collector_number }
+		].filter(Boolean)
+	})}</script>`}
+</svelte:head>
+
+<article class="space-y-6">
 	<a href="/cards" class="text-[var(--color-primary)] hover:underline text-sm">&larr; Back to cards</a>
 
 	<div class="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-8">
 		<!-- Card Image -->
 		<div>
 			{#if getImageSrc()}
-				<img src={getImageSrc()} alt={card.name as string} class="w-full rounded-lg shadow-lg" />
+				<img src={getImageSrc()} alt="Magic: The Gathering - {card.name} ({card.set_name})" class="w-full rounded-lg shadow-lg" />
 			{:else}
 				<div class="w-full aspect-[488/680] bg-[var(--color-surface)] rounded-lg flex items-center justify-center text-[var(--color-text-muted)]">
 					No image
@@ -156,7 +203,7 @@
 				<div class="mt-4 grid grid-cols-2 gap-2">
 					{#each data.faces as face}
 						{#if face.image_uri}
-							<img src={face.image_uri as string} alt={face.name as string} class="w-full rounded" />
+							<img src={face.image_uri as string} alt="Magic: The Gathering - {face.name}" class="w-full rounded" />
 						{/if}
 					{/each}
 				</div>
@@ -164,7 +211,7 @@
 		</div>
 
 		<!-- Card Details -->
-		<div class="space-y-6">
+		<section class="space-y-6">
 			<div>
 				<h1 class="text-3xl font-bold">{card.name}</h1>
 				<div class="flex items-center gap-3 mt-2">
@@ -291,7 +338,7 @@
 			</button>
 
 			<!-- Collection Section -->
-			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+			<aside class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
 				<div class="flex items-center justify-between mb-3">
 					<h3 class="font-semibold">Collection</h3>
 					<button
@@ -371,7 +418,7 @@
 				{:else}
 					<p class="text-sm text-[var(--color-text-muted)]">Not in your collection yet.</p>
 				{/if}
-			</div>
+			</aside>
 
 			<!-- Reprints -->
 			{#if data.reprints.length > 0}
@@ -392,6 +439,6 @@
 					</div>
 				</div>
 			{/if}
-		</div>
+		</section>
 	</div>
-</div>
+</article>

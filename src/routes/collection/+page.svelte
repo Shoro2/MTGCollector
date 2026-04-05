@@ -255,6 +255,11 @@
 	}
 </script>
 
+<svelte:head>
+	<title>My Collection | MTG Collector</title>
+	<meta name="robots" content="noindex, nofollow" />
+</svelte:head>
+
 <!-- Edit Modal -->
 {#if editItem}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
