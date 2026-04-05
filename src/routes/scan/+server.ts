@@ -62,10 +62,10 @@ export async function POST({ request }) {
 	const words = cleaned
 		.replace(/['"]/g, '')
 		.split(/\s+/)
-		.filter((w) => w.length >= 2);
+		.filter((w: string) => w.length >= 2);
 
 	if (words.length > 0) {
-		const ftsQuery = words.map((w) => `"${w}"*`).join(' ');
+		const ftsQuery = words.map((w: string) => `"${w}"*`).join(' ');
 		try {
 			const fts = sqlite
 				.prepare(
