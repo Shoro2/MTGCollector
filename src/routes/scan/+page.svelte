@@ -330,9 +330,9 @@
 				const nameUrl = nameCanvas.toDataURL();
 				nameRoi.delete(); grayName.delete(); nameScaled.delete();
 
-				// Crop bottom 10% left half for collector info (right side has copyright)
-				const bottomY = Math.floor(cardH * 0.85);
-				const bottomH = cardH - bottomY;
+				// Crop bottom strip for collector info (left half only, right has copyright)
+				const bottomY = Math.floor(cardH * 0.90);
+				const bottomH = Math.floor(cardH * 0.07);
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
 
