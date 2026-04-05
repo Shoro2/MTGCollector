@@ -518,11 +518,13 @@
 					const numMatches = card.results.filter(r => {
 						const cn = String(r.collector_number);
 						const cnPadded = cn.padStart(3, '0');
-						// Check if collector number appears as digit sequence (with/without leading zeros)
+						// Check exact match or if collector number is contained in a digit sequence
+						// e.g. "8202" contains "202", "0188" contains "188"
 						return digitSeqs.some(d =>
 							d === cn || d === cnPadded ||
 							d.replace(/^0+/, '') === cn ||
-							d === cn.padStart(4, '0')
+							d === cn.padStart(4, '0') ||
+							d.includes(cn) || d.includes(cnPadded)
 						);
 					});
 					if (numMatches.length === 1) match = numMatches[0];
@@ -669,6 +671,12 @@
 				const numMatch = text.match(/(\d{1,4})/);
 				if (numMatch) result.collectorNumber = stripLeadingZeros(numMatch[1]);
 			}
+		}
+
+		// Foil fallback: if anchor didn't match, check for * anywhere in text
+		// The star/bullet separator is distinctive enough as a foil indicator
+		if (!result.foilFromText && text.includes('*')) {
+			result.foilFromText = true;
 		}
 
 		return result;
