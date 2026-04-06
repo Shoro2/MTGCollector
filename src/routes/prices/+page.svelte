@@ -347,11 +347,11 @@
 								<button
 									onclick={() => changeMode = 'purchase'}
 									class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'purchase' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-								>vs. Kauf</button>
+								>vs. Purchase</button>
 								<button
 									onclick={() => changeMode = 'daily'}
 									class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'daily' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-								>vs. Gestern</button>
+								>vs. Yesterday</button>
 							</div>
 						{/if}
 						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
