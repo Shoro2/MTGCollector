@@ -1,4 +1,5 @@
 import { sqlite } from './db.js';
+import { priceDataCache } from './cache.js';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -127,6 +128,9 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		if (existsSync(priceDataPath)) {
 			await unlink(priceDataPath);
 		}
+
+		// Invalidate cached price data for all users
+		priceDataCache.invalidateAll();
 
 		console.log('[price-updater] Price update complete!');
 		return { updated, snapshotted };

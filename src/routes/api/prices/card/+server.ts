@@ -27,5 +27,9 @@ export async function GET({ url, locals }) {
 		)
 		.all(cardId) as Array<{ price_eur: number | null; price_eur_foil: number | null; recorded_at: string }>;
 
-	return json({ card, history });
+	return json({ card, history }, {
+		headers: {
+			'Cache-Control': 'private, max-age=3600, stale-while-revalidate=86400'
+		}
+	});
 }

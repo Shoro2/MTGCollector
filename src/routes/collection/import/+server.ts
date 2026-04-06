@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
+import { priceDataCache } from '$lib/server/cache';
 
 interface MoxfieldRow {
 	Count: string;
@@ -162,6 +163,8 @@ export async function POST({ request, locals }) {
 	});
 
 	transaction();
+
+	priceDataCache.invalidate(userId);
 
 	return json({
 		success: true,
