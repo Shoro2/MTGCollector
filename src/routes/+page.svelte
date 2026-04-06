@@ -16,6 +16,10 @@
 </svelte:head>
 
 <div class="space-y-8">
+	<div class="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-4 text-yellow-200 text-sm">
+		This site is currently under construction and in testing. Features may be incomplete or change without notice.
+	</div>
+
 	<div>
 		<h1 class="text-3xl font-bold mb-2">MTG Collector</h1>
 		<p class="text-[var(--color-text-muted)]">Track your Magic: The Gathering collection</p>
