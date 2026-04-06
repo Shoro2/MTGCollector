@@ -2,7 +2,6 @@
 	import type { PageData } from './$types';
 	import { formatPrice, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
 		Chart,
@@ -28,8 +27,6 @@
 
 	let profitChartCanvas = $state<HTMLCanvasElement>(null!);
 	let profitChart: Chart | null = null;
-	let updating = $state(false);
-	let updateMessage = $state('');
 
 	// Card price modal
 	let modalOpen = $state(false);
@@ -101,33 +98,6 @@
 		modalOpen = false;
 		modalChart?.destroy();
 		modalChart = null;
-	}
-
-	async function triggerPriceUpdate() {
-		updating = true;
-		updateMessage = 'Checking Scryfall for new price data...';
-		const res = await fetch('/api/prices', { method: 'POST' });
-		const result = await res.json();
-		if (result.success) {
-			updateMessage = 'New data found, downloading ~500MB...';
-			const poll = setInterval(async () => {
-				const status = await fetch('/api/prices').then((r) => r.json());
-				if (!status.inProgress) {
-					clearInterval(poll);
-					updating = false;
-					if (status.skipped) {
-						updateMessage = 'Prices are already up to date (no new Scryfall data).';
-					} else {
-						updateMessage = 'Prices updated successfully!';
-						await invalidateAll();
-						await loadPricesData();
-					}
-				}
-			}, 5000);
-		} else {
-			updateMessage = result.message;
-			updating = false;
-		}
 	}
 
 	function currentPrice(card: Record<string, unknown>): number | null {
@@ -275,25 +245,10 @@
 <div class="space-y-8">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Price Tracking</h1>
-		<div class="flex items-center gap-3">
-			<span class="text-sm text-[var(--color-text-muted)]">
-				Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
-			</span>
-			<button
-				onclick={triggerPriceUpdate}
-				disabled={updating || data.priceStatus.inProgress || !data.hasNewData}
-				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-			>
-				{updating || data.priceStatus.inProgress ? 'Updating...' : data.hasNewData ? 'Update Prices' : 'Prices up to date'}
-			</button>
-		</div>
+		<span class="text-sm text-[var(--color-text-muted)]">
+			Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
+		</span>
 	</div>
-
-	{#if updateMessage}
-		<div class="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
-			{updateMessage}
-		</div>
-	{/if}
 
 	{#if loading}
 		<!-- Loading skeleton -->
