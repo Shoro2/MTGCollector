@@ -1191,8 +1191,8 @@
 </script>
 
 <svelte:head>
-	<title>MTG Card Scanner - Scan & Identify Cards | MTG Collector</title>
-	<meta name="description" content="Scan Magic: The Gathering cards with your camera. Automatic card detection, OCR recognition, foil detection, and price lookup." />
+	<title>MTG Card Scanner - Scan Entire Boosters at Once | MTG Collector</title>
+	<meta name="description" content="Scan multiple Magic: The Gathering cards in one photo. Place an entire booster pack or spread of cards on the table, take a picture, and let our scanner detect, identify, and price-check every card automatically — including foil detection." />
 	<link rel="canonical" href="https://mtg-collector.com/scan" />
 	<meta property="og:title" content="MTG Card Scanner - Scan & Identify Cards | MTG Collector" />
 	<meta property="og:description" content="Scan Magic: The Gathering cards with your camera. Automatic card detection, OCR recognition, foil detection, and price lookup." />

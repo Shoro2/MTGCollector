@@ -7,8 +7,8 @@
 </script>
 
 <svelte:head>
-	<title>MTG Collector - Magic: The Gathering Collection Tracker & Price Database</title>
-	<meta name="description" content="Track your Magic: The Gathering collection, monitor card prices, and browse over {data.totalCards.toLocaleString()} MTG cards. Free online MTG collection manager with price history and card scanner." />
+	<title>MTG Collector - Scan Entire Boosters & Track Your MTG Collection</title>
+	<meta name="description" content="Track your Magic: The Gathering collection and scan entire boosters at once. Browse over {data.totalCards.toLocaleString()} MTG cards, monitor prices, and manage your collection with our batch card scanner." />
 	<link rel="canonical" href="https://mtg-collector.com/" />
 	<meta property="og:title" content="MTG Collector - Magic: The Gathering Collection Tracker & Price Database" />
 	<meta property="og:description" content="Track your Magic: The Gathering collection, monitor card prices, and browse over {data.totalCards.toLocaleString()} MTG cards. Free online MTG collection manager with price history and card scanner." />
@@ -46,9 +46,9 @@
 		<h2 class="text-xl font-semibold mb-3">Your Magic: The Gathering Collection Manager</h2>
 		<p class="text-[var(--color-text-muted)] leading-relaxed">
 			Browse over {data.totalCards.toLocaleString()} Magic: The Gathering cards from every set and edition.
-			Track your collection with daily price updates, monitor your portfolio value over time,
-			and use the built-in card scanner to quickly identify and add cards.
-			Search by name, color, type, mana cost, rarity, or format legality.
+			Scan an entire booster pack or a full spread of cards in a single photo — our batch card scanner
+			automatically detects every card, reads names and collector numbers via OCR, identifies foils,
+			and looks up current prices. Track your collection with daily price history and monitor your portfolio value.
 		</p>
 	</section>
 
