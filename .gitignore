@@ -2,7 +2,7 @@ node_modules/
 .svelte-kit/
 build/
 dist/
-data/
+/data/
 static/card-images/
 *.db
 *.db-journal
