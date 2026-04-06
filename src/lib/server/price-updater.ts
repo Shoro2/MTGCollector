@@ -88,7 +88,12 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		const lastKnown = getLastBulkUpdate();
 		if (lastKnown === defaultCards.updated_at) {
 			console.log('[price-updater] Already have latest data, skipping download');
-			return { updated: 0, snapshotted: 0 };
+			let snapshotted = 0;
+			if (!hasSnapshotToday()) {
+				snapshotted = takePriceSnapshot();
+				console.log(`[price-updater] Daily price snapshot taken: ${snapshotted} cards`);
+			}
+			return { updated: 0, snapshotted };
 		}
 
 		console.log(`[price-updater] New data available (${defaultCards.updated_at}), downloading...`);

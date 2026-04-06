@@ -25,7 +25,9 @@ export async function POST({ locals }) {
 		.then((result) => {
 			if (result.updated === 0 && result.snapshotted === 0) {
 				lastSkipped = true;
-				console.log('[api/prices] No new data from Scryfall, skipped');
+				console.log('[api/prices] No new data from Scryfall, snapshot already taken today');
+			} else if (result.updated === 0 && result.snapshotted > 0) {
+				console.log(`[api/prices] No new Scryfall data, but daily snapshot taken: ${result.snapshotted} cards`);
 			} else {
 				console.log(`[api/prices] Update done: ${result.updated} prices updated, ${result.snapshotted} snapshots`);
 			}
