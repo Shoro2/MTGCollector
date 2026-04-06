@@ -33,25 +33,6 @@ function getLastBulkUpdate(): string | null {
 	return null;
 }
 
-/** Check if Scryfall has newer data than what we last downloaded */
-export async function pricesNeedUpdate(): Promise<boolean> {
-	try {
-		const res = await nativeFetch('https://api.scryfall.com/bulk-data');
-		if (!res.ok) return false;
-		const bulkData = await res.json();
-		const defaultCards = bulkData.data.find((d: { type: string }) => d.type === 'default_cards');
-		if (!defaultCards) return false;
-
-		const remoteUpdatedAt = defaultCards.updated_at;
-		const lastKnown = getLastBulkUpdate();
-
-		if (!lastKnown) return true;
-		return remoteUpdatedAt !== lastKnown;
-	} catch (err) {
-		console.error('[price-updater] Failed to check for updates:', (err as Error).message);
-		return false;
-	}
-}
 
 /** Get status info about the price updater */
 export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress: boolean; lastBulkUpdate: string | null } {
@@ -76,7 +57,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 	console.log('[price-updater] Starting price update...');
 
 	try {
-		// 1. Check bulk data metadata and download
+		// 1. Get bulk data download URL
 		const bulkResponse = await nativeFetch('https://api.scryfall.com/bulk-data');
 		if (!bulkResponse.ok) throw new Error(`Bulk data API failed: ${bulkResponse.status}`);
 
@@ -84,14 +65,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		const defaultCards = bulkData.data.find((d: { type: string }) => d.type === 'default_cards');
 		if (!defaultCards) throw new Error('Could not find default_cards bulk data');
 
-		// Check if we already have this version (skip redundant downloads)
-		const lastKnown = getLastBulkUpdate();
-		if (lastKnown === defaultCards.updated_at) {
-			console.log('[price-updater] Already have latest data, skipping download');
-			return { updated: 0, snapshotted: 0 };
-		}
-
-		console.log(`[price-updater] New data available (${defaultCards.updated_at}), downloading...`);
+		console.log(`[price-updater] Downloading bulk data (${defaultCards.updated_at})...`);
 		const downloadResponse = await nativeFetch(defaultCards.download_uri);
 		if (!downloadResponse.ok || !downloadResponse.body) {
 			throw new Error(`Download failed: ${downloadResponse.status}`);
@@ -161,27 +135,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 	}
 }
 
-/** Take a price snapshot for all cards that have prices */
-export function takePriceSnapshot(): number {
-	const now = new Date().toISOString();
-	const result = sqlite.prepare(`
-		INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
-		SELECT id, price_eur, price_eur_foil, price_usd, price_usd_foil, ?
-		FROM cards
-		WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL OR price_usd IS NOT NULL OR price_usd_foil IS NOT NULL
-	`).run(now);
-	return result.changes;
-}
 
-/** Check if a price snapshot was already taken today */
-function hasSnapshotToday(): boolean {
-	const row = sqlite.prepare(
-		"SELECT COUNT(*) as count FROM price_history WHERE DATE(recorded_at) = DATE('now')"
-	).get() as { count: number };
-	return row.count > 0;
-}
-
-/** Check and run price update if needed (non-blocking) */
+/** Run price update (non-blocking) */
 export function checkAndUpdatePrices(): void {
 	// Check if we have any cards in the DB at all
 	const cardCount = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };
@@ -190,22 +145,7 @@ export function checkAndUpdatePrices(): void {
 		return;
 	}
 
-	// Check Scryfall for new data, then update if needed
-	pricesNeedUpdate().then((needsUpdate) => {
-		if (!needsUpdate) {
-			console.log('[price-updater] Prices are up to date (no new Scryfall data)');
-			// Still take a daily snapshot even without new Scryfall data
-			if (!hasSnapshotToday()) {
-				const snapshotted = takePriceSnapshot();
-				console.log(`[price-updater] Daily price snapshot taken: ${snapshotted} cards`);
-			} else {
-				console.log('[price-updater] Snapshot already taken today, skipping');
-			}
-			return;
-		}
-		console.log('[price-updater] New Scryfall data available, starting background update...');
-		return runPriceUpdate();
-	}).catch((err) => {
+	runPriceUpdate().catch((err) => {
 		console.error('[price-updater] Background price update failed:', err.message);
 	});
 }
