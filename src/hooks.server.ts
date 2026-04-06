@@ -6,9 +6,23 @@ import { error, redirect, type Handle } from '@sveltejs/kit';
 // Initialize database tables on server start
 initDb();
 
-// Check if prices need updating (runs in background, non-blocking)
-// Note: Safe for single-instance deployment only. Multi-instance requires distributed locking.
-setTimeout(() => checkAndUpdatePrices(), 5000);
+// Schedule daily price update at 18:00
+function scheduleDailyPriceUpdate() {
+	const now = new Date();
+	const next = new Date(now);
+	next.setHours(18, 0, 0, 0);
+	if (now >= next) {
+		next.setDate(next.getDate() + 1);
+	}
+	const msUntilNext = next.getTime() - now.getTime();
+	console.log(`[price-updater] Next price update scheduled at ${next.toISOString()} (in ${Math.round(msUntilNext / 1000 / 60)} minutes)`);
+	setTimeout(() => {
+		checkAndUpdatePrices();
+		// Schedule next run in 24h
+		setInterval(() => checkAndUpdatePrices(), 24 * 60 * 60 * 1000);
+	}, msUntilNext);
+}
+scheduleDailyPriceUpdate();
 
 // Routes that don't require authentication
 const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz'];
