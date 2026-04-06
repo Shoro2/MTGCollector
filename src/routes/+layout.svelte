@@ -53,7 +53,7 @@
 						<span class="text-sm text-[var(--color-text-muted)] hidden sm:inline">{data.user.name}</span>
 					</div>
 					<a href="/settings" class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
-						Einstellungen
+						Settings
 					</a>
 					<form method="POST" action="/auth/logout">
 						<button type="submit" class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">
@@ -73,8 +73,8 @@
 
 	<footer class="border-t border-[var(--color-border)] px-6 py-4 text-center text-xs text-[var(--color-text-muted)]">
 		<div class="flex justify-center gap-4">
-			<a href="/impressum" class="hover:text-[var(--color-text)] transition-colors">Impressum</a>
-			<a href="/datenschutz" class="hover:text-[var(--color-text)] transition-colors">Datenschutz</a>
+			<a href="/impressum" class="hover:text-[var(--color-text)] transition-colors">Legal Notice</a>
+			<a href="/datenschutz" class="hover:text-[var(--color-text)] transition-colors">Privacy Policy</a>
 		</div>
 		<p class="mt-2 max-w-3xl mx-auto leading-relaxed">
 			mtg-collector.com is unofficial Fan Content permitted under the
