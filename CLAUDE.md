@@ -86,7 +86,7 @@ All `collection_cards` and `wishlist_cards` queries filter by `user_id`. Each us
 
 ### Price Updates
 
-Background job checks Scryfall `bulk-data` API for new data, downloads only when newer data exists. Runs 5s after server start (deferred to avoid SSR fetch warning). Snapshots prices only for cards in any user's collection. Manual trigger: `npm run import-cards` or POST to `/api/prices`.
+Background job checks Scryfall `bulk-data` API for new data, downloads only when newer data exists. Runs 5s after server start (deferred to avoid SSR fetch warning). Snapshots prices only for cards in any user's collection. Manual trigger: `npm run import-cards` or POST to `/api/prices` (admin only).
 
 ## Directory Structure
 
@@ -118,7 +118,8 @@ src/
     │   ├── ocr/+server.ts           # Google Vision batch OCR endpoint
     │   └── prices/
     │       ├── +server.ts           # Price update trigger
-    │       └── card/+server.ts      # Single card price history API
+    │       ├── card/+server.ts      # Single card price history API
+    │       └── data/+server.ts      # Bulk prices data API (stats, topCards, profitHistory)
     ├── auth/                        # Google OAuth flow
     ├── cards/                       # Public card browser + detail pages
     ├── collection/                  # Collection CRUD, import, export, scan
@@ -143,9 +144,10 @@ src/
 | `/collection/import` | Moxfield CSV import (sync or append mode) |
 | `/collection/export` | Moxfield CSV export |
 | `/wishlist` | Wishlist with priority, collect-to-collection with purchase price prompt |
-| `/prices` | Collection value over time (Chart.js), profit/loss chart toggle, top cards with per-card price history popup |
+| `/prices` | Collection value over time (Chart.js), profit/loss chart, top cards with per-card price history popup. Data loaded async via `/api/prices/data` with skeleton loading state |
 | `/admin` | Admin dashboard — user management, DB statistics, API usage tracking (admin only) |
 | `/collection/scan` | Collection-specific card scanner |
+| `/api/prices/data` | Bulk prices data (stats, topCards, profitHistory, usdToEur) — used by `/prices` for async loading |
 | `/api/ocr` | Google Vision batch OCR endpoint (TEXT_DETECTION, max 16 images) |
 | `/api/import` | Admin-only DB init trigger |
 
@@ -178,13 +180,17 @@ src/
 
 Collection and prices pages show purchase price vs current price with color-coded percentage (green = up, red = down). When only USD price exists and purchase price is EUR, USD is converted to EUR for the calculation.
 
+### Async Page Loading (Prices)
+
+The `/prices` page loads its skeleton immediately (server only returns auth + price status), then fetches heavy data (stats, topCards, profitHistory) client-side via `/api/prices/data`. Animated skeleton placeholders are shown during loading.
+
 ### Profit/Loss Chart
 
-Prices page offers a toggle between "Value" and "Profit/Loss" charts. Profit chart shows 3 datasets: profit/loss (filled), purchase price (dashed), current value. Warning banner shown when cards are missing purchase prices.
+Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purchase price (dashed), current value. Warning banner shown when cards are missing purchase prices.
 
 ## Coding Conventions
 
-- **No stores** — all data flows from `+page.server.ts` load functions
+- **No stores** — data flows from `+page.server.ts` load functions or client-side API fetches
 - **URL params** for filters/pagination (shareable, bookmarkable)
 - **`invalidateAll()`** after mutations to refresh data
 - **`fetch()`** with JSON body for client→server API calls
