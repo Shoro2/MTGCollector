@@ -1238,8 +1238,8 @@
 			<svg class="inline w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 			</svg>
-			Bei 5+ erkannten Karten werden Bildausschnitte zur Texterkennung an Google-Server gesendet.
-			<a href="/datenschutz#m-ocr" class="underline hover:text-[var(--color-primary)]">Mehr erfahren</a>
+			When 5+ cards are detected, image crops are sent to Google servers for text recognition.
+			<a href="/datenschutz#m-ocr" class="underline hover:text-[var(--color-primary)]">Learn more</a>
 		</p>
 	{/if}
 
