@@ -6,6 +6,12 @@ import { error, redirect, type Handle } from '@sveltejs/kit';
 // Initialize database tables on server start
 initDb();
 
+// Run price check shortly after server start (deferred to avoid SSR fetch warning)
+setTimeout(() => {
+	console.log('[price-updater] Running startup price check...');
+	checkAndUpdatePrices();
+}, 5000);
+
 // Schedule daily price update at 18:00
 function scheduleDailyPriceUpdate() {
 	const now = new Date();

@@ -161,6 +161,26 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 	}
 }
 
+/** Take a price snapshot for all cards that have prices */
+export function takePriceSnapshot(): number {
+	const now = new Date().toISOString();
+	const result = sqlite.prepare(`
+		INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
+		SELECT id, price_eur, price_eur_foil, price_usd, price_usd_foil, ?
+		FROM cards
+		WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL OR price_usd IS NOT NULL OR price_usd_foil IS NOT NULL
+	`).run(now);
+	return result.changes;
+}
+
+/** Check if a price snapshot was already taken today */
+function hasSnapshotToday(): boolean {
+	const row = sqlite.prepare(
+		"SELECT COUNT(*) as count FROM price_history WHERE DATE(recorded_at) = DATE('now')"
+	).get() as { count: number };
+	return row.count > 0;
+}
+
 /** Check and run price update if needed (non-blocking) */
 export function checkAndUpdatePrices(): void {
 	// Check if we have any cards in the DB at all
@@ -174,6 +194,13 @@ export function checkAndUpdatePrices(): void {
 	pricesNeedUpdate().then((needsUpdate) => {
 		if (!needsUpdate) {
 			console.log('[price-updater] Prices are up to date (no new Scryfall data)');
+			// Still take a daily snapshot even without new Scryfall data
+			if (!hasSnapshotToday()) {
+				const snapshotted = takePriceSnapshot();
+				console.log(`[price-updater] Daily price snapshot taken: ${snapshotted} cards`);
+			} else {
+				console.log('[price-updater] Snapshot already taken today, skipping');
+			}
 			return;
 		}
 		console.log('[price-updater] New Scryfall data available, starting background update...');
