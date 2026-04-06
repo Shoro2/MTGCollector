@@ -1,5 +1,7 @@
 # CLAUDE.md - MTG Collector
 
+**All project files (code, comments, commit messages, documentation) must be written in English.**
+
 ## Project Overview
 
 MTG Collector is a full-stack web app for tracking Magic: The Gathering card collections. Built with SvelteKit, SQLite, and Tailwind CSS. Features card browsing, collection management, wishlist, price tracking with profit/loss analysis, card scanning (OCR + foil detection), and Moxfield CSV import/export.
