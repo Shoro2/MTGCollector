@@ -2,7 +2,6 @@
 	import type { PageData } from './$types';
 	import { formatPrice, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import {
 		Chart,
@@ -18,12 +17,16 @@
 
 	let { data }: { data: PageData } = $props();
 
-	let cardChartCanvas = $state<HTMLCanvasElement>(null!);
+	// Data loaded client-side
+	let loading = $state(true);
+	let topCards = $state<Array<Record<string, unknown>>>([]);
+	let stats = $state({ totalValue: 0, totalPurchaseValue: 0, uniqueCards: 0, totalCards: 0 });
+	let missingPriceCount = $state(0);
+	let profitHistory = $state<Array<{ recorded_at: string; total_value: number; total_purchase: number }>>([]);
+	let usdToEur = $state(0.92);
+
 	let profitChartCanvas = $state<HTMLCanvasElement>(null!);
-	let cardChart: Chart | null = null;
 	let profitChart: Chart | null = null;
-	let updating = $state(false);
-	let updateMessage = $state('');
 
 	// Card price modal
 	let modalOpen = $state(false);
@@ -31,6 +34,22 @@
 	let modalChartCanvas = $state<HTMLCanvasElement>(null!);
 	let modalChart: Chart | null = null;
 	let modalLoading = $state(false);
+
+	async function loadPricesData() {
+		loading = true;
+		try {
+			const res = await fetch('/api/prices/data');
+			if (!res.ok) return;
+			const result = await res.json();
+			topCards = result.topCards;
+			stats = result.stats;
+			missingPriceCount = result.missingPriceCount;
+			profitHistory = result.profitHistory;
+			usdToEur = result.usdToEur;
+		} finally {
+			loading = false;
+		}
+	}
 
 	async function openCardChart(cardId: string) {
 		modalLoading = true;
@@ -81,43 +100,16 @@
 		modalChart = null;
 	}
 
-	async function triggerPriceUpdate() {
-		updating = true;
-		updateMessage = 'Checking Scryfall for new price data...';
-		const res = await fetch('/api/prices', { method: 'POST' });
-		const result = await res.json();
-		if (result.success) {
-			updateMessage = 'New data found, downloading ~500MB...';
-			// Poll for completion
-			const poll = setInterval(async () => {
-				const status = await fetch('/api/prices').then((r) => r.json());
-				if (!status.inProgress) {
-					clearInterval(poll);
-					updating = false;
-					if (status.skipped) {
-						updateMessage = 'Prices are already up to date (no new Scryfall data).';
-					} else {
-						updateMessage = 'Prices updated successfully!';
-						await invalidateAll();
-					}
-				}
-			}, 5000);
-		} else {
-			updateMessage = result.message;
-			updating = false;
-		}
-	}
-
 	function currentPrice(card: Record<string, unknown>): number | null {
 		const price = card.price as number | null;
 		const priceUsd = card.price_usd as number | null;
-		return price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
+		return price ?? (priceUsd != null ? priceUsd * usdToEur : null);
 	}
 
 	function prevPrice(card: Record<string, unknown>): number | null {
 		const price = card.prev_price as number | null;
 		const priceUsd = card.prev_price_usd as number | null;
-		return price ?? (priceUsd != null ? priceUsd * data.usdToEur : null);
+		return price ?? (priceUsd != null ? priceUsd * usdToEur : null);
 	}
 
 	function cardValue(card: Record<string, unknown>): number {
@@ -152,7 +144,7 @@
 	let changeMode = $state<'purchase' | 'daily'>('purchase');
 
 	let sortedTopCards = $derived.by(() => {
-		const cards = [...data.topCards];
+		const cards = [...topCards];
 		if (topSort === 'value') {
 			cards.sort((a, b) => cardValue(b) - cardValue(a));
 		} else if (topSort === 'profit') {
@@ -164,11 +156,10 @@
 	});
 
 	let totalChange = $derived(
-		data.stats.totalPurchaseValue > 0
-			? ((data.stats.totalValue - data.stats.totalPurchaseValue) / data.stats.totalPurchaseValue) * 100
+		stats.totalPurchaseValue > 0
+			? ((stats.totalValue - stats.totalPurchaseValue) / stats.totalPurchaseValue) * 100
 			: null
 	);
-
 
 	function formatLastUpdate(dateStr: string | null): string {
 		if (!dateStr) return 'Never';
@@ -184,8 +175,8 @@
 
 	function buildProfitChart() {
 		profitChart?.destroy();
-		if (data.profitHistory.length > 0 && profitChartCanvas) {
-			const profitData = data.profitHistory.map((h) => ({
+		if (profitHistory.length > 0 && profitChartCanvas) {
+			const profitData = profitHistory.map((h) => ({
 				date: priceDate(h.recorded_at),
 				profit: (h.total_value ?? 0) - (h.total_purchase ?? 0)
 			}));
@@ -204,7 +195,7 @@
 						},
 						{
 							label: 'Purchase Price (EUR)',
-							data: data.profitHistory.map((h) => h.total_purchase),
+							data: profitHistory.map((h) => h.total_purchase),
 							borderColor: '#b0bec5',
 							borderDash: [5, 5],
 							tension: 0.3,
@@ -212,7 +203,7 @@
 						},
 						{
 							label: 'Current Value (EUR)',
-							data: data.profitHistory.map((h) => h.total_value),
+							data: profitHistory.map((h) => h.total_value),
 							borderColor: '#f59e0b',
 							tension: 0.3,
 							pointRadius: 0
@@ -233,43 +224,14 @@
 
 	onMount(() => {
 		Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Legend, Tooltip);
-		buildProfitChart();
 
-		// Single card price chart
-		if (data.cardPriceHistory.length > 0 && cardChartCanvas) {
-			cardChart = new Chart(cardChartCanvas, {
-				type: 'line',
-				data: {
-					labels: data.cardPriceHistory.map((h) => priceDate(h.recorded_at as string)),
-					datasets: [
-						{
-							label: 'Price (EUR)',
-							data: data.cardPriceHistory.map((h) => h.price_eur as number),
-							borderColor: '#3b82f6',
-							tension: 0.3
-						},
-						{
-							label: 'Foil Price (EUR)',
-							data: data.cardPriceHistory.map((h) => h.price_eur_foil as number),
-							borderColor: '#f59e0b',
-							tension: 0.3
-						}
-					]
-				},
-				options: {
-					responsive: true,
-					plugins: { legend: { labels: { color: '#b0bec5' } } },
-					scales: {
-						x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#b0bec5', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
-					}
-				}
-			});
-		}
+		loadPricesData().then(() => {
+			// Build chart after data is loaded (need to wait a tick for canvas to render)
+			setTimeout(() => buildProfitChart(), 0);
+		});
 
 		return () => {
 			profitChart?.destroy();
-			cardChart?.destroy();
 			modalChart?.destroy();
 		};
 	});
@@ -283,195 +245,197 @@
 <div class="space-y-8">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold">Price Tracking</h1>
-		<div class="flex items-center gap-3">
-			<span class="text-sm text-[var(--color-text-muted)]">
-				Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
-			</span>
-			<button
-				onclick={triggerPriceUpdate}
-				disabled={updating || data.priceStatus.inProgress || !data.hasNewData}
-				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-			>
-				{updating || data.priceStatus.inProgress ? 'Updating...' : data.hasNewData ? 'Update Prices' : 'Prices up to date'}
-			</button>
-		</div>
+		<span class="text-sm text-[var(--color-text-muted)]">
+			Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
+		</span>
 	</div>
 
-	{#if updateMessage}
-		<div class="bg-[var(--color-surface)] rounded-lg p-3 border border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
-			{updateMessage}
-		</div>
-	{/if}
-
-	<!-- Stats -->
-	<div class="grid grid-cols-4 gap-4">
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Collection Value</p>
-			<p class="text-2xl font-bold text-[var(--color-accent)]">{formatPrice(data.stats.totalValue)}</p>
-		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Total Purchase Price</p>
-			<p class="text-2xl font-bold">{formatPrice(data.stats.totalPurchaseValue)}</p>
-			{#if totalChange !== null}
-				<p class="text-sm mt-1 {totalChange > 0 ? 'text-green-400' : totalChange < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]'}">
-					{totalChange > 0 ? '▲' : totalChange < 0 ? '▼' : '—'} {Math.abs(totalChange).toFixed(1)}%
-				</p>
-			{/if}
-		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Unique Cards</p>
-			<p class="text-2xl font-bold">{data.stats.uniqueCards}</p>
-		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Total Cards</p>
-			<p class="text-2xl font-bold">{data.stats.totalCards}</p>
-		</div>
-	</div>
-
-	<!-- Profit / Loss Chart -->
-	{#if data.profitHistory.length > 0}
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h2 class="text-lg font-semibold mb-4">Profit / Loss</h2>
-
-			{#if data.missingPriceCount > 0}
-				<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 mb-4 text-sm text-yellow-400 flex items-center gap-2">
-					<span>⚠</span>
-					<span>
-						{data.missingPriceCount} card{data.missingPriceCount > 1 ? 's' : ''} in your collection {data.missingPriceCount > 1 ? 'have' : 'has'} no purchase price set.
-						<a href="/collection" class="underline hover:text-yellow-300">Set missing prices</a>
-					</span>
+	{#if loading}
+		<!-- Loading skeleton -->
+		<div class="grid grid-cols-4 gap-4">
+			{#each Array(4) as _}
+				<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)] animate-pulse">
+					<div class="h-4 bg-[var(--color-bg)] rounded w-24 mb-2"></div>
+					<div class="h-8 bg-[var(--color-bg)] rounded w-20"></div>
 				</div>
-			{/if}
-
-			<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
-				<canvas bind:this={profitChartCanvas}></canvas>
-			</div>
+			{/each}
 		</div>
-	{:else}
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
-			<p>No price history yet.</p>
-			<p class="text-sm mt-1">Prices update automatically once per day, or click "Update Prices" above.</p>
-		</div>
-	{/if}
 
-	<!-- Single Card Price History -->
-	{#if data.selectedCard}
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h2 class="text-lg font-semibold mb-4">
-				Price History: {data.selectedCard.name}
-				<span class="text-sm text-[var(--color-text-muted)] font-normal">({data.selectedCard.set_name})</span>
-			</h2>
-			{#if data.cardPriceHistory.length > 0}
-				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
-					<canvas bind:this={cardChartCanvas}></canvas>
-				</div>
-			{:else}
-				<p class="text-[var(--color-text-muted)]">No price history available for this card.</p>
-			{/if}
+		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] animate-pulse">
+			<div class="h-5 bg-[var(--color-bg)] rounded w-32 mb-4"></div>
+			<div style="aspect-ratio: 2/1;" class="bg-[var(--color-bg)] rounded"></div>
 		</div>
-	{/if}
 
-	<!-- Top Cards -->
-	{#if data.topCards.length > 0}
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-				<h2 class="text-lg font-semibold">
-					{topSort === 'value' ? 'Most Valuable Cards' : topSort === 'profit' ? 'Top Profit Cards' : 'Top Profit Cards (%)'}
-				</h2>
-				<div class="flex items-center gap-3">
-					{#if topSort !== 'value'}
-						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
-							<button
-								onclick={() => changeMode = 'purchase'}
-								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'purchase' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-							>vs. Kauf</button>
-							<button
-								onclick={() => changeMode = 'daily'}
-								class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'daily' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-							>vs. Gestern</button>
+		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] animate-pulse">
+			<div class="h-5 bg-[var(--color-bg)] rounded w-40 mb-4"></div>
+			<div class="space-y-3">
+				{#each Array(5) as _}
+					<div class="flex items-center gap-4 p-2">
+						<div class="w-6 h-4 bg-[var(--color-bg)] rounded"></div>
+						<div class="w-10 h-14 bg-[var(--color-bg)] rounded"></div>
+						<div class="flex-1">
+							<div class="h-4 bg-[var(--color-bg)] rounded w-48 mb-1"></div>
+							<div class="h-3 bg-[var(--color-bg)] rounded w-32"></div>
 						</div>
-					{/if}
-					<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
-						<button
-							onclick={() => topSort = 'value'}
-							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-						>Value</button>
-						<button
-							onclick={() => topSort = 'profit'}
-							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-						>Profit</button>
-						<button
-							onclick={() => topSort = 'profit_pct'}
-							class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-						>Profit %</button>
-					</div>
-				</div>
-			</div>
-			<div class="space-y-2">
-				{#each sortedTopCards as card, i}
-					<div class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors">
-						<a
-							href="/collection?edit={card.collection_id}"
-							class="flex items-center gap-4 flex-1 min-w-0"
-						>
-							<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
-							{#if card.image_uri || card.local_image_path}
-								<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={2.4}>
-									<img
-										src={(card.local_image_path || card.image_uri) as string}
-										alt={card.name as string}
-										class="w-10 h-14 object-cover rounded"
-										loading="lazy"
-									/>
-								</CardPreview>
-							{/if}
-							<div class="flex-1 min-w-0">
-								<p class="font-medium truncate">{card.name}</p>
-								<p class="text-xs text-[var(--color-text-muted)]">
-									{card.set_name} &middot; {card.quantity}x {#if card.foil}<span class="text-[var(--color-accent)]">FOIL</span>{/if}
-								</p>
-							</div>
-							<div class="text-right flex-shrink-0">
-								{#if topSort === 'value'}
-									<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
-									{#if priceChange(card)}
-										<p class="text-xs {priceChange(card)!.color}">
-											{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
-										</p>
-									{/if}
-								{:else if topSort === 'profit'}
-									{@const profit = cardProfit(card)}
-									{#if profit != null}
-										<span class="font-medium {profit >= 0 ? 'text-green-400' : 'text-red-400'}">
-											{profit >= 0 ? '+' : ''}{formatPrice(profit)}
-										</span>
-									{/if}
-									<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
-								{:else}
-									{@const pct = cardProfitPct(card)}
-									{#if pct != null}
-										<span class="font-medium {pct >= 0 ? 'text-green-400' : 'text-red-400'}">
-											{pct >= 0 ? '▲' : '▼'} {Math.abs(pct).toFixed(1)}%
-										</span>
-									{/if}
-									<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
-								{/if}
-							</div>
-						</a>
-						<button
-							onclick={() => openCardChart(card.id as string)}
-							class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
-							title="Price history"
-						>
-							<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M3 13l4-4 4 4 4-8 6 6" />
-								<path stroke-linecap="round" stroke-linejoin="round" d="M3 20h18" />
-							</svg>
-						</button>
+						<div class="h-5 bg-[var(--color-bg)] rounded w-16"></div>
 					</div>
 				{/each}
 			</div>
 		</div>
+	{:else}
+		<!-- Stats -->
+		<div class="grid grid-cols-4 gap-4">
+			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+				<p class="text-sm text-[var(--color-text-muted)]">Collection Value</p>
+				<p class="text-2xl font-bold text-[var(--color-accent)]">{formatPrice(stats.totalValue)}</p>
+			</div>
+			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+				<p class="text-sm text-[var(--color-text-muted)]">Total Purchase Price</p>
+				<p class="text-2xl font-bold">{formatPrice(stats.totalPurchaseValue)}</p>
+				{#if totalChange !== null}
+					<p class="text-sm mt-1 {totalChange > 0 ? 'text-green-400' : totalChange < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]'}">
+						{totalChange > 0 ? '▲' : totalChange < 0 ? '▼' : '—'} {Math.abs(totalChange).toFixed(1)}%
+					</p>
+				{/if}
+			</div>
+			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+				<p class="text-sm text-[var(--color-text-muted)]">Unique Cards</p>
+				<p class="text-2xl font-bold">{stats.uniqueCards}</p>
+			</div>
+			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+				<p class="text-sm text-[var(--color-text-muted)]">Total Cards</p>
+				<p class="text-2xl font-bold">{stats.totalCards}</p>
+			</div>
+		</div>
+
+		<!-- Profit / Loss Chart -->
+		{#if profitHistory.length > 0}
+			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+				<h2 class="text-lg font-semibold mb-4">Profit / Loss</h2>
+
+				{#if missingPriceCount > 0}
+					<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 mb-4 text-sm text-yellow-400 flex items-center gap-2">
+						<span>⚠</span>
+						<span>
+							{missingPriceCount} card{missingPriceCount > 1 ? 's' : ''} in your collection {missingPriceCount > 1 ? 'have' : 'has'} no purchase price set.
+							<a href="/collection" class="underline hover:text-yellow-300">Set missing prices</a>
+						</span>
+					</div>
+				{/if}
+
+				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
+					<canvas bind:this={profitChartCanvas}></canvas>
+				</div>
+			</div>
+		{:else}
+			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
+				<p>No price history yet.</p>
+				<p class="text-sm mt-1">Prices update automatically once per day, or click "Update Prices" above.</p>
+			</div>
+		{/if}
+
+		<!-- Top Cards -->
+		{#if topCards.length > 0}
+			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+				<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+					<h2 class="text-lg font-semibold">
+						{topSort === 'value' ? 'Most Valuable Cards' : topSort === 'profit' ? 'Top Profit Cards' : 'Top Profit Cards (%)'}
+					</h2>
+					<div class="flex items-center gap-3">
+						{#if topSort !== 'value'}
+							<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
+								<button
+									onclick={() => changeMode = 'purchase'}
+									class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'purchase' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								>vs. Kauf</button>
+								<button
+									onclick={() => changeMode = 'daily'}
+									class="px-2 py-0.5 rounded text-xs transition-colors {changeMode === 'daily' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								>vs. Gestern</button>
+							</div>
+						{/if}
+						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-1">
+							<button
+								onclick={() => topSort = 'value'}
+								class="px-3 py-1 rounded text-sm transition-colors {topSort === 'value' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>Value</button>
+							<button
+								onclick={() => topSort = 'profit'}
+								class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>Profit</button>
+							<button
+								onclick={() => topSort = 'profit_pct'}
+								class="px-3 py-1 rounded text-sm transition-colors {topSort === 'profit_pct' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+							>Profit %</button>
+						</div>
+					</div>
+				</div>
+				<div class="space-y-2">
+					{#each sortedTopCards as card, i}
+						<div class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors">
+							<a
+								href="/collection?edit={card.collection_id}"
+								class="flex items-center gap-4 flex-1 min-w-0"
+							>
+								<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
+								{#if card.image_uri || card.local_image_path}
+									<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={2.4}>
+										<img
+											src={(card.local_image_path || card.image_uri) as string}
+											alt={card.name as string}
+											class="w-10 h-14 object-cover rounded"
+											loading="lazy"
+										/>
+									</CardPreview>
+								{/if}
+								<div class="flex-1 min-w-0">
+									<p class="font-medium truncate">{card.name}</p>
+									<p class="text-xs text-[var(--color-text-muted)]">
+										{card.set_name} &middot; {card.quantity}x {#if card.foil}<span class="text-[var(--color-accent)]">FOIL</span>{/if}
+									</p>
+								</div>
+								<div class="text-right flex-shrink-0">
+									{#if topSort === 'value'}
+										<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
+										{#if priceChange(card)}
+											<p class="text-xs {priceChange(card)!.color}">
+												{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
+											</p>
+										{/if}
+									{:else if topSort === 'profit'}
+										{@const profit = cardProfit(card)}
+										{#if profit != null}
+											<span class="font-medium {profit >= 0 ? 'text-green-400' : 'text-red-400'}">
+												{profit >= 0 ? '+' : ''}{formatPrice(profit)}
+											</span>
+										{/if}
+										<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
+									{:else}
+										{@const pct = cardProfitPct(card)}
+										{#if pct != null}
+											<span class="font-medium {pct >= 0 ? 'text-green-400' : 'text-red-400'}">
+												{pct >= 0 ? '▲' : '▼'} {Math.abs(pct).toFixed(1)}%
+											</span>
+										{/if}
+										<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
+									{/if}
+								</div>
+							</a>
+							<button
+								onclick={() => openCardChart(card.id as string)}
+								class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
+								title="Price history"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M3 13l4-4 4 4 4-8 6 6" />
+									<path stroke-linecap="round" stroke-linejoin="round" d="M3 20h18" />
+								</svg>
+							</button>
+						</div>
+					{/each}
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>
 
