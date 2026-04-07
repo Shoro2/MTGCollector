@@ -25,7 +25,7 @@
 		<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Stra&szlig;e 10<br>48268 Greven<br>Germany</p>
 
 		<h2>Contact</h2>
-		<p>Email: info@mtg-collector.com</p>
+		<p>Phone: +49 228 96591041<br>Email: info@mtg-collector.com</p>
 
 		<h2>Disclaimer</h2>
 		<h3>Liability for Content</h3>
@@ -40,7 +40,7 @@
 		<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Stra&szlig;e 10<br>48268 Greven<br>Deutschland</p>
 
 		<h2>Kontakt</h2>
-		<p>E-Mail: info@mtg-collector.com</p>
+		<p>Telefon: +49 228 96591041<br>E-Mail: info@mtg-collector.com</p>
 
 		<h2>Haftungsausschluss</h2>
 		<h3>Haftung f&uuml;r Inhalte</h3>
