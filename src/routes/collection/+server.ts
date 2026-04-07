@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
+import { priceDataCache } from '$lib/server/cache';
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
@@ -11,6 +12,7 @@ export async function POST({ request, locals }) {
 		)
 		.run(locals.user.id, cardId, quantity || 1, condition || 'near_mint', foil ? 1 : 0, purchasePrice ?? null, new Date().toISOString());
 
+	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true });
 }
 
@@ -24,6 +26,7 @@ export async function PUT({ request, locals }) {
 		)
 		.run(quantity, condition, foil ? 1 : 0, notes || null, purchasePrice ?? null, id, locals.user.id);
 
+	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true });
 }
 
@@ -32,6 +35,7 @@ export async function DELETE({ request, locals }) {
 	const { id } = await request.json();
 	sqlite.prepare('DELETE FROM collection_card_tags WHERE collection_card_id = ? AND collection_card_id IN (SELECT id FROM collection_cards WHERE user_id = ?)').run(id, locals.user.id);
 	sqlite.prepare('DELETE FROM collection_cards WHERE id = ? AND user_id = ?').run(id, locals.user.id);
+	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true });
 }
 
@@ -46,5 +50,6 @@ export async function PATCH({ locals }) {
 		)
 		.run(locals.user.id);
 
+	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true, updated: result.changes });
 }
