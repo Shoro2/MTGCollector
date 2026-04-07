@@ -1,5 +1,12 @@
 <script lang="ts">
+	import ProtectedText from '$lib/components/ProtectedText.svelte';
+
 	let lang = $state<'de' | 'en'>('en');
+
+	// Base64-encoded contact details — decoded client-side to deter scraping bots.
+	const ADDRESS_EN = 'Q2hyaXN0aWFuIEFzc2VubWFjaGVyCmMvbyBQT1NURkxFWCBQRlgtMjU1LTExNwpFbXNkZXR0ZW5lciBTdHJhw59lIDEwCjQ4MjY4IEdyZXZlbgpHZXJtYW55';
+	const ADDRESS_DE = 'Q2hyaXN0aWFuIEFzc2VubWFjaGVyCmMvbyBQT1NURkxFWCBQRlgtMjU1LTExNwpFbXNkZXR0ZW5lciBTdHJhw59lIDEwCjQ4MjY4IEdyZXZlbgpEZXV0c2NobGFuZA==';
+	const PHONE = 'KzQ5IDIyOCA5NjU5MTA0MQ==';
 </script>
 
 <svelte:head>
@@ -22,10 +29,10 @@
 		<h1>Legal Notice</h1>
 
 		<h2>Information pursuant to Section 5 DDG (German Digital Services Act)</h2>
-		<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Stra&szlig;e 10<br>48268 Greven<br>Germany</p>
+		<p><ProtectedText data={ADDRESS_EN} /></p>
 
 		<h2>Contact</h2>
-		<p>Phone: +49 228 96591041<br>Email: info@mtg-collector.com</p>
+		<p>Phone: <ProtectedText data={PHONE} href="tel:" /><br>Email: info@mtg-collector.com</p>
 
 		<h2>Disclaimer</h2>
 		<h3>Liability for Content</h3>
@@ -37,10 +44,10 @@
 		<h1>Impressum</h1>
 
 		<h2>Angaben gem&auml;&szlig; &sect; 5 DDG</h2>
-		<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Stra&szlig;e 10<br>48268 Greven<br>Deutschland</p>
+		<p><ProtectedText data={ADDRESS_DE} /></p>
 
 		<h2>Kontakt</h2>
-		<p>Telefon: +49 228 96591041<br>E-Mail: info@mtg-collector.com</p>
+		<p>Telefon: <ProtectedText data={PHONE} href="tel:" /><br>E-Mail: info@mtg-collector.com</p>
 
 		<h2>Haftungsausschluss</h2>
 		<h3>Haftung f&uuml;r Inhalte</h3>
