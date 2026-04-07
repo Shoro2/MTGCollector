@@ -22,7 +22,7 @@
 		<h1>Legal Notice</h1>
 
 		<h2>Information pursuant to Section 5 DDG (German Digital Services Act)</h2>
-		<p>mustermann max<br>musterstra&szlig;e 1<br>12345 musterstadt<br>Germany</p>
+		<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Stra&szlig;e 10<br>48268 Greven<br>Germany</p>
 
 		<h2>Contact</h2>
 		<p>Email: info@mtg-collector.com</p>
@@ -37,7 +37,7 @@
 		<h1>Impressum</h1>
 
 		<h2>Angaben gem&auml;&szlig; &sect; 5 DDG</h2>
-		<p>mustermann max<br>musterstra&szlig;e 1<br>12345 musterstadt<br>Deutschland</p>
+		<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Stra&szlig;e 10<br>48268 Greven<br>Deutschland</p>
 
 		<h2>Kontakt</h2>
 		<p>E-Mail: info@mtg-collector.com</p>

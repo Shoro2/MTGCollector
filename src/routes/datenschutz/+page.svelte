@@ -42,7 +42,7 @@
 </ul>
 
 <h2 id="m3">Controller</h2>
-<p>mustermann max<br>musterstraße 1<br>12345 musterstadt<br>Germany</p>
+<p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Straße 10<br>48268 Greven<br>Germany</p>
 <p>Email address: info@mtg-collector.com</p>
 <p>Legal notice: mtg-collector.com/impressum</p>
 
@@ -183,7 +183,7 @@
 <p>Mit der folgenden Datenschutzerklärung möchten wir Sie darüber aufklären, welche Arten Ihrer personenbezogenen Daten (nachfolgend auch kurz als "Daten" bezeichnet) wir zu welchen Zwecken und in welchem Umfang im Rahmen der Bereitstellung unserer Applikation verarbeiten.</p>
 <p>Die verwendeten Begriffe sind nicht geschlechtsspezifisch.</p>
 
-<p>Stand: 3. April 2026</p><h2>Inhaltsübersicht</h2> <ul class="index"><li><a class="index-link" href="#m4158">Präambel</a></li><li><a class="index-link" href="#m3">Verantwortlicher</a></li><li><a class="index-link" href="#mOverview">Übersicht der Verarbeitungen</a></li><li><a class="index-link" href="#m2427">Maßgebliche Rechtsgrundlagen</a></li><li><a class="index-link" href="#m25">Übermittlung von personenbezogenen Daten</a></li><li><a class="index-link" href="#m24">Internationale Datentransfers</a></li><li><a class="index-link" href="#m12">Allgemeine Informationen zur Datenspeicherung und Löschung</a></li><li><a class="index-link" href="#m10">Rechte der betroffenen Personen</a></li><li><a class="index-link" href="#m225">Bereitstellung des Onlineangebots und Webhosting</a></li><li><a class="index-link" href="#m134">Einsatz von Cookies</a></li><li><a class="index-link" href="#m451">Single-Sign-On-Anmeldung</a></li><li><a class="index-link" href="#m15">Änderung und Aktualisierung</a></li></ul><h2 id="m3">Verantwortlicher</h2><p>mustermann max<br>musterstraße 1<br>12345 musterstadt<br>deutschland</p>
+<p>Stand: 3. April 2026</p><h2>Inhaltsübersicht</h2> <ul class="index"><li><a class="index-link" href="#m4158">Präambel</a></li><li><a class="index-link" href="#m3">Verantwortlicher</a></li><li><a class="index-link" href="#mOverview">Übersicht der Verarbeitungen</a></li><li><a class="index-link" href="#m2427">Maßgebliche Rechtsgrundlagen</a></li><li><a class="index-link" href="#m25">Übermittlung von personenbezogenen Daten</a></li><li><a class="index-link" href="#m24">Internationale Datentransfers</a></li><li><a class="index-link" href="#m12">Allgemeine Informationen zur Datenspeicherung und Löschung</a></li><li><a class="index-link" href="#m10">Rechte der betroffenen Personen</a></li><li><a class="index-link" href="#m225">Bereitstellung des Onlineangebots und Webhosting</a></li><li><a class="index-link" href="#m134">Einsatz von Cookies</a></li><li><a class="index-link" href="#m451">Single-Sign-On-Anmeldung</a></li><li><a class="index-link" href="#m15">Änderung und Aktualisierung</a></li></ul><h2 id="m3">Verantwortlicher</h2><p>Christian Assenmacher<br>c/o POSTFLEX PFX-255-117<br>Emsdettener Straße 10<br>48268 Greven<br>Deutschland</p>
 <p>E-Mail-Adresse: info@mtg-collector.com</p>
 <p>Impressum: mtg-collector.com/impressum</p>
 
