@@ -3,10 +3,9 @@
 
 	let lang = $state<'de' | 'en'>('en');
 
-	// Base64-encoded contact details — decoded client-side to deter scraping bots.
+	// Base64-encoded address — decoded client-side (and only after user click) to deter scrapers.
 	const ADDRESS_EN = 'Q2hyaXN0aWFuIEFzc2VubWFjaGVyCmMvbyBQT1NURkxFWCBQRlgtMjU1LTExNwpFbXNkZXR0ZW5lciBTdHJhw59lIDEwCjQ4MjY4IEdyZXZlbgpHZXJtYW55';
 	const ADDRESS_DE = 'Q2hyaXN0aWFuIEFzc2VubWFjaGVyCmMvbyBQT1NURkxFWCBQRlgtMjU1LTExNwpFbXNkZXR0ZW5lciBTdHJhw59lIDEwCjQ4MjY4IEdyZXZlbgpEZXV0c2NobGFuZA==';
-	const PHONE = 'KzQ5IDIyOCA5NjU5MTA0MQ==';
 </script>
 
 <svelte:head>
@@ -29,10 +28,10 @@
 		<h1>Legal Notice</h1>
 
 		<h2>Information pursuant to Section 5 DDG (German Digital Services Act)</h2>
-		<p><ProtectedText data={ADDRESS_EN} /></p>
+		<p><ProtectedText data={ADDRESS_EN} reveal revealLabel="Show address" /></p>
 
 		<h2>Contact</h2>
-		<p>Phone: <ProtectedText data={PHONE} href="tel:" /><br>Email: info@mtg-collector.com</p>
+		<p>Please use our <a href="/contact" class="contact-link">contact form</a> to get in touch.</p>
 
 		<h2>Disclaimer</h2>
 		<h3>Liability for Content</h3>
@@ -44,10 +43,10 @@
 		<h1>Impressum</h1>
 
 		<h2>Angaben gem&auml;&szlig; &sect; 5 DDG</h2>
-		<p><ProtectedText data={ADDRESS_DE} /></p>
+		<p><ProtectedText data={ADDRESS_DE} reveal revealLabel="Adresse anzeigen" /></p>
 
 		<h2>Kontakt</h2>
-		<p>Telefon: <ProtectedText data={PHONE} href="tel:" /><br>E-Mail: info@mtg-collector.com</p>
+		<p>Bitte nutze unser <a href="/contact" class="contact-link">Kontaktformular</a>, um uns zu erreichen.</p>
 
 		<h2>Haftungsausschluss</h2>
 		<h3>Haftung f&uuml;r Inhalte</h3>
@@ -96,5 +95,12 @@
 		background: var(--color-primary);
 		color: white;
 		border-color: var(--color-primary);
+	}
+	.contact-link {
+		color: var(--color-primary);
+		text-decoration: underline;
+	}
+	.contact-link:hover {
+		color: var(--color-accent);
 	}
 </style>

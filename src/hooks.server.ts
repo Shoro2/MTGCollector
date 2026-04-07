@@ -31,7 +31,7 @@ function scheduleDailyPriceUpdate() {
 scheduleDailyPriceUpdate();
 
 // Routes that don't require authentication
-const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz'];
+const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz', '/contact'];
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const sessionId = event.cookies.get('session');

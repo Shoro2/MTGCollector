@@ -55,6 +55,25 @@ export async function load({ locals }) {
 		'SELECT set_name, set_code, COUNT(*) as count FROM cards GROUP BY set_code ORDER BY count DESC LIMIT 15'
 	).all() as Array<Record<string, unknown>>;
 
+	// Contact form messages (most recent 50)
+	const contactMessages = sqlite.prepare(
+		`SELECT id, name, email, subject, message, handled, created_at
+		 FROM contact_messages
+		 ORDER BY created_at DESC
+		 LIMIT 50`
+	).all() as Array<{
+		id: number;
+		name: string;
+		email: string;
+		subject: string | null;
+		message: string;
+		handled: number;
+		created_at: string;
+	}>;
+	const unhandledContactCount = (sqlite.prepare(
+		'SELECT COUNT(*) as c FROM contact_messages WHERE handled = 0'
+	).get() as { c: number }).c;
+
 	// Price update status
 	const priceStatus = getPriceUpdateStatus();
 
@@ -106,6 +125,8 @@ export async function load({ locals }) {
 		},
 		topSets,
 		priceStatus,
-		recentSnapshots
+		recentSnapshots,
+		contactMessages,
+		unhandledContactCount
 	};
 }

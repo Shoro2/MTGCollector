@@ -1,9 +1,29 @@
 <script lang="ts">
+	import { invalidateAll } from '$app/navigation';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 	let updating = $state(false);
 	let updateMsg = $state('');
+
+	async function toggleMessageHandled(id: number, currentlyHandled: number) {
+		await fetch('/admin/api', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'mark_message_handled', id, handled: !currentlyHandled })
+		});
+		await invalidateAll();
+	}
+
+	async function deleteMessage(id: number) {
+		if (!confirm('Diese Nachricht wirklich löschen?')) return;
+		await fetch('/admin/api', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'delete_message', id })
+		});
+		await invalidateAll();
+	}
 
 	async function triggerPriceUpdate() {
 		updating = true;
@@ -73,6 +93,64 @@
 			Last price update: {data.priceStatus.lastUpdate ? formatDate(data.priceStatus.lastUpdate) : 'Never'}
 			{#if data.priceStatus.inProgress} — <span class="text-yellow-400">Update in progress</span>{/if}
 		</p>
+	</div>
+
+	<!-- Contact Messages -->
+	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+		<div class="flex items-center justify-between mb-4">
+			<h2 class="text-lg font-semibold">Contact Messages</h2>
+			{#if data.unhandledContactCount > 0}
+				<span class="text-xs bg-yellow-900/40 text-yellow-300 px-2 py-1 rounded-full border border-yellow-700/50">
+					{data.unhandledContactCount} unhandled
+				</span>
+			{/if}
+		</div>
+		{#if data.contactMessages.length === 0}
+			<p class="text-sm text-[var(--color-text-muted)]">No messages yet.</p>
+		{:else}
+			<div class="space-y-3">
+				{#each data.contactMessages as msg (msg.id)}
+					<details class="border border-[var(--color-border)] rounded-lg" class:opacity-60={msg.handled}>
+						<summary class="px-4 py-3 cursor-pointer flex items-center justify-between gap-3 hover:bg-[var(--color-surface-hover)]">
+							<div class="flex items-center gap-3 min-w-0">
+								{#if !msg.handled}
+									<span class="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0"></span>
+								{/if}
+								<span class="font-medium truncate">{msg.name}</span>
+								<span class="text-xs text-[var(--color-text-muted)] truncate">&lt;{msg.email}&gt;</span>
+								{#if msg.subject}
+									<span class="text-xs text-[var(--color-text-muted)] truncate">— {msg.subject}</span>
+								{/if}
+							</div>
+							<span class="text-xs text-[var(--color-text-muted)] flex-shrink-0">{formatDate(msg.created_at)}</span>
+						</summary>
+						<div class="px-4 py-3 border-t border-[var(--color-border)] space-y-3">
+							<pre class="whitespace-pre-wrap text-sm text-[var(--color-text)] font-sans">{msg.message}</pre>
+							<div class="flex gap-2">
+								<a
+									href={`mailto:${msg.email}?subject=Re: ${msg.subject ?? 'Your message'}`}
+									class="text-xs bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-3 py-1.5 rounded transition-colors"
+								>
+									Reply via mail
+								</a>
+								<button
+									onclick={() => toggleMessageHandled(msg.id, msg.handled)}
+									class="text-xs bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-3 py-1.5 rounded transition-colors"
+								>
+									{msg.handled ? 'Mark unhandled' : 'Mark handled'}
+								</button>
+								<button
+									onclick={() => deleteMessage(msg.id)}
+									class="text-xs bg-red-900/30 hover:bg-red-900/50 border border-red-700/50 text-red-300 px-3 py-1.5 rounded transition-colors"
+								>
+									Delete
+								</button>
+							</div>
+						</div>
+					</details>
+				{/each}
+			</div>
+		{/if}
 	</div>
 
 	<!-- Google Vision API Usage -->

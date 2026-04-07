@@ -200,6 +200,22 @@ export function initDb() {
 			created_at TEXT DEFAULT (datetime('now'))
 		)
 	`);
+
+	// Contact form submissions
+	sqlite.exec(`
+		CREATE TABLE IF NOT EXISTS contact_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			email TEXT NOT NULL,
+			subject TEXT,
+			message TEXT NOT NULL,
+			ip_hash TEXT,
+			user_agent TEXT,
+			handled INTEGER DEFAULT 0,
+			created_at TEXT DEFAULT (datetime('now'))
+		)
+	`);
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_contact_messages_created_at ON contact_messages(created_at DESC)');
 }
 
 export { sqlite };
