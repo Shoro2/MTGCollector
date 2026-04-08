@@ -43,6 +43,7 @@
 
 	let cvReady = $state(false);
 	let cvLoading = $state(false);
+	let showVisionHint = $state(false);
 
 	// Load OpenCV.js
 	async function loadOpenCV(): Promise<void> {
@@ -96,6 +97,7 @@
 			debugCanvasUrl = '';
 			manualResults = [];
 			manualCardIndex = null;
+			showVisionHint = false;
 			processImage(file);
 		}
 	}
@@ -713,8 +715,11 @@
 				tessedit_pageseg_mode: '6'
 			});
 
-			// Google Vision batch for bottom text if 5+ cards
-			const useGoogleVision = detectedCards.length >= 5;
+			// Google Vision batch for bottom text if 5+ cards AND user has supplied an API key.
+			// Without a per-user key the scanner falls back to local Tesseract for all cards.
+			const userHasVisionKey = !!data.user?.hasVisionApiKey;
+			const useGoogleVision = detectedCards.length >= 5 && userHasVisionKey;
+			showVisionHint = detectedCards.length >= 5 && !userHasVisionKey;
 			let visionBottomTexts: string[] = [];
 
 			if (useGoogleVision) {
@@ -1238,7 +1243,9 @@
 			<svg class="inline w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 			</svg>
-			When 5+ cards are detected, image crops are sent to Google servers for text recognition.
+			Card recognition runs locally in your browser. If you provide your own
+			<a href="/settings" class="underline hover:text-[var(--color-primary)]">Google Vision API key</a>,
+			batches of 5+ cards are read via Google's Vision API for higher accuracy.
 			<a href="/datenschutz#m-ocr" class="underline hover:text-[var(--color-primary)]">Learn more</a>
 		</p>
 	{/if}
@@ -1252,6 +1259,17 @@
 	{:else if scanProgress && imagePreview}
 		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-sm text-[var(--color-text-muted)]">
 			{scanProgress}
+		</div>
+	{/if}
+
+	<!-- Vision API hint when scanning many cards without a user-supplied key -->
+	{#if showVisionHint}
+		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)]">
+			<svg class="inline w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+			</svg>
+			Reading {detectedCards.length} cards locally with Tesseract. For faster and more accurate batch scans, add your own
+			<a href="/settings" class="underline hover:text-[var(--color-primary)]">Google Vision API key</a> in Settings.
 		</div>
 	{/if}
 

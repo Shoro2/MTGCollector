@@ -18,16 +18,23 @@ export function createSession(userId: string): string {
 	return id;
 }
 
-export function validateSession(sessionId: string): { id: string; name: string; email: string; avatarUrl: string | null; isAdmin: boolean } | null {
+export function validateSession(sessionId: string): { id: string; name: string; email: string; avatarUrl: string | null; isAdmin: boolean; hasVisionApiKey: boolean } | null {
 	const row = sqlite.prepare(
-		`SELECT u.id, u.name, u.email, u.avatar_url
+		`SELECT u.id, u.name, u.email, u.avatar_url, u.google_vision_api_key
 		 FROM sessions s JOIN users u ON s.user_id = u.id
 		 WHERE s.id = ? AND s.expires_at > ?`
-	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null } | undefined;
+	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null; google_vision_api_key: string | null } | undefined;
 
 	if (!row) return null;
 	const adminEmail = env.ADMIN_EMAIL?.toLowerCase();
-	return { id: row.id, name: row.name, email: row.email, avatarUrl: row.avatar_url, isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail };
+	return {
+		id: row.id,
+		name: row.name,
+		email: row.email,
+		avatarUrl: row.avatar_url,
+		isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail,
+		hasVisionApiKey: !!row.google_vision_api_key
+	};
 }
 
 export function deleteSession(sessionId: string) {

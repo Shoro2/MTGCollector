@@ -1,16 +1,18 @@
 import { json, error } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
 import { sqlite } from '$lib/server/db';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
-	const apiKey = env.GOOGLE_VISION_API_KEY;
-	if (!apiKey) {
-		throw error(500, 'GOOGLE_VISION_API_KEY not configured');
-	}
-
 	if (!locals.user) {
 		throw error(401, 'Unauthorized');
+	}
+
+	const row = sqlite.prepare(
+		'SELECT google_vision_api_key FROM users WHERE id = ?'
+	).get(locals.user.id) as { google_vision_api_key: string | null } | undefined;
+	const apiKey = row?.google_vision_api_key;
+	if (!apiKey) {
+		throw error(403, 'No Google Vision API key configured. Add one in /settings.');
 	}
 
 	const { images } = await request.json() as { images: string[] };

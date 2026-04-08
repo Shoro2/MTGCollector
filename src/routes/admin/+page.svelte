@@ -155,11 +155,14 @@
 
 	<!-- Google Vision API Usage -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-		<h2 class="text-lg font-semibold mb-4">Google Vision API</h2>
+		<h2 class="text-lg font-semibold mb-1">Google Vision API (user-supplied keys)</h2>
+		<p class="text-xs text-[var(--color-text-muted)] mb-4">
+			Each user provides their own Google Cloud Vision API key in their settings. Quota and billing are handled by the user's own Google Cloud project.
+		</p>
 		<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
 			<div>
 				<p class="text-xs text-[var(--color-text-muted)]">Requests (diesen Monat)</p>
-				<p class="text-2xl font-bold">{data.visionUsage.thisMonth}<span class="text-sm font-normal text-[var(--color-text-muted)]"> / 1.000</span></p>
+				<p class="text-2xl font-bold">{formatNum(data.visionUsage.thisMonth)}</p>
 			</div>
 			<div>
 				<p class="text-xs text-[var(--color-text-muted)]">Bilder (diesen Monat)</p>
@@ -174,9 +177,6 @@
 				<p class="text-2xl font-bold">{formatNum(data.visionUsage.totalImages)}</p>
 			</div>
 		</div>
-		{#if data.visionUsage.thisMonth >= 900}
-			<div class="text-sm text-red-400 mb-4">Achtung: {data.visionUsage.thisMonth} / 1.000 Free-Tier Requests diesen Monat verbraucht!</div>
-		{/if}
 		{#if data.visionUsage.recentCalls.length > 0}
 			<details>
 				<summary class="text-sm text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)]">Letzte API-Calls ({data.visionUsage.recentCalls.length})</summary>
