@@ -28,12 +28,36 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 	const visionKey = visionRow?.google_vision_api_key ?? null;
 
+	// Per-user Google Vision usage statistics. Google Cloud's free tier currently
+	// allows 1.000 Vision API requests per month per project; since each user uses
+	// their own project / key, we surface that quota here as a soft reference.
+	const visionMonth = sqlite.prepare(
+		`SELECT COALESCE(SUM(request_count), 0) as requests, COALESCE(SUM(image_count), 0) as images
+		 FROM api_usage
+		 WHERE service = 'google_vision'
+		   AND user_id = ?
+		   AND created_at >= date('now', 'start of month')`
+	).get(locals.user.id) as { requests: number; images: number };
+
+	const visionTotal = sqlite.prepare(
+		`SELECT COALESCE(SUM(request_count), 0) as requests, COALESCE(SUM(image_count), 0) as images
+		 FROM api_usage
+		 WHERE service = 'google_vision' AND user_id = ?`
+	).get(locals.user.id) as { requests: number; images: number };
+
 	return {
 		collectionCount: collectionCount.count,
 		wishlistCount: wishlistCount.count,
 		tagCount: tagCount.count,
 		hasVisionApiKey: !!visionKey,
-		visionKeyPreview: visionKey ? '…' + visionKey.slice(-4) : null
+		visionKeyPreview: visionKey ? '…' + visionKey.slice(-4) : null,
+		visionUsage: {
+			monthRequests: visionMonth.requests,
+			monthImages: visionMonth.images,
+			totalRequests: visionTotal.requests,
+			totalImages: visionTotal.images,
+			monthlyFreeLimit: 1000
+		}
 	};
 };
 

@@ -133,6 +133,58 @@
 			{/if}
 		</div>
 
+		<!-- Per-user Vision API usage -->
+		{#if data.visionUsage}
+			{@const monthRequests = data.visionUsage.monthRequests}
+			{@const monthImages = data.visionUsage.monthImages}
+			{@const limit = data.visionUsage.monthlyFreeLimit}
+			{@const percentRaw = limit > 0 ? (monthImages / limit) * 100 : 0}
+			{@const percent = Math.min(100, Math.round(percentRaw))}
+			{@const overLimit = monthImages >= limit}
+			{@const nearLimit = monthImages >= limit * 0.9 && !overLimit}
+			<div class="mb-4 p-4 rounded border border-[var(--color-border)] bg-[var(--color-bg)]">
+				<div class="flex items-center justify-between mb-2">
+					<h3 class="text-sm font-medium">Your Google Vision usage this month</h3>
+					<span class="text-xs text-[var(--color-text-muted)]">resets on the 1st</span>
+				</div>
+				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-3">
+					<div>
+						<p class="text-xs text-[var(--color-text-muted)]">Images (this month)</p>
+						<p class="text-xl font-bold">{monthImages.toLocaleString()}<span class="text-xs font-normal text-[var(--color-text-muted)]"> / {limit.toLocaleString()}</span></p>
+					</div>
+					<div>
+						<p class="text-xs text-[var(--color-text-muted)]">Batches (this month)</p>
+						<p class="text-xl font-bold">{monthRequests.toLocaleString()}</p>
+					</div>
+					<div>
+						<p class="text-xs text-[var(--color-text-muted)]">Images (total)</p>
+						<p class="text-xl font-bold">{data.visionUsage.totalImages.toLocaleString()}</p>
+					</div>
+					<div>
+						<p class="text-xs text-[var(--color-text-muted)]">Batches (total)</p>
+						<p class="text-xl font-bold">{data.visionUsage.totalRequests.toLocaleString()}</p>
+					</div>
+				</div>
+				<div class="w-full h-2 rounded-full bg-[var(--color-border)] overflow-hidden">
+					<div
+						class="h-full transition-all duration-300 {overLimit ? 'bg-red-500' : nearLimit ? 'bg-yellow-500' : 'bg-[var(--color-accent)]'}"
+						style="width: {percent}%"
+					></div>
+				</div>
+				<p class="mt-2 text-xs text-[var(--color-text-muted)]">
+					{#if overLimit}
+						<span class="text-red-400 font-medium">You've reached the 1.000-image free tier this month.</span>
+						Additional images will be billed by Google to your own Cloud project.
+					{:else if nearLimit}
+						<span class="text-yellow-400 font-medium">Approaching the free tier limit.</span>
+						Google Cloud bills any image beyond {limit.toLocaleString()}/month.
+					{:else}
+						Google Cloud's free tier covers the first {limit.toLocaleString()} Vision images per month per project. Counts above include only scans made through this app.
+					{/if}
+				</p>
+			</div>
+		{/if}
+
 		<form
 			method="POST"
 			action="?/setVisionKey"
