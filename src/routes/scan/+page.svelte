@@ -31,7 +31,11 @@
 	let addedCards = $state<Array<{ id: string; name: string }>>([]);
 	let selectedCards = $state<Set<number>>(new Set());
 	let importing = $state(false);
-	let expectedCardCount = $state<number | null>(null);
+	// Two-mode selector replacing the old "expected card count" number input.
+	// 'single' assumes exactly one card in the photo; 'multiple' lets the
+	// detector return as many cards as it can find.
+	let scanMode = $state<'single' | 'multiple'>('single');
+	const expectedCardCount = $derived<number | null>(scanMode === 'single' ? 1 : null);
 
 	// Manual search fallback per card
 	let manualSetCode = $state('');
@@ -519,6 +523,14 @@
 			cv.imshow(debugCanvas, debugMat);
 			debugCanvasUrl = debugCanvas.toDataURL();
 			debugMat.delete();
+
+			// In single-card mode, keep only the most prominent (largest-area)
+			// detection so the user doesn't get spurious extra crops from
+			// background noise.
+			if (scanMode === 'single' && cardContours.length > 1) {
+				cardContours.sort((a, b) => b.area - a.area);
+				cardContours = cardContours.slice(0, 1);
+			}
 
 			if (cardContours.length === 0) {
 				scanProgress = 'No cards detected. Try a clearer photo.';
@@ -1262,20 +1274,37 @@
 			<p class="text-xs text-[var(--color-text-muted)] mt-1">Detects multiple cards in one image</p>
 			<input type="file" accept="image/*" capture="environment" onchange={onFileSelect} class="hidden" />
 		</label>
-		<label class="flex items-center gap-2 mt-2">
-			<span class="text-xs text-[var(--color-text-muted)]">Expected number of cards (optional):</span>
-			<input
-				type="number"
-				min="1"
-				max="50"
-				placeholder="-"
-				class="w-16 px-2 py-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]"
-				oninput={(e) => {
-					const val = parseInt((e.target as HTMLInputElement).value);
-					expectedCardCount = isNaN(val) ? null : val;
-				}}
-			/>
-		</label>
+		<div class="flex items-center gap-2 mt-3">
+			<span class="text-xs text-[var(--color-text-muted)]">Mode:</span>
+			<div class="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
+				<button
+					type="button"
+					onclick={() => (scanMode = 'single')}
+					class="px-3 py-1 text-xs rounded-md transition-colors {scanMode === 'single'
+						? 'bg-[var(--color-primary)] text-white'
+						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+				>
+					Single card
+				</button>
+				<button
+					type="button"
+					onclick={() => (scanMode = 'multiple')}
+					class="px-3 py-1 text-xs rounded-md transition-colors {scanMode === 'multiple'
+						? 'bg-[var(--color-primary)] text-white'
+						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+				>
+					Multiple cards
+				</button>
+			</div>
+		</div>
+
+		<p class="text-xs text-[var(--color-text-muted)] mt-3 p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
+			<svg class="inline w-4 h-4 mr-1 -mt-0.5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+			</svg>
+			<strong class="text-[var(--color-text)]">Tip:</strong>
+			For best results, place the card(s) on a plain white background — a sheet of white paper works perfectly. When scanning multiple cards, leave a small gap between each card so the detector can separate them.
+		</p>
 
 		{#if data.user?.hasVisionApiKey}
 			<label class="flex items-center gap-2 mt-3 cursor-pointer select-none">
