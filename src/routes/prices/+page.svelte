@@ -243,7 +243,7 @@
 </svelte:head>
 
 <div class="space-y-8">
-	<div class="flex items-center justify-between">
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
 		<h1 class="text-2xl font-bold">Price Tracking</h1>
 		<span class="text-sm text-[var(--color-text-muted)]">
 			Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
@@ -252,7 +252,7 @@
 
 	{#if loading}
 		<!-- Loading skeleton -->
-		<div class="grid grid-cols-4 gap-4">
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4">
 			{#each Array(4) as _}
 				<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)] animate-pulse">
 					<div class="h-4 bg-[var(--color-bg)] rounded w-24 mb-2"></div>
@@ -284,27 +284,27 @@
 		</div>
 	{:else}
 		<!-- Stats -->
-		<div class="grid grid-cols-4 gap-4">
-			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-				<p class="text-sm text-[var(--color-text-muted)]">Collection Value</p>
-				<p class="text-2xl font-bold text-[var(--color-accent)]">{formatPrice(stats.totalValue)}</p>
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4">
+			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Collection Value</p>
+				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{formatPrice(stats.totalValue)}</p>
 			</div>
-			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-				<p class="text-sm text-[var(--color-text-muted)]">Total Purchase Price</p>
-				<p class="text-2xl font-bold">{formatPrice(stats.totalPurchaseValue)}</p>
+			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Purchase Price</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{formatPrice(stats.totalPurchaseValue)}</p>
 				{#if totalChange !== null}
 					<p class="text-sm mt-1 {totalChange > 0 ? 'text-green-400' : totalChange < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]'}">
 						{totalChange > 0 ? '▲' : totalChange < 0 ? '▼' : '—'} {Math.abs(totalChange).toFixed(1)}%
 					</p>
 				{/if}
 			</div>
-			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-				<p class="text-sm text-[var(--color-text-muted)]">Unique Cards</p>
-				<p class="text-2xl font-bold">{stats.uniqueCards}</p>
+			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Unique Cards</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{stats.uniqueCards}</p>
 			</div>
-			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-				<p class="text-sm text-[var(--color-text-muted)]">Total Cards</p>
-				<p class="text-2xl font-bold">{stats.totalCards}</p>
+			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Cards</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{stats.totalCards}</p>
 			</div>
 		</div>
 
@@ -375,22 +375,22 @@
 						<div class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors">
 							<a
 								href="/collection?edit={card.collection_id}"
-								class="flex items-center gap-4 flex-1 min-w-0"
+								class="flex items-center gap-2 sm:gap-4 flex-1 min-w-0"
 							>
-								<span class="text-[var(--color-text-muted)] w-6 text-right text-sm">{i + 1}.</span>
+								<span class="text-[var(--color-text-muted)] w-5 sm:w-6 text-right text-xs sm:text-sm flex-shrink-0">{i + 1}.</span>
 								{#if card.image_uri || card.local_image_path}
 									<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={2.4}>
 										<img
 											src={(card.local_image_path || card.image_uri) as string}
 											alt={card.name as string}
-											class="w-10 h-14 object-cover rounded"
+											class="w-8 h-12 sm:w-10 sm:h-14 object-cover rounded flex-shrink-0"
 											loading="lazy"
 										/>
 									</CardPreview>
 								{/if}
 								<div class="flex-1 min-w-0">
-									<p class="font-medium truncate">{card.name}</p>
-									<p class="text-xs text-[var(--color-text-muted)]">
+									<p class="font-medium truncate text-sm sm:text-base">{card.name}</p>
+									<p class="text-xs text-[var(--color-text-muted)] truncate">
 										{card.set_name} &middot; {card.quantity}x {#if card.foil}<span class="text-[var(--color-accent)]">FOIL</span>{/if}
 									</p>
 								</div>

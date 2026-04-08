@@ -1383,7 +1383,7 @@
 		<div class="space-y-4">
 			{#each sortedCards() as { card, origIdx }, idx}
 				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''}">
-					<div class="flex gap-4">
+					<div class="flex flex-col sm:flex-row gap-4">
 						<!-- Selection checkbox for identified cards -->
 						{#if loggedIn && card.status === 'found' && card.results.length > 0 && !addedCards.some(a => a.id === card.results[card.selectedResultIdx].id)}
 							<div class="flex-shrink-0 pt-1">

@@ -197,7 +197,7 @@
 <article class="space-y-6">
 	<a href="/cards" class="text-[var(--color-primary)] hover:underline text-sm">&larr; Back to cards</a>
 
-	<div class="grid grid-cols-1 md:grid-cols-[300px_1fr] gap-8">
+	<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-8">
 		<!-- Card Image -->
 		<div>
 			{#if getImageSrc()}
@@ -268,7 +268,7 @@
 			{/if}
 
 			<!-- Info Grid -->
-			<div class="grid grid-cols-2 gap-4 text-sm">
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
 					<span class="text-[var(--color-text-muted)]">Set</span>
 					<p class="font-medium">{card.set_name} ({(card.set_code as string).toUpperCase()})</p>
@@ -361,7 +361,7 @@
 
 				{#if showAddForm}
 					<div class="bg-[var(--color-bg)] rounded p-4 mb-3 space-y-3">
-						<div class="grid grid-cols-3 gap-3">
+						<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 							<div>
 								<label for="add-qty" class="block text-xs text-[var(--color-text-muted)] mb-1">Quantity</label>
 								<input id="add-qty" type="number" bind:value={addQuantity} min="1" class="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-2 py-1" />

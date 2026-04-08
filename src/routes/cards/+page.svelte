@@ -148,7 +148,7 @@
 	</div>
 
 	<!-- Search Bar -->
-	<form onsubmit={(e) => { e.preventDefault(); search(); }} class="flex gap-2">
+	<form onsubmit={(e) => { e.preventDefault(); search(); }} class="flex flex-wrap gap-2">
 		<input
 			type="text"
 			bind:value={query}
@@ -195,7 +195,7 @@
 				</div>
 			</div>
 
-			<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
 				<!-- Type -->
 				<div>
 					<label for="filter-type" class="block text-sm text-[var(--color-text-muted)] mb-1">Type</label>
@@ -242,7 +242,7 @@
 			</div>
 
 			<!-- CMC Range -->
-			<div class="flex gap-4 items-center">
+			<div class="flex flex-wrap gap-2 sm:gap-4 items-center">
 				<span class="text-sm text-[var(--color-text-muted)]">CMC</span>
 				<input
 					type="number"
