@@ -34,7 +34,7 @@ Google OAuth redirect URI: `{ORIGIN}/auth/callback/google`
 - **Styling**: Tailwind CSS 4 with CSS custom properties (dark theme)
 - **Auth**: Google OAuth 2.0 via `arctic` (PKCE flow)
 - **Adapter**: `@sveltejs/adapter-node` for production
-- **External**: Scryfall API, Google Cloud Vision API, OpenCV.js (CDN), Tesseract.js (CDN), Chart.js, Frankfurter API (exchange rates)
+- **External**: Scryfall API, Google Cloud Vision API, OpenCV.js (CDN), Tesseract.js (CDN), Chart.js, Frankfurter API (exchange rates), Plausible Analytics (self-hosted)
 
 ## Architecture
 
@@ -210,6 +210,7 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 - **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`), card rectangle detection + foil detection (HSV analysis)
 - **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`), OCR fallback for collector numbers/names
 - **Frankfurter API** (`api.frankfurter.dev/v1/latest`) — USD/EUR exchange rate, cached 6 hours
+- **Plausible Analytics** (`analytics.mtg-collector.com`) — Self-hosted, cookieless reach measurement (Plausible Community Edition). Snippet embedded in `src/routes/+layout.svelte` inside `<svelte:head>`. Tracks pageviews, referrer, browser, OS, device type, and country — only aggregated stats, no personally identifiable raw data, no cookies. Domain is hardcoded in the served JS file, so no env vars are required.
 
 ## Database Migrations
 
