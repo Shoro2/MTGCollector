@@ -172,7 +172,7 @@ src/
 3. Orientation detection: if top edge > left edge → card is sideways → rotate corners 90° clockwise
 4. Perspective transform to 488×680 flat image
 5. **Name OCR**: Tesseract.js on cropped name area → API search by name → FTS fallback
-6. **Bottom OCR** (hybrid): If 5+ cards **and** the signed-in user has stored their own personal Google Vision API key in `/settings` → batch OCR via `/api/ocr` using that user's key; otherwise local Tesseract.js
+6. **Bottom OCR**: Tesseract.js runs locally on every card's bottom area first. If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
 7. **Foil detection** (dual): HSV color analysis on art area (saturation, hue/brightness variance) + text-based detection from separator char (`*` = foil, `.` = non-foil)
 8. API search with fallbacks: set+number → name → FTS
 9. Manual search fallback for unidentified cards
