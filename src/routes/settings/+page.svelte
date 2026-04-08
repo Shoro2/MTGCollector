@@ -67,17 +67,17 @@
 	<!-- Collection Stats -->
 	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-6">
 		<h2 class="text-lg font-semibold mb-4">Collection Statistics</h2>
-		<div class="grid grid-cols-3 gap-4">
-			<div class="text-center">
-				<p class="text-2xl font-bold text-[var(--color-accent)]">{data.collectionCount}</p>
+		<div class="grid grid-cols-3 gap-3 sm:gap-4">
+			<div class="text-center min-w-0">
+				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.collectionCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Cards in Collection</p>
 			</div>
-			<div class="text-center">
-				<p class="text-2xl font-bold text-[var(--color-accent)]">{data.wishlistCount}</p>
+			<div class="text-center min-w-0">
+				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.wishlistCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Wishlist</p>
 			</div>
-			<div class="text-center">
-				<p class="text-2xl font-bold text-[var(--color-accent)]">{data.tagCount}</p>
+			<div class="text-center min-w-0">
+				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.tagCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Tags</p>
 			</div>
 		</div>
@@ -146,22 +146,22 @@
 					<h3 class="text-sm font-medium">Your Google Vision usage this month</h3>
 					<span class="text-xs text-[var(--color-text-muted)]">resets on the 1st</span>
 				</div>
-				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-3">
-					<div>
+				<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-3">
+					<div class="min-w-0">
 						<p class="text-xs text-[var(--color-text-muted)]">Images (this month)</p>
-						<p class="text-xl font-bold">{monthImages.toLocaleString()}<span class="text-xs font-normal text-[var(--color-text-muted)]"> / {limit.toLocaleString()}</span></p>
+						<p class="text-lg sm:text-xl font-bold break-words">{monthImages.toLocaleString()}<span class="text-xs font-normal text-[var(--color-text-muted)]"> / {limit.toLocaleString()}</span></p>
 					</div>
-					<div>
+					<div class="min-w-0">
 						<p class="text-xs text-[var(--color-text-muted)]">Batches (this month)</p>
-						<p class="text-xl font-bold">{monthRequests.toLocaleString()}</p>
+						<p class="text-lg sm:text-xl font-bold break-words">{monthRequests.toLocaleString()}</p>
 					</div>
-					<div>
+					<div class="min-w-0">
 						<p class="text-xs text-[var(--color-text-muted)]">Images (total)</p>
-						<p class="text-xl font-bold">{data.visionUsage.totalImages.toLocaleString()}</p>
+						<p class="text-lg sm:text-xl font-bold break-words">{data.visionUsage.totalImages.toLocaleString()}</p>
 					</div>
-					<div>
+					<div class="min-w-0">
 						<p class="text-xs text-[var(--color-text-muted)]">Batches (total)</p>
-						<p class="text-xl font-bold">{data.visionUsage.totalRequests.toLocaleString()}</p>
+						<p class="text-lg sm:text-xl font-bold break-words">{data.visionUsage.totalRequests.toLocaleString()}</p>
 					</div>
 				</div>
 				<div class="w-full h-2 rounded-full bg-[var(--color-border)] overflow-hidden">

@@ -79,7 +79,7 @@
 	<!-- Mode Selection -->
 	<div class="space-y-3">
 		<p class="text-sm font-medium">Import Mode</p>
-		<div class="flex gap-4">
+		<div class="flex flex-col sm:flex-row gap-3 sm:gap-4">
 			<label class="flex items-start gap-3 bg-[var(--color-surface)] rounded-lg p-4 border cursor-pointer transition-colors {mode === 'append' ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}">
 				<input type="radio" bind:group={mode} value="append" class="mt-1" />
 				<div>

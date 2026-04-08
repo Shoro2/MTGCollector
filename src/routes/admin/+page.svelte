@@ -159,22 +159,22 @@
 		<p class="text-xs text-[var(--color-text-muted)] mb-4">
 			Each user provides their own Google Cloud Vision API key in their settings. Quota and billing are handled by the user's own Google Cloud project.
 		</p>
-		<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-			<div>
+		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+			<div class="min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Requests (diesen Monat)</p>
-				<p class="text-2xl font-bold">{formatNum(data.visionUsage.thisMonth)}</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.thisMonth)}</p>
 			</div>
-			<div>
+			<div class="min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Bilder (diesen Monat)</p>
-				<p class="text-2xl font-bold">{formatNum(data.visionUsage.thisMonthImages)}</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.thisMonthImages)}</p>
 			</div>
-			<div>
+			<div class="min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Requests (gesamt)</p>
-				<p class="text-2xl font-bold">{formatNum(data.visionUsage.total)}</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.total)}</p>
 			</div>
-			<div>
+			<div class="min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Bilder (gesamt)</p>
-				<p class="text-2xl font-bold">{formatNum(data.visionUsage.totalImages)}</p>
+				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.totalImages)}</p>
 			</div>
 		</div>
 		{#if data.visionUsage.recentCalls.length > 0}
@@ -209,22 +209,22 @@
 	<!-- DB Overview -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
 		<h2 class="text-lg font-semibold mb-4">Database Overview</h2>
-		<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-			<div class="bg-[var(--color-bg)] rounded-lg p-3">
+		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">DB Size</p>
-				<p class="text-xl font-bold">{data.dbStats.dbSizeMB} MB</p>
+				<p class="text-lg sm:text-xl font-bold break-words">{data.dbStats.dbSizeMB} MB</p>
 			</div>
-			<div class="bg-[var(--color-bg)] rounded-lg p-3">
+			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Cards</p>
-				<p class="text-xl font-bold">{formatNum(data.dbStats.cardCount)}</p>
+				<p class="text-lg sm:text-xl font-bold break-words">{formatNum(data.dbStats.cardCount)}</p>
 			</div>
-			<div class="bg-[var(--color-bg)] rounded-lg p-3">
+			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Price History</p>
-				<p class="text-xl font-bold">{formatNum(data.dbStats.priceHistoryCount)}</p>
+				<p class="text-lg sm:text-xl font-bold break-words">{formatNum(data.dbStats.priceHistoryCount)}</p>
 			</div>
-			<div class="bg-[var(--color-bg)] rounded-lg p-3">
+			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Users</p>
-				<p class="text-xl font-bold">{data.dbStats.userCount}</p>
+				<p class="text-lg sm:text-xl font-bold break-words">{data.dbStats.userCount}</p>
 			</div>
 		</div>
 
@@ -286,17 +286,19 @@
 		<h2 class="text-lg font-semibold mb-4">Users ({data.users.length})</h2>
 		<div class="space-y-3">
 			{#each data.users as user}
-				<div class="bg-[var(--color-bg)] rounded-lg p-4 flex items-center gap-4">
-					{#if user.avatar_url}
-						<img src={user.avatar_url as string} alt="" class="w-10 h-10 rounded-full" referrerpolicy="no-referrer" />
-					{:else}
-						<div class="w-10 h-10 rounded-full bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-text-muted)]">?</div>
-					{/if}
-					<div class="flex-1 min-w-0">
-						<p class="font-medium">{user.name}</p>
-						<p class="text-xs text-[var(--color-text-muted)]">{user.email}</p>
+				<div class="bg-[var(--color-bg)] rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-4">
+					<div class="flex items-center gap-4 min-w-0">
+						{#if user.avatar_url}
+							<img src={user.avatar_url as string} alt="" class="w-10 h-10 rounded-full flex-shrink-0" referrerpolicy="no-referrer" />
+						{:else}
+							<div class="w-10 h-10 rounded-full bg-[var(--color-surface)] flex items-center justify-center text-[var(--color-text-muted)] flex-shrink-0">?</div>
+						{/if}
+						<div class="flex-1 min-w-0">
+							<p class="font-medium truncate">{user.name}</p>
+							<p class="text-xs text-[var(--color-text-muted)] truncate">{user.email}</p>
+						</div>
 					</div>
-					<div class="grid grid-cols-3 gap-6 text-center text-sm">
+					<div class="grid grid-cols-3 gap-3 sm:gap-6 text-center text-sm md:ml-auto">
 						<div>
 							<p class="font-bold">{user.collection_count}</p>
 							<p class="text-xs text-[var(--color-text-muted)]">Unique</p>
@@ -310,7 +312,7 @@
 							<p class="text-xs text-[var(--color-text-muted)]">Wishlist</p>
 						</div>
 					</div>
-					<div class="text-right flex-shrink-0">
+					<div class="text-left md:text-right flex-shrink-0">
 						<p class="text-xs text-[var(--color-text-muted)]">Joined {formatDate(user.created_at)}</p>
 						<p class="text-xs text-[var(--color-text-muted)]">{user.active_sessions} active session{(user.active_sessions as number) !== 1 ? 's' : ''}</p>
 					</div>

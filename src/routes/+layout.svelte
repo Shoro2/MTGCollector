@@ -5,9 +5,17 @@
 
 	let { data, children }: { data: LayoutData; children: any } = $props();
 
+	let mobileMenuOpen = $state(false);
+
 	function isActive(href: string): boolean {
 		return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
 	}
+
+	// Close the mobile menu whenever the route changes.
+	$effect(() => {
+		page.url.pathname;
+		mobileMenuOpen = false;
+	});
 </script>
 
 <svelte:head>
@@ -19,10 +27,12 @@
 </svelte:head>
 
 <div class="min-h-screen flex flex-col">
-	<nav class="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-6 py-3">
-		<div class="max-w-7xl mx-auto flex items-center gap-8">
+	<nav class="bg-[var(--color-surface)] border-b border-[var(--color-border)] px-4 md:px-6 py-3">
+		<div class="max-w-7xl mx-auto flex items-center gap-4 md:gap-8">
 			<a href="/" class="text-xl font-bold text-[var(--color-accent)]">MTG Collector</a>
-			<div class="flex gap-4 flex-1">
+
+			<!-- Desktop nav links -->
+			<div class="hidden md:flex gap-4 flex-1">
 				<a href="/cards" class="{isActive('/cards') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 					Cards
 				</a>
@@ -39,14 +49,16 @@
 					<a href="/prices" class="{isActive('/prices') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 						Prices
 					</a>
-						{#if data.user.isAdmin}
+					{#if data.user.isAdmin}
 						<a href="/admin" class="{isActive('/admin') ? 'text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors">
 							Admin
 						</a>
 					{/if}
 				{/if}
 			</div>
-			<div class="flex items-center gap-3">
+
+			<!-- Desktop user section -->
+			<div class="hidden md:flex items-center gap-3">
 				{#if data.user}
 					<div class="flex items-center gap-2">
 						{#if data.user.avatarUrl}
@@ -66,14 +78,121 @@
 					<a href="/login" class="text-sm text-[var(--color-primary)] hover:underline">Sign in</a>
 				{/if}
 			</div>
+
+			<!-- Mobile: avatar + burger button -->
+			<div class="md:hidden ml-auto flex items-center gap-3">
+				{#if data.user?.avatarUrl}
+					<img src={data.user.avatarUrl} alt="" class="w-7 h-7 rounded-full" referrerpolicy="no-referrer" />
+				{/if}
+				<button
+					type="button"
+					onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
+					aria-label="Toggle navigation menu"
+					aria-expanded={mobileMenuOpen}
+					class="p-2 -mr-2 text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors"
+				>
+					{#if mobileMenuOpen}
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					{:else}
+						<svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+						</svg>
+					{/if}
+				</button>
+			</div>
 		</div>
+
+		<!-- Mobile drawer -->
+		{#if mobileMenuOpen}
+			<div class="md:hidden mt-3 border-t border-[var(--color-border)] pt-3 flex flex-col gap-1 max-w-7xl mx-auto">
+				<a
+					href="/cards"
+					onclick={() => (mobileMenuOpen = false)}
+					class="py-3 px-4 rounded-lg {isActive('/cards') ? 'bg-[var(--color-bg)] text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors"
+				>
+					Cards
+				</a>
+				<a
+					href="/scan"
+					onclick={() => (mobileMenuOpen = false)}
+					class="py-3 px-4 rounded-lg {isActive('/scan') ? 'bg-[var(--color-bg)] text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors"
+				>
+					Scanner
+				</a>
+				{#if data.user}
+					<a
+						href="/collection"
+						onclick={() => (mobileMenuOpen = false)}
+						class="py-3 px-4 rounded-lg {isActive('/collection') ? 'bg-[var(--color-bg)] text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors"
+					>
+						Collection
+					</a>
+					<a
+						href="/wishlist"
+						onclick={() => (mobileMenuOpen = false)}
+						class="py-3 px-4 rounded-lg {isActive('/wishlist') ? 'bg-[var(--color-bg)] text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors"
+					>
+						Wishlist
+					</a>
+					<a
+						href="/prices"
+						onclick={() => (mobileMenuOpen = false)}
+						class="py-3 px-4 rounded-lg {isActive('/prices') ? 'bg-[var(--color-bg)] text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors"
+					>
+						Prices
+					</a>
+					{#if data.user.isAdmin}
+						<a
+							href="/admin"
+							onclick={() => (mobileMenuOpen = false)}
+							class="py-3 px-4 rounded-lg {isActive('/admin') ? 'bg-[var(--color-bg)] text-[var(--color-accent)] font-semibold' : 'text-[var(--color-text-muted)]'} hover:text-[var(--color-text)] transition-colors"
+						>
+							Admin
+						</a>
+					{/if}
+				{/if}
+
+				<div class="border-t border-[var(--color-border)] mt-2 pt-2 flex flex-col gap-1">
+					{#if data.user}
+						<div class="py-2 px-4 text-sm text-[var(--color-text-muted)]">
+							Signed in as {data.user.name}
+						</div>
+						<a
+							href="/settings"
+							onclick={() => (mobileMenuOpen = false)}
+							class="py-3 px-4 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+						>
+							Settings
+						</a>
+						<form method="POST" action="/auth/logout" class="block">
+							<button
+								type="submit"
+								class="w-full text-left py-3 px-4 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+							>
+								Logout
+							</button>
+						</form>
+					{:else}
+						<a
+							href="/login"
+							onclick={() => (mobileMenuOpen = false)}
+							class="py-3 px-4 rounded-lg text-[var(--color-primary)] hover:underline"
+						>
+							Sign in
+						</a>
+					{/if}
+				</div>
+			</div>
+		{/if}
 	</nav>
 
-	<main class="flex-1 max-w-7xl mx-auto w-full px-6 py-6">
+	<main class="flex-1 max-w-7xl mx-auto w-full px-4 md:px-6 py-6">
 		{@render children()}
 	</main>
 
-	<footer class="border-t border-[var(--color-border)] px-6 py-4 text-center text-xs text-[var(--color-text-muted)]">
+	<footer class="border-t border-[var(--color-border)] px-4 md:px-6 py-4 text-center text-xs text-[var(--color-text-muted)]">
 		<div class="flex justify-center gap-4">
 			<a href="/contact" class="hover:text-[var(--color-text)] transition-colors">Contact</a>
 			<a href="/impressum" class="hover:text-[var(--color-text)] transition-colors">Legal Notice</a>

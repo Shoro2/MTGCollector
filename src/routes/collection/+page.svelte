@@ -275,9 +275,9 @@
 			</div>
 
 			<!-- Body -->
-			<div class="p-5 flex gap-6">
+			<div class="p-5 flex flex-col sm:flex-row gap-6">
 				<!-- Card Image -->
-				<div class="flex-shrink-0 w-48">
+				<div class="flex-shrink-0 w-40 sm:w-48 mx-auto sm:mx-0">
 					{#if getImageSrc(editItem)}
 						<CardPreview src={getImageSrc(editItem)} alt={editItem.name as string} scale={1.7}>
 							<img src={getImageSrc(editItem)} alt={editItem.name as string} class="w-full rounded-lg shadow-lg" />
@@ -304,7 +304,7 @@
 					</div>
 
 					<!-- Quantity & Condition Row -->
-					<div class="grid grid-cols-3 gap-3">
+					<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 						<div>
 							<label for="edit-qty" class="block text-xs text-[var(--color-text-muted)] mb-1">Quantity</label>
 							<div class="flex items-center">
@@ -359,7 +359,7 @@
 					</div>
 
 					<!-- Price Info -->
-					<div class="grid grid-cols-2 gap-3">
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
 							<span class="text-xs text-[var(--color-text-muted)]">Current Price</span>
 							<p class="font-medium text-[var(--color-accent)]">
@@ -419,14 +419,14 @@
 			</div>
 
 			<!-- Footer -->
-			<div class="flex items-center justify-between p-5 border-t border-[var(--color-border)]">
+			<div class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 p-5 border-t border-[var(--color-border)]">
 				<button
 					onclick={deleteFromEdit}
-					class="text-red-400 hover:text-red-300 text-sm transition-colors"
+					class="text-red-400 hover:text-red-300 text-sm transition-colors text-left"
 				>
 					Remove from collection
 				</button>
-				<div class="flex gap-2">
+				<div class="flex gap-2 justify-end">
 					<button
 						onclick={closeEdit}
 						class="bg-[var(--color-bg)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
@@ -447,9 +447,9 @@
 {/if}
 
 <div class="space-y-6">
-	<div class="flex items-center justify-between">
+	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
 		<h1 class="text-2xl font-bold">My Collection</h1>
-		<div class="flex gap-2">
+		<div class="flex flex-wrap gap-2">
 			<button
 				onclick={fillPurchasePrices}
 				disabled={fillingPrices}
@@ -480,18 +480,18 @@
 	</div>
 
 	<!-- Stats -->
-	<div class="grid grid-cols-3 gap-4">
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Unique Cards</p>
-			<p class="text-2xl font-bold">{data.stats.uniqueCards}</p>
+	<div class="grid grid-cols-3 gap-2 sm:gap-4">
+		<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+			<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Unique Cards</p>
+			<p class="text-xl sm:text-2xl font-bold break-words">{data.stats.uniqueCards}</p>
 		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Total Cards</p>
-			<p class="text-2xl font-bold">{data.stats.totalCards}</p>
+		<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+			<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Cards</p>
+			<p class="text-xl sm:text-2xl font-bold break-words">{data.stats.totalCards}</p>
 		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
-			<p class="text-sm text-[var(--color-text-muted)]">Total Value</p>
-			<p class="text-2xl font-bold text-[var(--color-accent)]">{formatPrice(data.stats.totalValue)}</p>
+		<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
+			<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Value</p>
+			<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{formatPrice(data.stats.totalValue)}</p>
 		</div>
 	</div>
 
@@ -534,17 +534,17 @@
 	{/if}
 
 	<!-- Search & Sort -->
-	<div class="flex gap-2">
+	<div class="flex flex-col sm:flex-row gap-2">
 		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex-1 flex gap-2">
 			<input
 				type="text"
 				bind:value={search}
 				placeholder="Search collection..."
-				class="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)]"
+				class="flex-1 min-w-0 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)]"
 			/>
 			<button type="submit" class="bg-[var(--color-primary-button)] px-4 py-2 rounded-lg text-sm">Search</button>
 		</form>
-		<div class="flex gap-1">
+		<div class="flex flex-wrap gap-1">
 			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit %'], ['profit_total', 'Profit €'], ['quantity', 'Amount'], ['set_name', 'Set']] as [key, label]}
 				<button
 					onclick={() => setSort(key)}
@@ -571,69 +571,74 @@
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
-					class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 flex items-center gap-4 cursor-pointer hover:border-[var(--color-primary)] transition-colors"
+					class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 flex items-start sm:items-center gap-3 sm:gap-4 cursor-pointer hover:border-[var(--color-primary)] transition-colors"
 					onclick={() => openEdit(item)}
 				>
 					<!-- Thumbnail -->
 					<div class="flex-shrink-0">
 						{#if imgSrc}
 							<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
-								<img src={imgSrc} alt={item.name as string} class="w-16 h-22 object-cover rounded" loading="lazy" />
+								<img src={imgSrc} alt={item.name as string} class="w-14 h-20 sm:w-16 sm:h-22 object-cover rounded" loading="lazy" />
 							</CardPreview>
 						{:else}
-							<div class="w-16 h-22 bg-[var(--color-bg)] rounded"></div>
+							<div class="w-14 h-20 sm:w-16 sm:h-22 bg-[var(--color-bg)] rounded"></div>
 						{/if}
 					</div>
 
-					<!-- Info -->
-					<div class="flex-1 min-w-0">
-						<p class="font-medium">{item.name}</p>
-						<div class="flex items-center gap-3 mt-1 text-sm text-[var(--color-text-muted)]">
-							<span>{item.quantity}x</span>
-							<span>{conditionLabel(item.condition as string)}</span>
-							{#if item.foil}
-								<span class="text-[var(--color-accent)]">FOIL</span>
-							{/if}
-							<span>{item.set_name}</span>
+					<div class="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:gap-4">
+						<!-- Info -->
+						<div class="flex-1 min-w-0">
+							<p class="font-medium break-words">{item.name}</p>
+							<div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm text-[var(--color-text-muted)]">
+								<span>{item.quantity}x</span>
+								<span>{conditionLabel(item.condition as string)}</span>
+								{#if item.foil}
+									<span class="text-[var(--color-accent)]">FOIL</span>
+								{/if}
+								<span class="break-words">{item.set_name}</span>
+							</div>
+							<!-- Tags -->
+							<div class="flex gap-1 mt-1 flex-wrap">
+								{#each (item.tags as Array<Record<string, unknown>>) as tag}
+									<span
+										class="px-2 py-0.5 rounded-full text-xs"
+										style="background: {tag.color}22; color: {tag.color}; border: 1px solid {tag.color}44"
+									>
+										{tag.name}
+									</span>
+								{/each}
+							</div>
 						</div>
-						<!-- Tags -->
-						<div class="flex gap-1 mt-1 flex-wrap">
-							{#each (item.tags as Array<Record<string, unknown>>) as tag}
-								<span
-									class="px-2 py-0.5 rounded-full text-xs"
-									style="background: {tag.color}22; color: {tag.color}; border: 1px solid {tag.color}44"
-								>
-									{tag.name}
-								</span>
-							{/each}
-						</div>
-					</div>
 
-					<!-- Price -->
-					<div class="text-right flex-shrink-0">
-						<p class="text-[var(--color-accent)] font-medium">
-							{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null, (item.foil ? item.price_usd_foil : item.price_usd) as number | null)}
-						</p>
-						{#if priceChange(item)}
-							<p class="text-xs {priceChange(item)!.color}">
-								{priceChange(item)!.direction} {Math.abs(priceChange(item)!.percent).toFixed(1)}%
-							</p>
-						{:else if (item.quantity as number) > 1}
-							<p class="text-xs text-[var(--color-text-muted)]">
-								{formatPrice(((item.foil ? item.price_eur_foil : item.price_eur) as number ?? 0) * (item.quantity as number), ((item.foil ? item.price_usd_foil : item.price_usd) as number ?? 0) * (item.quantity as number))} total
-							</p>
-						{/if}
+						<!-- Price + chart button row (stacks on desktop side, inline below info on mobile) -->
+						<div class="flex items-center justify-between sm:justify-end gap-2 mt-2 sm:mt-0 sm:flex-shrink-0">
+							<!-- Price -->
+							<div class="text-left sm:text-right">
+								<p class="text-[var(--color-accent)] font-medium">
+									{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null, (item.foil ? item.price_usd_foil : item.price_usd) as number | null)}
+								</p>
+								{#if priceChange(item)}
+									<p class="text-xs {priceChange(item)!.color}">
+										{priceChange(item)!.direction} {Math.abs(priceChange(item)!.percent).toFixed(1)}%
+									</p>
+								{:else if (item.quantity as number) > 1}
+									<p class="text-xs text-[var(--color-text-muted)]">
+										{formatPrice(((item.foil ? item.price_eur_foil : item.price_eur) as number ?? 0) * (item.quantity as number), ((item.foil ? item.price_usd_foil : item.price_usd) as number ?? 0) * (item.quantity as number))} total
+									</p>
+								{/if}
+							</div>
+							<button
+								onclick={(e) => { e.stopPropagation(); openCardChart(item.card_id as string); }}
+								class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
+								title="Price history"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M3 13l4-4 4 4 4-8 6 6" />
+									<path stroke-linecap="round" stroke-linejoin="round" d="M3 20h18" />
+								</svg>
+							</button>
+						</div>
 					</div>
-					<button
-						onclick={(e) => { e.stopPropagation(); openCardChart(item.card_id as string); }}
-						class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
-						title="Price history"
-					>
-						<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-							<path stroke-linecap="round" stroke-linejoin="round" d="M3 13l4-4 4 4 4-8 6 6" />
-							<path stroke-linecap="round" stroke-linejoin="round" d="M3 20h18" />
-						</svg>
-					</button>
 				</div>
 			{/each}
 		</div>
