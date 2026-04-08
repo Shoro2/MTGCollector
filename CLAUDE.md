@@ -22,10 +22,11 @@ npm run check                # TypeScript + Svelte validation
 GOOGLE_CLIENT_ID=...         # Google OAuth credentials
 GOOGLE_CLIENT_SECRET=...     # From console.cloud.google.com/apis/credentials
 ORIGIN=http://localhost:5173 # App URL (used for OAuth callback)
-GOOGLE_VISION_API_KEY=...    # Google Cloud Vision API (batch OCR for card scanner)
 ```
 
 Google OAuth redirect URI: `{ORIGIN}/auth/callback/google`
+
+> **Google Vision API key**: Vision-based batch OCR is opt-in per user. There is no shared/server-wide key — each user can store their own personal API key in `users.google_vision_api_key` via the `/settings` page. Without a per-user key, the scanner uses local Tesseract.js only.
 
 ## Tech Stack
 
@@ -171,7 +172,7 @@ src/
 3. Orientation detection: if top edge > left edge → card is sideways → rotate corners 90° clockwise
 4. Perspective transform to 488×680 flat image
 5. **Name OCR**: Tesseract.js on cropped name area → API search by name → FTS fallback
-6. **Bottom OCR** (hybrid): If 5+ cards → Google Vision API batch OCR via `/api/ocr`; otherwise Tesseract.js fallback
+6. **Bottom OCR** (hybrid): If 5+ cards **and** the signed-in user has stored their own personal Google Vision API key in `/settings` → batch OCR via `/api/ocr` using that user's key; otherwise local Tesseract.js
 7. **Foil detection** (dual): HSV color analysis on art area (saturation, hue/brightness variance) + text-based detection from separator char (`*` = foil, `.` = non-foil)
 8. API search with fallbacks: set+number → name → FTS
 9. Manual search fallback for unidentified cards
@@ -206,7 +207,7 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 
 - **Scryfall API** (`api.scryfall.com`) — Card data, bulk downloads, price data. Rate limit: 200ms between image downloads.
 - **Google OAuth** — User authentication (PKCE flow via `arctic`)
-- **Google Cloud Vision API** (`vision.googleapis.com`) — Batch OCR (TEXT_DETECTION) for card scanning. Usage tracked in `api_usage` table. Requires `GOOGLE_VISION_API_KEY`.
+- **Google Cloud Vision API** (`vision.googleapis.com`) — Optional batch OCR (TEXT_DETECTION) for card scanning. Each user supplies their own personal API key in `/settings` (stored in `users.google_vision_api_key`). The server has no shared key. Usage is still tracked per user in the `api_usage` table.
 - **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`), card rectangle detection + foil detection (HSV analysis)
 - **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`), OCR fallback for collector numbers/names
 - **Frankfurter API** (`api.frankfurter.dev/v1/latest`) — USD/EUR exchange rate, cached 6 hours

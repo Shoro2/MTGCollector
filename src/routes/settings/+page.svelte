@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import type { PageData } from './$types';
+	import { enhance } from '$app/forms';
+	import type { PageData, ActionData } from './$types';
 
-	let { data }: { data: PageData } = $props();
+	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let showDeleteDialog = $state(false);
 	let deleteConfirmText = $state('');
 	let deleting = $state(false);
 	let deleteError = $state('');
+
+	let visionKeyInput = $state('');
+	let savingVisionKey = $state(false);
+	let clearingVisionKey = $state(false);
 
 	const canDelete = $derived(deleteConfirmText === 'DELETE');
 
@@ -76,6 +81,105 @@
 				<p class="text-xs text-[var(--color-text-muted)]">Tags</p>
 			</div>
 		</div>
+	</div>
+
+	<!-- Card Scanner OCR -->
+	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-6">
+		<h2 class="text-lg font-semibold mb-2">Card Scanner OCR</h2>
+		<p class="text-sm text-[var(--color-text-muted)] mb-4">
+			The card scanner uses local OCR (Tesseract.js) by default — no data leaves your browser.
+			Optionally, you can provide your own
+			<a
+				href="https://console.cloud.google.com/apis/library/vision.googleapis.com"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="text-[var(--color-accent)] hover:underline"
+			>Google Cloud Vision API key</a>
+			for faster and more accurate batch OCR when scanning 5 or more cards at once.
+			The key is only used for your own scans and counts against your own Google Cloud quota.
+		</p>
+
+		<div class="mb-4">
+			{#if data.hasVisionApiKey}
+				<div class="flex items-center justify-between gap-4 p-3 rounded border border-green-500/30 bg-green-500/5">
+					<div class="text-sm">
+						<span class="text-green-400 font-medium">Configured</span>
+						<span class="text-[var(--color-text-muted)]"> (ends in <code class="font-mono">{data.visionKeyPreview}</code>)</span>
+					</div>
+					<form
+						method="POST"
+						action="?/clearVisionKey"
+						use:enhance={() => {
+							clearingVisionKey = true;
+							return async ({ update }) => {
+								await update();
+								clearingVisionKey = false;
+							};
+						}}
+					>
+						<button
+							type="submit"
+							disabled={clearingVisionKey}
+							class="px-3 py-1.5 text-sm bg-red-600/80 hover:bg-red-600 disabled:opacity-50 text-white rounded transition-colors"
+						>
+							{clearingVisionKey ? 'Removing...' : 'Remove'}
+						</button>
+					</form>
+				</div>
+			{:else}
+				<div class="p-3 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-sm text-[var(--color-text-muted)]">
+					Not configured. Batch OCR via Google Vision is disabled — the scanner will use local Tesseract for all scans.
+				</div>
+			{/if}
+		</div>
+
+		<form
+			method="POST"
+			action="?/setVisionKey"
+			use:enhance={() => {
+				savingVisionKey = true;
+				return async ({ update }) => {
+					await update();
+					savingVisionKey = false;
+					visionKeyInput = '';
+				};
+			}}
+			class="space-y-3"
+		>
+			<label class="block">
+				<span class="block text-sm text-[var(--color-text-muted)] mb-1">
+					{data.hasVisionApiKey ? 'Replace API key' : 'API key'}
+				</span>
+				<input
+					type="password"
+					name="apiKey"
+					bind:value={visionKeyInput}
+					placeholder="AIza…"
+					maxlength="200"
+					autocomplete="off"
+					class="w-full px-3 py-2 rounded border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text)] text-sm font-mono"
+				/>
+			</label>
+			{#if form?.setVisionKey && 'error' in form.setVisionKey}
+				<p class="text-sm text-red-400">{form.setVisionKey.error}</p>
+			{:else if form?.setVisionKey && 'success' in form.setVisionKey}
+				<p class="text-sm text-green-400">API key saved.</p>
+			{:else if form?.clearVisionKey && 'success' in form.clearVisionKey}
+				<p class="text-sm text-green-400">API key removed.</p>
+			{/if}
+			<div class="flex justify-end">
+				<button
+					type="submit"
+					disabled={savingVisionKey || !visionKeyInput.trim()}
+					class="px-4 py-2 bg-[var(--color-accent)] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-opacity"
+				>
+					{savingVisionKey ? 'Saving...' : data.hasVisionApiKey ? 'Replace key' : 'Save key'}
+				</button>
+			</div>
+			<p class="text-xs text-[var(--color-text-muted)]">
+				Your key is stored as plain text in the local database. Only you (and the server administrator) can access it. You can remove it any time.
+			</p>
+		</form>
 	</div>
 
 	<!-- Delete Account -->

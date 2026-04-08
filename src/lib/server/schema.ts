@@ -49,6 +49,7 @@ export const users = sqliteTable('users', {
 	email: text('email').notNull(),
 	name: text('name').notNull(),
 	avatarUrl: text('avatar_url'),
+	googleVisionApiKey: text('google_vision_api_key'),
 	createdAt: text('created_at').$defaultFn(() => new Date().toISOString())
 });
 
