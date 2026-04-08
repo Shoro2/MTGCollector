@@ -95,8 +95,7 @@
 				rel="noopener noreferrer"
 				class="text-[var(--color-accent)] hover:underline"
 			>Google Cloud Vision API key</a>
-			for faster and more accurate batch OCR when scanning 5 or more cards at once.
-			The key is only used for your own scans and counts against your own Google Cloud quota.
+			to retry cards that local OCR could not identify. When the retry toggle on the scanner page is enabled, only the unrecognized cards are sent to Google's Vision API using your personal credentials. Successful scans never leave your browser. Quota and billing are handled by your own Google Cloud project.
 		</p>
 
 		<div class="mb-4">
