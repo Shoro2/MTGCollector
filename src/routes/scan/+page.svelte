@@ -27,6 +27,9 @@
 		selectedResultIdx: number;
 	}>>([]);
 	let debugCanvasUrl = $state('');
+	let debugLog = $state<string[]>([]);
+	let scanStartTime = 0;
+	let debugLogCopied = $state(false);
 	let adding = $state<string | null>(null);
 	let addedCards = $state<Array<{ id: string; name: string }>>([]);
 	let selectedCards = $state<Set<number>>(new Set());
@@ -65,6 +68,17 @@
 			localStorage.setItem('mtg-scan-vision-retry', String(visionRetryEnabled));
 		} catch { /* localStorage unavailable */ }
 	});
+
+	function log(msg: string) {
+		const elapsed = ((performance.now() - scanStartTime) / 1000).toFixed(2);
+		debugLog = [...debugLog, `[+${elapsed}s] ${msg}`];
+	}
+
+	async function copyDebugLog() {
+		await navigator.clipboard.writeText(debugLog.join('\n'));
+		debugLogCopied = true;
+		setTimeout(() => debugLogCopied = false, 2000);
+	}
 
 	// Load OpenCV.js
 	async function loadOpenCV(): Promise<void> {
@@ -116,6 +130,7 @@
 			imagePreview = URL.createObjectURL(file);
 			detectedCards = [];
 			debugCanvasUrl = '';
+			debugLog = [];
 			manualResults = [];
 			manualCardIndex = null;
 			visionRetriedCount = 0;
@@ -125,11 +140,13 @@
 
 	async function processImage(file: File) {
 		scanning = true;
+		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
 
 		try {
 			await loadOpenCV();
 			const cv = (window as any).cv;
+			log('OpenCV loaded');
 
 			scanProgress = 'Detecting cards...';
 
@@ -140,6 +157,9 @@
 			canvas.height = img.height;
 			const ctx = canvas.getContext('2d')!;
 			ctx.drawImage(img, 0, 0);
+
+			log(`Image loaded: ${img.width}x${img.height} (${(img.width * img.height).toLocaleString()}px)`);
+			log(`Mode: ${scanMode}, expectedCardCount: ${expectedCardCount ?? 'unlimited'}`);
 
 			// OpenCV processing
 			const src = cv.imread(canvas);
@@ -237,6 +257,7 @@
 
 			const minArea = imgArea * 0.008;
 			const maxArea = imgArea * 0.5;
+			log(`Area thresholds: min=${minArea.toFixed(0)} (0.8%), max=${maxArea.toFixed(0)} (50%)`);
 
 			for (const params of cannyParams) {
 				const blurMat = new cv.Mat();
@@ -248,6 +269,7 @@
 				cv.dilate(edgeMat, edgeMat, kernel);
 
 				findCardContours(edgeMat, minArea, maxArea);
+				log(`Strategy 1 Canny(blur=${params.blur}, ${params.low}-${params.high}): ${allCandidates.length} total candidates`);
 
 				blurMat.delete(); edgeMat.delete(); kernel.delete();
 			}
@@ -263,6 +285,7 @@
 			cv.dilate(threshMat, threshMat, sepKernel);
 
 			findCardContours(threshMat, minArea, maxArea);
+			log(`Strategy 2 AdaptiveThreshold(blockSize=51, delta=-5): ${allCandidates.length} total candidates`);
 
 			blurForThresh.delete(); threshMat.delete(); sepKernel.delete();
 
@@ -277,6 +300,7 @@
 			cv.dilate(eqEdge, eqEdge, eqKernel);
 
 			findCardContours(eqEdge, minArea, maxArea);
+			log(`Strategy 3 HistEq+Canny(40-120): ${allCandidates.length} total candidates`);
 
 			eqHist.delete(); eqBlur.delete(); eqEdge.delete(); eqKernel.delete();
 
@@ -291,6 +315,7 @@
 			cv.dilate(otsuMat, otsuMat, otsuSepKernel);
 
 			findCardContours(otsuMat, minArea, maxArea);
+			log(`Strategy 4 Otsu: ${allCandidates.length} total candidates`);
 
 			otsuBlur.delete(); otsuMat.delete(); otsuSepKernel.delete();
 
@@ -320,6 +345,7 @@
 			cv.dilate(satThresh, satThresh, satSepKernel);
 
 			findCardContours(satThresh, minArea, maxArea);
+			log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
 
 			saturation.delete(); satThresh.delete();
 			satCloseKernel.delete(); satSepKernel.delete();
@@ -338,6 +364,7 @@
 			cv.dilate(invOtsuMat, invOtsuMat, invSepKernel);
 
 			findCardContours(invOtsuMat, minArea, maxArea);
+			log(`Strategy 6 InvertedOtsu: ${allCandidates.length} total candidates`);
 
 			invOtsuBlur.delete(); invOtsuMat.delete(); invSepKernel.delete();
 
@@ -356,17 +383,21 @@
 					cardContours.push(candidate);
 				}
 			}
+			log(`Containment filter: ${allCandidates.length} -> ${cardContours.length} candidates`);
 
 			// === Size consistency filter: remove detections much smaller than median ===
 			// This catches text-block false positives (e.g. only the text area of a card detected)
 			if (cardContours.length >= 3) {
 				const areas = cardContours.map(c => c.area).sort((a, b) => a - b);
 				const medianArea = areas[Math.floor(areas.length / 2)];
+				const beforeSize = cardContours.length;
 				cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
+				log(`Size filter: median=${medianArea.toFixed(0)}, threshold=${(medianArea * 0.4).toFixed(0)}, ${beforeSize} -> ${cardContours.length}`);
 			}
 
 			// === Progressive relaxation if expected card count not met ===
 			if (expectedCardCount && cardContours.length < expectedCardCount) {
+				log(`Progressive relaxation triggered (have ${cardContours.length}, need ${expectedCardCount})`);
 				const relaxedMinArea = imgArea * 0.004;
 				const relaxedMinAspect = 0.4;
 				const relaxedMaxAspect = 0.95;
@@ -422,6 +453,7 @@
 					const medianArea = areas[Math.floor(areas.length / 2)];
 					cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
 				}
+				log(`After relaxation: ${cardContours.length} candidates`);
 			}
 
 			// === Grid inference: fill missing positions if cards form a grid ===
@@ -453,6 +485,7 @@
 				const rows = cluster1D(gridCenters.map(c => c.y), medH * 0.4);
 				const cols = cluster1D(gridCenters.map(c => c.x), medW * 0.4);
 
+				log(`Grid analysis: ${rows.length} rows x ${cols.length} cols detected`);
 				if (rows.length >= 2 && cols.length >= 2 && rows.length * cols.length >= expectedCardCount * 0.8) {
 					// Assign each card to a (row, col) index
 					const cardGrid: { [key: string]: number } = {}; // "row,col" -> card index
@@ -503,6 +536,7 @@
 						}
 					}
 				}
+				log(`Grid inference: added synthetic cards, now ${cardContours.length} total`);
 			}
 
 			// Debug: draw detected rectangles on image
@@ -528,17 +562,20 @@
 			// detection so the user doesn't get spurious extra crops from
 			// background noise.
 			if (scanMode === 'single' && cardContours.length > 1) {
+				log(`Single mode: trimming ${cardContours.length} candidates to largest`);
 				cardContours.sort((a, b) => b.area - a.area);
 				cardContours = cardContours.slice(0, 1);
 			}
 
 			if (cardContours.length === 0) {
+				log('No cards detected');
 				scanProgress = 'No cards detected. Try a clearer photo.';
 				scanning = false;
 				src.delete(); gray.delete();
 				return;
 			}
 
+			log(`Detection complete: ${cardContours.length} card(s) found`);
 			scanProgress = `Found ${cardContours.length} card(s). Reading...`;
 
 			// Process each detected card
@@ -546,6 +583,7 @@
 
 			for (let i = 0; i < cardContours.length; i++) {
 				const pts = cardContours[i].corners;
+				log(`--- Card ${i + 1} ${cardContours[i].synthetic ? '(synthetic)' : ''} ---`);
 
 				// Order corners: top-left, top-right, bottom-right, bottom-left
 				const points: Array<[number, number]> = [];
@@ -553,11 +591,14 @@
 					points.push([pts.data32S[j * 2], pts.data32S[j * 2 + 1]]);
 				}
 				let ordered = orderCorners(points);
+				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]})`);
 
 				// Check if card is landscape (sideways) - rotate to portrait
 				const edgeTop = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-				if (edgeTop > edgeLeft) {
+				const rotated = edgeTop > edgeLeft;
+				log(`Card ${i + 1}: edgeTop=${edgeTop.toFixed(0)} edgeLeft=${edgeLeft.toFixed(0)} -> ${rotated ? 'ROTATED to portrait' : 'upright'}`);
+				if (rotated) {
 					ordered = [ordered[1], ordered[2], ordered[3], ordered[0]];
 				}
 
@@ -607,6 +648,7 @@
 				const nameY = Math.floor(cardH * (cardContours[i].synthetic ? 0.03 : 0.07));
 				const nameH = Math.floor(cardH * (cardContours[i].synthetic ? 0.08 : 0.065));
 				const nameW = Math.floor(cardW * 0.72);
+				log(`Card ${i + 1}: name crop y=${nameY} h=${nameH} w=${nameW}`);
 				const nameRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.08), nameY, nameW, nameH));
 				const grayName = new cv.Mat();
 				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
@@ -620,6 +662,7 @@
 				// Crop bottom strip for collector info (left half only, right has copyright)
 				const bottomY = Math.floor(cardH * 0.90);
 				const bottomH = Math.floor(cardH * 0.07);
+				log(`Card ${i + 1}: bottom crop y=${bottomY} h=${bottomH} w=${Math.floor(cardW * 0.5)}`);
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
 
@@ -668,6 +711,7 @@
 
 			// === Name-first OCR approach ===
 			// Phase 1: OCR name areas with Tesseract (large text = high accuracy)
+			log('Phase 1: Name OCR (Tesseract PSM 7, letter whitelist)');
 			const worker = await getTesseractWorker();
 			await worker.setParameters({
 				tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.",
@@ -681,13 +725,18 @@
 					const result = await worker.recognize(card.nameUrl);
 					card.nameText = result.data.text.replace(/[\r\n]+/g, ' ').trim();
 				} catch { card.nameText = ''; }
+				log(`Card ${i + 1} name OCR: "${card.nameText}"`);
 				detectedCards = [...detectedCards];
 			}
 
 			// Phase 2: Search DB by name → get all reprints
+			log('Phase 2: Name search in DB');
 			for (let i = 0; i < detectedCards.length; i++) {
 				const card = detectedCards[i];
-				if (!card.nameText || card.nameText.length < 2) continue;
+				if (!card.nameText || card.nameText.length < 2) {
+					log(`Card ${i + 1}: name too short or empty, skipping search`);
+					continue;
+				}
 
 				// Only strip leading non-letter junk (OCR artifacts)
 				// Don't remove trailing chars — similarity scoring handles OCR noise
@@ -696,6 +745,7 @@
 					.trim();
 
 				scanProgress = `Searching "${cleanName}"...`;
+				log(`Card ${i + 1}: searching "${cleanName}"`);
 				try {
 					const res = await fetch('/scan', {
 						method: 'POST',
@@ -703,12 +753,17 @@
 						body: JSON.stringify({ query: cleanName })
 					});
 					const searchData = await res.json();
+					log(`Card ${i + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
 					if (searchData.results.length > 0) {
 						// Pick best matching name by similarity score
 						const best = bestNameMatch(searchData.results, cleanName);
+						log(`Card ${i + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
 						if (best.score >= 0.6) {
 							card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
 							card.matchType = searchData.matchType;
+							log(`Card ${i + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
+						} else {
+							log(`Card ${i + 1}: score below threshold, rejected`);
 						}
 					}
 
@@ -717,6 +772,7 @@
 						const words = cleanName.split(/\s+/).filter(w => w.length >= 3);
 						// Try longest word first (most distinctive)
 						words.sort((a, b) => b.length - a.length);
+						log(`Card ${i + 1}: trying word fallback with [${words.slice(0, 2).join(', ')}]`);
 						for (const word of words.slice(0, 2)) {
 							const wRes = await fetch('/scan', {
 								method: 'POST',
@@ -724,17 +780,20 @@
 								body: JSON.stringify({ query: word })
 							});
 							const wData = await wRes.json();
+							log(`Card ${i + 1}: word "${word}" -> ${wData.results.length} results`);
 							if (wData.results.length > 0) {
 								const best = bestNameMatch(wData.results, cleanName);
+								log(`Card ${i + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
 								if (best.score >= 0.6) {
 									card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
 									card.matchType = 'similarity';
+									log(`Card ${i + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
 									break;
 								}
 							}
 						}
 					}
-				} catch { /* */ }
+				} catch (err) { log(`Card ${i + 1}: search error: ${err}`); }
 				detectedCards = [...detectedCards];
 			}
 
@@ -749,16 +808,18 @@
 			// Re-run set/number parsing + reprint disambiguation for a single card
 			// using whatever is currently in card.ocrText. Used both after the first
 			// Tesseract pass and after the optional Google Vision retry.
-			async function applyBottomMatch(card: typeof detectedCards[number]) {
-				const parsed = parseCollectorInfo(card.ocrText, langs);
+			async function applyBottomMatch(card: typeof detectedCards[number], cardIdx: number) {
+				const parsed = parseCollectorInfo(card.ocrText, langs, (msg) => log(`Card ${cardIdx}: ${msg}`));
 				card.setCode = parsed.setCode;
 				card.collectorNumber = parsed.collectorNumber;
 
 				// Foil detection from separator char (* = foil, . = non-foil)
 				card.foil = parsed.foilFromText;
+				log(`Card ${cardIdx}: parsed set="${parsed.setCode}" num="${parsed.collectorNumber}" foil=${parsed.foilFromText}`);
 
 				if (card.results.length === 1) {
 					// Unique card from name search — done
+					log(`Card ${cardIdx}: unique name match -> found`);
 					card.status = 'found';
 				} else if (card.results.length > 1) {
 					// Multiple reprints — match known collector numbers/set codes against bottom text
@@ -767,6 +828,7 @@
 
 					// Extract all digit sequences from bottom text for matching
 					const digitSeqs = [...bottomText.matchAll(/\d+/g)].map(m => m[0]);
+					log(`Card ${cardIdx}: ${card.results.length} reprints to disambiguate, digit sequences: [${digitSeqs.join(', ')}]`);
 
 					// 1. Try matching known collector numbers in bottom text
 					const numMatches = card.results.filter(r => {
@@ -781,7 +843,11 @@
 							d.includes(cn) || d.includes(cnPadded)
 						);
 					});
-					if (numMatches.length === 1) match = numMatches[0];
+					log(`Card ${cardIdx}: collector number matching -> ${numMatches.length} matches`);
+					if (numMatches.length === 1) {
+						match = numMatches[0];
+						log(`Card ${cardIdx}: unique number match: ${match.set_code}#${match.collector_number}`);
+					}
 
 					// 2. Try set code + collector number from generic parser
 					if (!match && card.setCode && card.collectorNumber) {
@@ -790,22 +856,28 @@
 							(String(r.collector_number) === card.collectorNumber ||
 							 String(r.collector_number) === card.collectorNumber.replace(/^0+/, ''))
 						);
+						log(`Card ${cardIdx}: set+number match (${card.setCode}#${card.collectorNumber}) -> ${match ? 'found' : 'none'}`);
 					}
 
 					// 3. Try just set code from generic parser
 					if (!match && card.setCode) {
 						const setMatches = card.results.filter(r => (r.set_code as string).toLowerCase() === card.setCode.toLowerCase());
 						if (setMatches.length === 1) match = setMatches[0];
+						log(`Card ${cardIdx}: set-only match (${card.setCode}) -> ${setMatches.length} matches`);
 					}
 
 					if (match) {
 						card.results = [match];
 						card.matchType = 'reprint_match';
+						log(`Card ${cardIdx}: reprint resolved to ${match.set_code}#${match.collector_number}`);
+					} else {
+						log(`Card ${cardIdx}: could not disambiguate reprints, showing all ${card.results.length}`);
 					}
 					card.status = 'found';
 				} else if (card.setCode && card.collectorNumber && !card.nameText) {
 					// Name OCR completely failed — try set+number directly (old fallback)
 					// Only when nameText is empty, never override a name match
+					log(`Card ${cardIdx}: no name, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
 					try {
 						const res = await fetch('/scan', {
 							method: 'POST',
@@ -816,13 +888,16 @@
 						card.results = searchData.results;
 						card.matchType = searchData.matchType || 'set_number';
 						card.status = card.results.length > 0 ? 'found' : 'not_found';
+						log(`Card ${cardIdx}: set+number fallback -> ${card.results.length} results, status=${card.status}`);
 					} catch { card.status = 'not_found'; }
 				} else {
+					log(`Card ${cardIdx}: no match possible -> not_found`);
 					card.status = 'not_found';
 				}
 			}
 
 			// Phase 3a: Run Tesseract bottom OCR + first matching pass for every card
+			log('Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6)');
 			for (let i = 0; i < detectedCards.length; i++) {
 				const card = detectedCards[i];
 				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
@@ -831,8 +906,9 @@
 					const result = await worker.recognize(card.bottomUrl);
 					card.ocrText = result.data.text.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 				} catch { card.ocrText = ''; }
+				log(`Card ${i + 1} bottom OCR: "${card.ocrText}"`);
 
-				await applyBottomMatch(card);
+				await applyBottomMatch(card, i + 1);
 				detectedCards = [...detectedCards];
 			}
 
@@ -852,6 +928,7 @@
 				}
 
 				if (failed.length > 0) {
+					log(`Phase 3b: Vision retry for ${failed.length} card(s) [${failed.map(f => `Card ${f.index + 1}`).join(', ')}]`);
 					// /api/ocr accepts up to 16 images per request — chunk if needed.
 					for (let batchStart = 0; batchStart < failed.length; batchStart += 16) {
 						const batch = failed.slice(batchStart, batchStart + 16);
@@ -867,19 +944,28 @@
 								for (let j = 0; j < batch.length; j++) {
 									const newText = (visionData.results?.[j] ?? '').toString();
 									if (!newText) continue;
-									const { card } = batch[j];
+									const { card, index: cardIdx } = batch[j];
+									const oldText = card.ocrText;
 									card.ocrText = newText;
-									await applyBottomMatch(card);
+									log(`Card ${cardIdx + 1}: Vision text="${newText}" (Tesseract was="${oldText}")`);
+									await applyBottomMatch(card, cardIdx + 1);
 									visionRetriedCount++;
+									log(`Card ${cardIdx + 1}: after Vision retry -> status=${card.status}, results=${card.results.length}`);
 								}
 								detectedCards = [...detectedCards];
 							}
 						} catch { /* keep Tesseract result for this batch */ }
 					}
+				} else {
+					log('Phase 3b: Vision retry skipped (no failed cards)');
 				}
+			} else {
+				log(`Phase 3b: Vision retry ${!userHasVisionKey ? 'no API key' : 'disabled by toggle'}`);
 			}
 
-			scanProgress = `Done! ${detectedCards.filter((c) => c.status === 'found').length} of ${detectedCards.length} identified.`;
+			const identifiedCount = detectedCards.filter((c) => c.status === 'found').length;
+			log(`Scan complete: ${identifiedCount}/${detectedCards.length} identified`);
+			scanProgress = `Done! ${identifiedCount} of ${detectedCards.length} identified.`;
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
 		} finally {
@@ -913,7 +999,7 @@
 		return stripped || '0';
 	}
 
-	function parseCollectorInfo(text: string, langs: string): { setCode: string; collectorNumber: string; foilFromText: boolean } {
+	function parseCollectorInfo(text: string, langs: string, dbg?: (msg: string) => void): { setCode: string; collectorNumber: string; foilFromText: boolean } {
 		const result = { setCode: '', collectorNumber: '', foilFromText: false };
 
 		// Step 1: Find anchor — <SET 3-letter> followed by <LANG 2-letter> within a few chars
@@ -922,23 +1008,28 @@
 
 		if (anchorMatch) {
 			result.setCode = anchorMatch[1].toLowerCase();
+			dbg?.(`anchor matched: "${anchorMatch[0]}" -> set="${result.setCode}"`);
 
 			// Check separator character for foil hint
 			const sep = anchorMatch[2] || '';
 			result.foilFromText = /[*#&]/.test(sep);
+			dbg?.(`separator="${sep}" foilFromSep=${result.foilFromText}`);
 
 			// Step 2: Extract collector number from text BEFORE the set code
 			const before = text.substring(0, anchorMatch.index);
+			dbg?.(`text before anchor: "${before}"`);
 
 			// Handle fraction format first (Era 3): "010/277"
 			const fractionMatch = before.match(/([\dOoIilJjBbSsZz]{1,4})\/([\dOoIilJjBbSsZz]{1,4})/);
 			if (fractionMatch) {
 				result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
+				dbg?.(`fraction format: "${fractionMatch[0]}" -> num="${result.collectorNumber}"`);
 			} else {
 				// Strategy: find the collector number near the end of `before`.
 				// It may be split by spaces/OCR errors: "C 0 045" or "0045" or "024 J"
 				// Take the last ~20 chars before the set code and extract all digit-like content
 				const tail = before.slice(-20).trim();
+				dbg?.(`tail (last 20 chars): "${tail}"`);
 
 				// Try to find a rarity+number pattern: "C 0045", "R 024 J", "M0085"
 				const rarityNumMatch = tail.match(/[CURM]\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
@@ -946,6 +1037,7 @@
 					const fixed = fixOcrDigits(rarityNumMatch[1].replace(/\s/g, ''));
 					if (fixed.length > 0 && fixed.length <= 4) {
 						result.collectorNumber = stripLeadingZeros(fixed);
+						dbg?.(`rarity+number: "${rarityNumMatch[0]}" -> num="${result.collectorNumber}"`);
 					}
 				}
 
@@ -963,10 +1055,16 @@
 						const fixed = fixOcrDigits(raw);
 						if (fixed.length > 0 && fixed.length <= 4) {
 							result.collectorNumber = stripLeadingZeros(fixed);
+							dbg?.(`last-digit fallback: raw="${raw}" -> num="${result.collectorNumber}"`);
 						}
+					}
+					if (!result.collectorNumber) {
+						dbg?.('no collector number found in before-text');
 					}
 				}
 			}
+		} else {
+			dbg?.('no anchor match (SET+LANG pattern not found)');
 		}
 
 		// Fallback: any 3-letter uppercase + any number
@@ -980,12 +1078,14 @@
 				const numMatch = text.match(/(\d{1,4})/);
 				if (numMatch) result.collectorNumber = stripLeadingZeros(numMatch[1]);
 			}
+			dbg?.(`generic fallback: set="${result.setCode}" num="${result.collectorNumber}"`);
 		}
 
 		// Foil fallback: if anchor didn't match, check for * anywhere in text
 		// The star/bullet separator is distinctive enough as a foil indicator
 		if (!result.foilFromText && text.includes('*')) {
 			result.foilFromText = true;
+			dbg?.('foil detected via * in text');
 		}
 
 		return result;
@@ -1188,6 +1288,7 @@
 		imagePreview = '';
 		detectedCards = [];
 		debugCanvasUrl = '';
+		debugLog = [];
 		scanProgress = '';
 		manualResults = [];
 		manualCardIndex = null;
@@ -1593,6 +1694,24 @@
 			<summary class="p-4 cursor-pointer text-sm font-semibold">Debug: Card Detection</summary>
 			<div class="p-4 pt-0">
 				<img src={debugCanvasUrl} alt="Detection debug" class="w-full rounded" />
+			</div>
+		</details>
+	{/if}
+
+	<!-- Debug: Scanner Log -->
+	{#if debugLog.length > 0}
+		<details class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
+			<summary class="p-4 cursor-pointer text-sm font-semibold">
+				Debugger ({debugLog.length} entries)
+			</summary>
+			<div class="p-4 pt-0">
+				<button
+					onclick={copyDebugLog}
+					class="text-xs mb-3 px-3 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-hover)] transition-colors"
+				>
+					{debugLogCopied ? 'Copied!' : 'Copy Log'}
+				</button>
+				<pre class="text-xs font-mono bg-[var(--color-bg)] p-3 rounded max-h-96 overflow-y-auto whitespace-pre-wrap break-all border border-[var(--color-border)]">{debugLog.join('\n')}</pre>
 			</div>
 		</details>
 	{/if}
