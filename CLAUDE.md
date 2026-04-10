@@ -162,12 +162,13 @@ src/
 
 ### Card Scanner Flow
 
-1. User uploads photo → OpenCV detects card rectangles via **5 detection strategies**:
+1. User uploads photo → OpenCV detects card rectangles via **6 detection strategies**:
    - Canny edge detection with multiple thresholds (3 parameter sets)
    - Adaptive threshold segmentation (for tightly packed cards)
    - Histogram equalization + Canny (for low-contrast cards)
    - Otsu global threshold
    - Color saturation mask (for colored card borders)
+   - Inverted Otsu threshold (for light cards on light backgrounds)
 2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9), IoU deduplication
 3. Orientation detection: if top edge > left edge → card is sideways → rotate corners 90° clockwise
 4. Perspective transform to 488×680 flat image
@@ -178,6 +179,7 @@ src/
 9. Manual search fallback for unidentified cards
 10. Select all / import all buttons for bulk adding (auth required)
 11. **Copy for Moxfield**: generates text in `1 Name (SET) number` format, appends `*F*` for foils
+12. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing.
 
 ### Price Change Indicator
 
