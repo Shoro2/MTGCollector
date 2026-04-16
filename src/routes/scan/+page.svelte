@@ -2,9 +2,9 @@
 	import type { PageData } from './$types';
 	import { formatPrice } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
-	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed } from '$lib/scanner/tesseract';
+	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { bestNameMatch } from '$lib/scanner/similarity';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
@@ -71,6 +71,13 @@
 		try {
 			localStorage.setItem('mtg-scan-vision-retry', String(visionRetryEnabled));
 		} catch { /* localStorage unavailable */ }
+	});
+
+	// Terminate Tesseract workers when leaving the page. Each worker holds
+	// ~50 MB of runtime + language data; without this the pool persists until
+	// the tab closes even after a single scan.
+	onDestroy(() => {
+		terminatePool().catch(() => { /* already gone */ });
 	});
 
 	function log(msg: string) {

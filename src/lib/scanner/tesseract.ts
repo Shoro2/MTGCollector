@@ -16,6 +16,7 @@ export type WordBox = {
 type TesseractWorker = {
 	recognize: (url: string) => Promise<{ data: { text: string; words?: WordBox[] } }>;
 	setParameters: (params: Record<string, unknown>) => Promise<unknown>;
+	terminate: () => Promise<void>;
 };
 
 export type DetailedOcrResult = { text: string; words: WordBox[] };
@@ -48,6 +49,20 @@ export async function getTesseractPool(): Promise<TesseractWorker[]> {
 /** Broadcast tessedit_* parameters to every worker in the pool. */
 export async function setPoolParameters(p: TesseractWorker[], params: Record<string, unknown>): Promise<void> {
 	await Promise.all(p.map((w) => w.setParameters(params)));
+}
+
+/**
+ * Terminate every worker and reset the pool so it can be created fresh later.
+ * Call from `onDestroy` when leaving a scan page — each worker holds ~50 MB
+ * of Tesseract runtime, so leaving 4 of them alive indefinitely after a scan
+ * keeps ~200 MB pinned until the tab closes.
+ */
+export async function terminatePool(): Promise<void> {
+	const existing = pool;
+	pool = [];
+	poolPromise = null;
+	if (existing.length === 0) return;
+	await Promise.allSettled(existing.map((w) => w.terminate()));
 }
 
 /**
