@@ -907,6 +907,46 @@
 
 			const langs = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
 
+			// Populated via a pre-pass before the applyBottomMatch loop so the
+			// set+number fallback doesn't round-trip the server once per card.
+			// Key: "setCode|collectorNumber". Lookups populated here short-circuit
+			// the per-card fetch inside applyBottomMatch.
+			const setNumCache = new Map<string, { results: Record<string, unknown>[]; matchType: string }>();
+			const setNumKey = (s: string, n: string) => `${s.toLowerCase()}|${n}`;
+
+			async function prefetchSetNumberLookups(cards: typeof detectedCards) {
+				const seen = new Set<string>();
+				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
+				for (const card of cards) {
+					if (card.nameText || card.results.length > 0) continue;
+					const parsed = parseCollectorInfo(card.ocrText, langs);
+					if (!parsed.setCode || !parsed.collectorNumber) continue;
+					const key = setNumKey(parsed.setCode, parsed.collectorNumber);
+					if (seen.has(key) || setNumCache.has(key)) continue;
+					seen.add(key);
+					lookups.push({ setCode: parsed.setCode, collectorNumber: parsed.collectorNumber });
+				}
+				if (lookups.length === 0) return;
+				log(`Phase 3 pre-pass: batching ${lookups.length} set+number lookup(s)`);
+				try {
+					const res = await fetch('/scan', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ lookups })
+					});
+					const data = await res.json();
+					const batch = Array.isArray(data?.batch) ? data.batch : [];
+					for (const entry of batch) {
+						setNumCache.set(setNumKey(entry.setCode, entry.collectorNumber), {
+							results: entry.results ?? [],
+							matchType: entry.matchType ?? 'set_number'
+						});
+					}
+				} catch (err) {
+					log(`Phase 3 pre-pass batch error: ${err}`);
+				}
+			}
+
 			// Re-run set/number parsing + reprint disambiguation for a single card
 			// using whatever is currently in card.ocrText. Used both after the first
 			// Tesseract pass and after the optional Google Vision retry.
@@ -977,21 +1017,31 @@
 					}
 					card.status = 'found';
 				} else if (card.setCode && card.collectorNumber && !card.nameText) {
-					// Name OCR completely failed — try set+number directly (old fallback)
-					// Only when nameText is empty, never override a name match
+					// Name OCR completely failed — try set+number directly (old fallback).
+					// Common case: the batch pre-pass populated setNumCache, so this
+					// short-circuits without a network hit. Vision-retry path falls
+					// through to a per-card fetch since it's rare and post-batch.
 					log(`Card ${cardIdx}: no name, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
-					try {
-						const res = await fetch('/scan', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ setCode: card.setCode, collectorNumber: card.collectorNumber })
-						});
-						const searchData = await res.json();
-						card.results = searchData.results;
-						card.matchType = searchData.matchType || 'set_number';
+					const cached = setNumCache.get(setNumKey(card.setCode, card.collectorNumber));
+					if (cached) {
+						card.results = cached.results;
+						card.matchType = cached.matchType;
 						card.status = card.results.length > 0 ? 'found' : 'not_found';
-						log(`Card ${cardIdx}: set+number fallback -> ${card.results.length} results, status=${card.status}`);
-					} catch { card.status = 'not_found'; }
+						log(`Card ${cardIdx}: set+number fallback (cached) -> ${card.results.length} results, status=${card.status}`);
+					} else {
+						try {
+							const res = await fetch('/scan', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ setCode: card.setCode, collectorNumber: card.collectorNumber })
+							});
+							const searchData = await res.json();
+							card.results = searchData.results;
+							card.matchType = searchData.matchType || 'set_number';
+							card.status = card.results.length > 0 ? 'found' : 'not_found';
+							log(`Card ${cardIdx}: set+number fallback -> ${card.results.length} results, status=${card.status}`);
+						} catch { card.status = 'not_found'; }
+					}
 				} else {
 					log(`Card ${cardIdx}: no match possible -> not_found`);
 					card.status = 'not_found';
@@ -1009,6 +1059,7 @@
 				detectedCards[i].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 				log(`Card ${i + 1} bottom OCR: "${detectedCards[i].ocrText}"`);
 			}
+			await prefetchSetNumberLookups(detectedCards);
 			for (let i = 0; i < detectedCards.length; i++) {
 				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
 				await applyBottomMatch(detectedCards[i], i + 1);

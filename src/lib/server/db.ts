@@ -17,6 +17,16 @@ sqlite.pragma('cache_size = -131072'); // 128MB page cache (default is ~8MB)
 
 export const db = drizzle(sqlite, { schema });
 
+function tableColumnNames(table: string): Set<string> {
+	const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+	return new Set(rows.map((r) => r.name));
+}
+
+function addColumnIfMissing(table: string, column: string, definition: string) {
+	if (tableColumnNames(table).has(column)) return;
+	sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 export function initDb() {
 	sqlite.exec(SCHEMA_SQL);
 
@@ -42,34 +52,16 @@ export function initDb() {
 		`);
 	} catch { /* Triggers already exist or SQLite version doesn't support IF NOT EXISTS on triggers */ }
 
-	// Migrations for existing databases
-	try {
-		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN purchase_price REAL');
-	} catch { /* Column already exists */ }
-
-	try {
-		sqlite.exec('ALTER TABLE collection_cards ADD COLUMN user_id TEXT REFERENCES users(id) ON DELETE CASCADE');
-	} catch { /* Column already exists */ }
-
-	try {
-		sqlite.exec('ALTER TABLE cards ADD COLUMN price_usd REAL');
-	} catch { /* Column already exists */ }
-
-	try {
-		sqlite.exec('ALTER TABLE cards ADD COLUMN price_usd_foil REAL');
-	} catch { /* Column already exists */ }
-
-	try {
-		sqlite.exec('ALTER TABLE price_history ADD COLUMN price_usd REAL');
-	} catch { /* Column already exists */ }
-
-	try {
-		sqlite.exec('ALTER TABLE price_history ADD COLUMN price_usd_foil REAL');
-	} catch { /* Column already exists */ }
-
-	try {
-		sqlite.exec('ALTER TABLE users ADD COLUMN google_vision_api_key TEXT');
-	} catch { /* Column already exists */ }
+	// Migrations for existing databases. Using PRAGMA table_info to
+	// decide whether to ALTER lets real ALTER errors (permissions, lock,
+	// corruption) propagate instead of being swallowed by a bare catch.
+	addColumnIfMissing('collection_cards', 'purchase_price', 'REAL');
+	addColumnIfMissing('collection_cards', 'user_id', 'TEXT REFERENCES users(id) ON DELETE CASCADE');
+	addColumnIfMissing('cards', 'price_usd', 'REAL');
+	addColumnIfMissing('cards', 'price_usd_foil', 'REAL');
+	addColumnIfMissing('price_history', 'price_usd', 'REAL');
+	addColumnIfMissing('price_history', 'price_usd_foil', 'REAL');
+	addColumnIfMissing('users', 'google_vision_api_key', 'TEXT');
 
 	// API usage tracking
 	sqlite.exec(`

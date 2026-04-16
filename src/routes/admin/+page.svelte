@@ -283,7 +283,12 @@
 
 	<!-- Users -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-		<h2 class="text-lg font-semibold mb-4">Users ({data.users.length})</h2>
+		<h2 class="text-lg font-semibold mb-4">
+			Users ({data.usersPagination.total})
+			<span class="text-xs text-[var(--color-text-muted)] font-normal ml-2">
+				Page {data.usersPagination.page} / {data.usersPagination.totalPages}
+			</span>
+		</h2>
 		<div class="space-y-3">
 			{#each data.users as user}
 				<div class="bg-[var(--color-bg)] rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-4">
@@ -319,6 +324,25 @@
 				</div>
 			{/each}
 		</div>
+		{#if data.usersPagination.totalPages > 1}
+			<div class="flex items-center justify-between mt-4 pt-4 border-t border-[var(--color-border)]">
+				<a
+					href={data.usersPagination.page > 1 ? `?usersPage=${data.usersPagination.page - 1}` : undefined}
+					class="text-sm px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] {data.usersPagination.page <= 1 ? 'opacity-40 pointer-events-none' : ''}"
+				>
+					← Previous
+				</a>
+				<span class="text-xs text-[var(--color-text-muted)]">
+					{(data.usersPagination.page - 1) * data.usersPagination.pageSize + 1}–{Math.min(data.usersPagination.page * data.usersPagination.pageSize, data.usersPagination.total)} of {data.usersPagination.total}
+				</span>
+				<a
+					href={data.usersPagination.page < data.usersPagination.totalPages ? `?usersPage=${data.usersPagination.page + 1}` : undefined}
+					class="text-sm px-3 py-1.5 rounded border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] {data.usersPagination.page >= data.usersPagination.totalPages ? 'opacity-40 pointer-events-none' : ''}"
+				>
+					Next →
+				</a>
+			</div>
+		{/if}
 	</div>
 
 	<!-- Top Sets -->
