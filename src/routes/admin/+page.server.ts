@@ -4,18 +4,22 @@ import { redirect } from '@sveltejs/kit';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 
-export async function load({ locals }) {
+const USERS_PAGE_SIZE = 50;
+
+export async function load({ locals, url }) {
 	if (!locals.user?.isAdmin) throw redirect(302, '/');
 
-	// Users
+	// Users — paginated to stay responsive with large user counts.
+	const page = Math.max(1, parseInt(url.searchParams.get('usersPage') || '1') || 1);
+	const offset = (page - 1) * USERS_PAGE_SIZE;
 	const users = sqlite.prepare(
 		`SELECT u.id, u.name, u.email, u.avatar_url, u.created_at,
 			(SELECT COUNT(*) FROM collection_cards WHERE user_id = u.id) as collection_count,
 			(SELECT COALESCE(SUM(quantity), 0) FROM collection_cards WHERE user_id = u.id) as total_cards,
 			(SELECT COUNT(*) FROM wishlist_cards WHERE user_id = u.id) as wishlist_count,
 			(SELECT COUNT(*) FROM sessions WHERE user_id = u.id AND expires_at > datetime('now')) as active_sessions
-		FROM users u ORDER BY u.created_at DESC`
-	).all() as Array<Record<string, unknown>>;
+		FROM users u ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
+	).all(USERS_PAGE_SIZE, offset) as Array<Record<string, unknown>>;
 
 	// Database stats
 	const cardCount = (sqlite.prepare('SELECT COUNT(*) as c FROM cards').get() as { c: number }).c;
@@ -109,6 +113,12 @@ export async function load({ locals }) {
 
 	return {
 		users,
+		usersPagination: {
+			page,
+			pageSize: USERS_PAGE_SIZE,
+			total: userCount,
+			totalPages: Math.max(1, Math.ceil(userCount / USERS_PAGE_SIZE))
+		},
 		visionUsage,
 		dbStats: {
 			cardCount,

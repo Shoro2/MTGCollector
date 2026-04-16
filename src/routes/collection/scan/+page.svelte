@@ -2,6 +2,9 @@
 	import { formatPrice } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import { onMount } from 'svelte';
+	import { loadOpenCV } from '$lib/scanner/opencv';
+	import { getTesseractPool, setPoolParameters, recognizeBatch } from '$lib/scanner/tesseract';
+	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 
 	// State
 	let imagePreview = $state('');
@@ -32,45 +35,7 @@
 	let manualResults = $state<Array<Record<string, unknown>>>([]);
 	let manualCardIndex = $state<number | null>(null);
 
-	let cvReady = $state(false);
-	let cvLoading = $state(false);
-
-	// Load OpenCV.js
-	async function loadOpenCV(): Promise<void> {
-		if ((window as any).cv?.Mat) { cvReady = true; return; }
-		if (cvLoading) return;
-		cvLoading = true;
-
-		return new Promise((resolve, reject) => {
-			const script = document.createElement('script');
-			script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
-			script.async = true;
-			script.onload = () => {
-				const checkCv = () => {
-					if ((window as any).cv?.Mat) {
-						cvReady = true;
-						resolve();
-					} else {
-						setTimeout(checkCv, 100);
-					}
-				};
-				checkCv();
-			};
-			script.onerror = () => reject(new Error('Failed to load OpenCV.js'));
-			document.head.appendChild(script);
-		});
-	}
-
-	let tesseractWorker: any = null;
-
-	async function getTesseractWorker() {
-		if (tesseractWorker) return tesseractWorker;
-		const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
-		const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
-		if (!createWorker) throw new Error('Failed to load Tesseract.js');
-		tesseractWorker = await createWorker('eng');
-		return tesseractWorker;
-	}
+	// OpenCV + Tesseract pool + geometry helpers live in src/lib/scanner/.
 
 	function onFileSelect(e: Event) {
 		const input = e.target as HTMLInputElement;
@@ -250,23 +215,30 @@
 			src.delete(); gray.delete(); blurred.delete(); edges.delete();
 			hierarchy.delete(); contours.delete(); kernel.delete();
 
-			// OCR each card
-			scanProgress = 'Running OCR...';
-			const worker = await getTesseractWorker();
-
+			// OCR every card in parallel across the Tesseract worker pool.
+			const pool = await getTesseractPool();
+			await setPoolParameters(pool, {
+				tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&',
+				tessedit_pageseg_mode: '6'
+			});
+			const ocrTexts = await recognizeBatch(
+				pool,
+				detectedCards.map((c) => c.bottomUrl),
+				(done, total) => { scanProgress = `Reading cards ${done}/${total}...`; }
+			);
 			for (let i = 0; i < detectedCards.length; i++) {
-				scanProgress = `Reading card ${i + 1} of ${detectedCards.length}...`;
+				detectedCards[i].ocrText = ocrTexts[i];
+			}
+			detectedCards = [...detectedCards];
+
+			// Match each card sequentially — DB lookups are cheap; we could batch
+			// later if needed.
+			for (let i = 0; i < detectedCards.length; i++) {
 				const card = detectedCards[i];
-
 				try {
-					const result = await worker.recognize(card.bottomUrl);
-					const text = result.data.text;
-					card.ocrText = text;
-
-					// Extract set code and collector number
+					const text = card.ocrText;
 					const numMatch = text.match(/\b0*(\d{1,4})\b/);
 					const setMatch = text.match(/\b([A-Z]{3})\b/);
-
 					if (numMatch) card.collectorNumber = numMatch[1];
 					if (setMatch) card.setCode = setMatch[1].toLowerCase();
 
@@ -286,8 +258,7 @@
 				} catch {
 					card.status = 'not_found';
 				}
-
-				detectedCards = [...detectedCards]; // trigger reactivity
+				detectedCards = [...detectedCards];
 			}
 
 			scanProgress = `Done! ${detectedCards.filter((c) => c.status === 'found').length} of ${detectedCards.length} identified.`;
@@ -296,27 +267,6 @@
 		} finally {
 			scanning = false;
 		}
-	}
-
-	function loadImage(file: File): Promise<HTMLImageElement> {
-		return new Promise((resolve, reject) => {
-			const img = new Image();
-			img.onload = () => resolve(img);
-			img.onerror = reject;
-			img.src = URL.createObjectURL(file);
-		});
-	}
-
-	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
-		// Sort by sum (x+y) to find TL and BR
-		const sorted = [...pts].sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
-		const tl = sorted[0];
-		const br = sorted[3];
-		// Sort by diff (x-y) to find TR and BL
-		const sorted2 = [...pts].sort((a, b) => (a[0] - a[1]) - (b[0] - b[1]));
-		const bl = sorted2[0];
-		const tr = sorted2[3];
-		return [tl, tr, br, bl];
 	}
 
 	async function addToCollection(cardId: string, cardName: string) {

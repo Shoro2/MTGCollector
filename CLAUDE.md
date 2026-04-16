@@ -174,7 +174,7 @@ src/
 4. Perspective transform to 488×680 flat image
 5. **Name OCR**: Tesseract.js on cropped name area → API search by name → FTS fallback
 6. **Bottom OCR**: Tesseract.js runs locally on every card's bottom area first. If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
-7. **Foil detection** (dual): HSV color analysis on art area (saturation, hue/brightness variance) + text-based detection from separator char (`*` = foil, `.` = non-foil)
+7. **Foil detection**: text-based detection from the separator char between set code and language on the bottom line (`*` = foil, `.` = non-foil), parsed from the Tesseract bottom OCR.
 8. API search with fallbacks: set+number → name → FTS
 9. Manual search fallback for unidentified cards
 10. Select all / import all buttons for bulk adding (auth required)
