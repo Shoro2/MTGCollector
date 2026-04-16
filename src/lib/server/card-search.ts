@@ -1,3 +1,4 @@
+import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
 
 const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity`;
@@ -5,15 +6,23 @@ const selectFields = `id, name, set_name, set_code, collector_number, image_uri,
 export type CardRow = Record<string, unknown>;
 export type SearchResult = { results: CardRow[]; matchType: 'exact' | 'like' | 'fts' | 'none' };
 
-const exactStmt = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? ORDER BY released_at DESC LIMIT 10`);
-const likeStmt = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`);
-const ftsStmt = sqlite.prepare(
+// Statements are lazily prepared so module load doesn't hit the DB before
+// initDb() has created the required tables. The build bundler imports this
+// module as part of discovering routes, which used to fail on a fresh DB.
+let _exact: Statement | undefined;
+let _like: Statement | undefined;
+let _fts: Statement | undefined;
+let _setNum: Statement | undefined;
+
+const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? ORDER BY released_at DESC LIMIT 10`));
+const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`));
+const ftsStmt = () => (_fts ??= sqlite.prepare(
 	`SELECT ${selectFields}
 	FROM cards
-	WHERE id IN (SELECT card_id FROM cards_fts WHERE cards_fts MATCH ?)
+	WHERE rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)
 	ORDER BY released_at DESC LIMIT 20`
-);
-const setNumStmt = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ?`);
+));
+const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ?`));
 
 /**
  * Resolve a card by its (probably OCR'd) name. Tries cheapest paths first:
@@ -24,7 +33,7 @@ export function searchByName(query: string): SearchResult {
 	const cleaned = query.trim();
 	if (cleaned.length < 2) return { results: [], matchType: 'none' };
 
-	const exact = exactStmt.all(cleaned) as CardRow[];
+	const exact = exactStmt().all(cleaned) as CardRow[];
 	if (exact.length > 0) return { results: exact, matchType: 'exact' };
 
 	const words = cleaned
@@ -34,12 +43,12 @@ export function searchByName(query: string): SearchResult {
 	if (words.length > 0) {
 		const ftsQuery = words.map((w) => `"${w}"*`).join(' ');
 		try {
-			const fts = ftsStmt.all(ftsQuery) as CardRow[];
+			const fts = ftsStmt().all(ftsQuery) as CardRow[];
 			if (fts.length > 0) return { results: fts, matchType: 'fts' };
 		} catch { /* FTS syntax error — fall through to LIKE */ }
 	}
 
-	const like = likeStmt.all(`%${cleaned}%`) as CardRow[];
+	const like = likeStmt().all(`%${cleaned}%`) as CardRow[];
 	if (like.length > 0) return { results: like, matchType: 'like' };
 
 	return { results: [], matchType: 'none' };
@@ -52,14 +61,14 @@ export function searchByName(query: string): SearchResult {
  */
 export function searchBySetNumber(setCode: string, collectorNumber: string): SearchResult {
 	const lc = setCode.toLowerCase();
-	let results = setNumStmt.all(lc, collectorNumber) as CardRow[];
+	let results = setNumStmt().all(lc, collectorNumber) as CardRow[];
 	if (results.length === 0) {
 		const stripped = collectorNumber.replace(/^0+/, '');
-		if (stripped !== collectorNumber) results = setNumStmt.all(lc, stripped) as CardRow[];
+		if (stripped !== collectorNumber) results = setNumStmt().all(lc, stripped) as CardRow[];
 	}
 	if (results.length === 0) {
 		const padded = collectorNumber.padStart(3, '0');
-		if (padded !== collectorNumber) results = setNumStmt.all(lc, padded) as CardRow[];
+		if (padded !== collectorNumber) results = setNumStmt().all(lc, padded) as CardRow[];
 	}
 	return { results, matchType: results.length > 0 ? 'exact' : 'none' };
 }

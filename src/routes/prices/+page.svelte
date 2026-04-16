@@ -2,7 +2,6 @@
 	import type { PageData } from './$types';
 	import { formatPrice, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import { onMount } from 'svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
 
@@ -10,6 +9,7 @@
 
 	// Data loaded client-side
 	let loading = $state(true);
+	let loadError = $state<string | null>(null);
 	let topCards = $state<Array<Record<string, unknown>>>([]);
 	let stats = $state({ totalValue: 0, totalPurchaseValue: 0, uniqueCards: 0, totalCards: 0 });
 	let missingPriceCount = $state(0);
@@ -28,15 +28,21 @@
 
 	async function loadPricesData() {
 		loading = true;
+		loadError = null;
 		try {
 			const res = await fetch('/api/prices/data');
-			if (!res.ok) return;
+			if (!res.ok) {
+				loadError = `Failed to load price data (HTTP ${res.status}).`;
+				return;
+			}
 			const result = await res.json();
 			topCards = result.topCards;
 			stats = result.stats;
 			missingPriceCount = result.missingPriceCount;
 			profitHistory = result.profitHistory;
 			usdToEur = result.usdToEur;
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : 'Failed to load price data.';
 		} finally {
 			loading = false;
 		}
@@ -217,7 +223,7 @@
 		}
 	}
 
-	onMount(() => {
+	$effect(() => {
 		loadPricesData().then(() => {
 			// Build chart after data is loaded (need to wait a tick for canvas
 			// to render). Chart.js itself is loaded lazily inside buildProfitChart.
@@ -243,6 +249,13 @@
 			Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
 		</span>
 	</div>
+
+	{#if loadError}
+		<div class="bg-red-500/10 border border-red-500/40 text-red-300 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
+			<span>{loadError}</span>
+			<button class="underline" onclick={() => loadPricesData()}>Retry</button>
+		</div>
+	{/if}
 
 	{#if loading}
 		<!-- Loading skeleton -->

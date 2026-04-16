@@ -1,12 +1,20 @@
 import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
 
+const CARD_COLUMNS = `id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
+	colors, color_identity, keywords, set_code, set_name, collector_number, rarity,
+	power, toughness, loyalty, image_uri, local_image_path, layout, legalities,
+	released_at, scryfall_uri, price_eur, price_eur_foil, price_usd, price_usd_foil`;
+
+const CARD_FACE_COLUMNS = `id, card_id, face_index, name, mana_cost, type_line,
+	oracle_text, image_uri, power, toughness`;
+
 export async function load({ params, locals }) {
-	const card = sqlite.prepare('SELECT * FROM cards WHERE id = ?').get(params.id) as Record<string, unknown> | undefined;
+	const card = sqlite.prepare(`SELECT ${CARD_COLUMNS} FROM cards WHERE id = ?`).get(params.id) as Record<string, unknown> | undefined;
 	if (!card) throw error(404, 'Card not found');
 
 	const faces = sqlite
-		.prepare('SELECT * FROM card_faces WHERE card_id = ? ORDER BY face_index')
+		.prepare(`SELECT ${CARD_FACE_COLUMNS} FROM card_faces WHERE card_id = ? ORDER BY face_index`)
 		.all(params.id) as Array<Record<string, unknown>>;
 
 	// Get reprints (same oracle_id, different set)

@@ -1,9 +1,10 @@
 import { sqlite } from './db.js';
 import { priceDataCache, setsCache, tagsCache } from './cache.js';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { parseScryfallBulkStream } from './bulk-stream.js';
 
 // Use globalThis.fetch to avoid SvelteKit's SSR fetch warning
 const nativeFetch = globalThis.fetch;
@@ -24,7 +25,6 @@ interface ScryfallPriceCard {
 	};
 }
 
-/** Get the last known Scryfall bulk data updated_at timestamp */
 function getLastBulkUpdate(): string | null {
 	try {
 		if (existsSync(lastBulkUpdatePath)) {
@@ -35,7 +35,6 @@ function getLastBulkUpdate(): string | null {
 }
 
 
-/** Get status info about the price updater */
 export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress: boolean; lastBulkUpdate: string | null } {
 	const lastSnapshot = sqlite
 		.prepare('SELECT recorded_at FROM price_history ORDER BY recorded_at DESC LIMIT 1')
@@ -48,7 +47,6 @@ export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress:
 	};
 }
 
-/** Run a background price update - downloads bulk data and updates prices */
 export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: number }> {
 	if (updateInProgress) {
 		throw new Error('Price update already in progress');
@@ -58,7 +56,6 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 	console.log('[price-updater] Starting price update...');
 
 	try {
-		// 1. Get bulk data download URL
 		const bulkResponse = await nativeFetch('https://api.scryfall.com/bulk-data');
 		if (!bulkResponse.ok) throw new Error(`Bulk data API failed: ${bulkResponse.status}`);
 
@@ -78,64 +75,91 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		await pipeline(downloadResponse.body, fileStream);
 		console.log('[price-updater] Download complete, parsing prices...');
 
-		// 2. Parse and update prices
-		const fileContent = await readFile(priceDataPath, 'utf-8');
-		const allCards: ScryfallPriceCard[] = JSON.parse(fileContent);
-
+		// Stream-parse the bulk file so memory doesn't spike to ~1.2 GB on
+		// the 600 MB payload. We apply price updates in batched transactions.
 		const updatePrice = sqlite.prepare(
 			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ? WHERE id = ?'
 		);
 
 		let updated = 0;
+		let pendingBatch: ScryfallPriceCard[] = [];
 		const batchSize = 5000;
 
-		for (let i = 0; i < allCards.length; i += batchSize) {
-			const batch = allCards.slice(i, i + batchSize);
+		const applyBatch = () => {
+			const batch = pendingBatch;
+			pendingBatch = [];
 			const transaction = sqlite.transaction(() => {
 				for (const card of batch) {
 					const priceEur = card.prices?.eur ? parseFloat(card.prices.eur) : null;
 					const priceEurFoil = card.prices?.eur_foil ? parseFloat(card.prices.eur_foil) : null;
 					const priceUsd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
 					const priceUsdFoil = card.prices?.usd_foil ? parseFloat(card.prices.usd_foil) : null;
-
 					const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, card.id);
 					if (result.changes > 0) updated++;
 				}
 			});
 			transaction();
-			// Yield to event loop between batches so HTTP requests can be processed
-			await new Promise((resolve) => setImmediate(resolve));
+		};
+
+		for await (const card of parseScryfallBulkStream<ScryfallPriceCard>(priceDataPath)) {
+			pendingBatch.push(card);
+			if (pendingBatch.length >= batchSize) {
+				applyBatch();
+				await new Promise((resolve) => setImmediate(resolve));
+			}
 		}
+		if (pendingBatch.length > 0) applyBatch();
 
 		console.log(`[price-updater] Updated prices for ${updated} cards`);
 
-		// 3. Snapshot prices for ALL cards
+		// Change-aware daily snapshot. Only inserts a new price_history row
+		// when the card's current price differs from its most recent snapshot
+		// (or there's no snapshot yet). The UNIQUE(card_id, DATE(recorded_at))
+		// upsert guarantees at most one row per card per day even if this job
+		// runs multiple times (e.g. after a restart or manual trigger).
 		const now = new Date().toISOString();
 		const snapshotResult = sqlite.prepare(`
+			WITH last_snap AS (
+				SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil
+				FROM (
+					SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil,
+						ROW_NUMBER() OVER (PARTITION BY card_id ORDER BY recorded_at DESC, id DESC) AS rn
+					FROM price_history
+				) WHERE rn = 1
+			)
 			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
-			SELECT id, price_eur, price_eur_foil, price_usd, price_usd_foil, ?
-			FROM cards
-			WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL OR price_usd IS NOT NULL OR price_usd_foil IS NOT NULL
+			SELECT c.id, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, ?
+			FROM cards c
+			LEFT JOIN last_snap l ON l.card_id = c.id
+			WHERE (c.price_eur IS NOT NULL OR c.price_eur_foil IS NOT NULL OR c.price_usd IS NOT NULL OR c.price_usd_foil IS NOT NULL)
+			  AND (
+			    l.card_id IS NULL
+			    OR c.price_eur IS NOT l.price_eur
+			    OR c.price_eur_foil IS NOT l.price_eur_foil
+			    OR c.price_usd IS NOT l.price_usd
+			    OR c.price_usd_foil IS NOT l.price_usd_foil
+			  )
+			ON CONFLICT(card_id, DATE(recorded_at)) DO UPDATE SET
+				price_eur = excluded.price_eur,
+				price_eur_foil = excluded.price_eur_foil,
+				price_usd = excluded.price_usd,
+				price_usd_foil = excluded.price_usd_foil,
+				recorded_at = excluded.recorded_at
 		`).run(now);
 
 		const snapshotted = snapshotResult.changes;
-		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards`);
+		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards (change-only)`);
 
-		// 4. Save the bulk data version we just processed
 		writeFileSync(lastBulkUpdatePath, defaultCards.updated_at, 'utf-8');
 
-		// 5. Cleanup temp file
 		if (existsSync(priceDataPath)) {
 			await unlink(priceDataPath);
 		}
 
-		// Invalidate cached price data for all users, plus sets/tags lookups
-		// which may have grown with freshly imported cards.
 		priceDataCache.invalidateAll();
 		setsCache.invalidate();
 		tagsCache.invalidate();
 
-		// Refresh query planner stats after bulk insert so new indexes get used.
 		try {
 			sqlite.pragma('optimize');
 		} catch (err) {
@@ -150,9 +174,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 }
 
 
-/** Run price update (non-blocking) */
 export function checkAndUpdatePrices(): void {
-	// Check if we have any cards in the DB at all
 	const cardCount = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };
 	if (cardCount.count === 0) {
 		console.log('[price-updater] No cards in database, skipping price update');

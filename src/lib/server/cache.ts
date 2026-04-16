@@ -69,7 +69,7 @@ export function createUserCache<T>(fetcher: (userId: string) => Promise<T>, ttlM
 }
 
 export const tagsCache = createCache(
-	() => sqlite.prepare('SELECT * FROM tags ORDER BY name').all() as Array<Record<string, unknown>>,
+	() => sqlite.prepare('SELECT id, name, color FROM tags ORDER BY name').all() as Array<Record<string, unknown>>,
 	30 * 1000 // 30 seconds
 );
 

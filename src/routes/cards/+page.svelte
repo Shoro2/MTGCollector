@@ -311,6 +311,8 @@
 							<img
 								src={imgSrc}
 								alt="Magic: The Gathering - {card.name}"
+								width="488"
+								height="680"
 								class="w-full aspect-[488/680] object-cover"
 								loading={i < 10 ? "eager" : "lazy"}
 								fetchpriority={i < 2 ? "high" : "auto"}

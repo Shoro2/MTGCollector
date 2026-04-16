@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import { getGoogleClient, findOrCreateUser, createSession } from '$lib/server/auth';
+import { getGoogleClient, findOrCreateUser, createSession, deleteSession } from '$lib/server/auth';
+import { dev } from '$app/environment';
 
 export async function GET({ url, cookies }) {
 	const code = url.searchParams.get('code');
@@ -17,7 +18,6 @@ export async function GET({ url, cookies }) {
 		const tokens = await google.validateAuthorizationCode(code, codeVerifier);
 		const accessToken = tokens.accessToken();
 
-		// Fetch user info from Google
 		const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
 			headers: { Authorization: `Bearer ${accessToken}` }
 		});
@@ -30,16 +30,25 @@ export async function GET({ url, cookies }) {
 			profile.picture || null
 		);
 
+		// Session rotation: if the browser already held a session, invalidate
+		// it before issuing a new one. Prevents session-fixation attacks.
+		const previousSession = cookies.get('session');
+		if (previousSession) {
+			try {
+				deleteSession(previousSession);
+			} catch { /* ignore */ }
+		}
+
 		const sessionId = createSession(userId);
 
 		cookies.set('session', sessionId, {
 			path: '/',
 			httpOnly: true,
 			maxAge: 30 * 24 * 60 * 60, // 30 days
-			sameSite: 'lax'
+			sameSite: 'lax',
+			secure: !dev
 		});
 
-		// Clean up OAuth cookies
 		cookies.delete('google_oauth_state', { path: '/' });
 		cookies.delete('google_code_verifier', { path: '/' });
 	} catch (err) {

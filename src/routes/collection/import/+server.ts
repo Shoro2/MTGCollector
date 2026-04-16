@@ -79,12 +79,32 @@ export async function POST({ request, locals }) {
 	}
 	const userId = locals.user.id;
 
+	const MAX_CSV_BYTES = 10 * 1024 * 1024;
+
 	const formData = await request.formData();
-	const file = formData.get('file') as File;
+	const file = formData.get('file');
 	const mode = formData.get('mode') as string; // 'sync' or 'append'
 
-	if (!file) {
+	if (!(file instanceof File)) {
 		return json({ success: false, message: 'No file provided' }, { status: 400 });
+	}
+	if (file.size > MAX_CSV_BYTES) {
+		return json({ success: false, message: 'CSV too large (>10 MB)' }, { status: 413 });
+	}
+	const mime = (file.type || '').toLowerCase();
+	const name = (file.name || '').toLowerCase();
+	const looksLikeCsv =
+		mime === 'text/csv' ||
+		mime === 'application/csv' ||
+		mime === 'application/vnd.ms-excel' ||
+		mime === '' ||
+		mime === 'text/plain' ||
+		name.endsWith('.csv');
+	if (!looksLikeCsv) {
+		return json({ success: false, message: 'Only CSV files are accepted' }, { status: 400 });
+	}
+	if (mode !== 'sync' && mode !== 'append') {
+		return json({ success: false, message: 'Invalid mode' }, { status: 400 });
 	}
 
 	const text = await file.text();
