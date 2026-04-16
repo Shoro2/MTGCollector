@@ -1,5 +1,6 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
+import { decryptSecret, encryptSecret } from '$lib/server/crypto';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -26,7 +27,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 		'SELECT google_vision_api_key FROM users WHERE id = ?'
 	).get(locals.user.id) as { google_vision_api_key: string | null } | undefined;
 
-	const visionKey = visionRow?.google_vision_api_key ?? null;
+	const storedKey = visionRow?.google_vision_api_key ?? null;
+	const visionKey = storedKey ? decryptSecret(storedKey) : null;
 
 	// Per-user Google Vision usage statistics. Google Cloud's free tier currently
 	// allows 1.000 Vision API requests per month per project; since each user uses
@@ -78,7 +80,7 @@ export const actions: Actions = {
 		}
 
 		sqlite.prepare('UPDATE users SET google_vision_api_key = ? WHERE id = ?')
-			.run(apiKey, locals.user.id);
+			.run(encryptSecret(apiKey), locals.user.id);
 
 		return { setVisionKey: { success: true } };
 	},

@@ -3,17 +3,8 @@
 	import { formatManaCost, formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import {
-		Chart,
-		LineController,
-		LineElement,
-		PointElement,
-		LinearScale,
-		CategoryScale,
-		Filler,
-		Legend,
-		Tooltip
-	} from 'chart.js';
+	import type { Chart } from 'chart.js';
+	import { loadChart } from '$lib/chart-loader';
 
 	let { data }: { data: PageData } = $props();
 
@@ -87,10 +78,11 @@
 	let priceChart: Chart | null = null;
 	let chartType = $state<'normal' | 'foil'>('normal');
 
-	function buildPriceChart() {
+	async function buildPriceChart() {
 		priceChart?.destroy();
 		priceChart = null;
 		if (!priceChartCanvas || data.priceHistory.length === 0) return;
+		const ChartCtor = await loadChart();
 
 		const labels = data.priceHistory.map((h) => priceDate(h.recorded_at as string));
 		const eurKey = chartType === 'foil' ? 'price_eur_foil' : 'price_eur';
@@ -121,7 +113,7 @@
 			});
 		}
 
-		priceChart = new Chart(priceChartCanvas, {
+		priceChart = new ChartCtor(priceChartCanvas, {
 			type: 'line',
 			data: { labels, datasets },
 			options: {
@@ -152,7 +144,6 @@
 	});
 
 	onMount(() => {
-		Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Legend, Tooltip);
 		buildPriceChart();
 		return () => priceChart?.destroy();
 	});

@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
+import { decryptSecret, encryptSecret, isEncrypted } from '$lib/server/crypto';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
@@ -10,9 +11,21 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const row = sqlite.prepare(
 		'SELECT google_vision_api_key FROM users WHERE id = ?'
 	).get(locals.user.id) as { google_vision_api_key: string | null } | undefined;
-	const apiKey = row?.google_vision_api_key;
-	if (!apiKey) {
+	const stored = row?.google_vision_api_key;
+	if (!stored) {
 		throw error(403, 'No Google Vision API key configured. Add one in /settings.');
+	}
+	const apiKey = decryptSecret(stored);
+	if (!apiKey) {
+		throw error(500, 'Stored Google Vision API key is unreadable. Re-enter it in /settings.');
+	}
+	// Opportunistically re-encrypt legacy plaintext keys so the next request
+	// reads an encrypted value.
+	if (!isEncrypted(stored)) {
+		try {
+			sqlite.prepare('UPDATE users SET google_vision_api_key = ? WHERE id = ?')
+				.run(encryptSecret(apiKey), locals.user.id);
+		} catch { /* ignore, plaintext still works */ }
 	}
 
 	const { images } = await request.json() as { images: string[] };

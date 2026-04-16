@@ -5,7 +5,8 @@
 	import { onMount } from 'svelte';
 	import { formatPrice, conditionLabel, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import { Chart, registerables } from 'chart.js';
+	import type { Chart } from 'chart.js';
+	import { loadChart } from '$lib/chart-loader';
 
 	let { data }: { data: PageData } = $props();
 
@@ -20,7 +21,10 @@
 		modalLoading = true;
 		modalOpen = true;
 		modalCard = null;
-		const res = await fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`);
+		const [res, ChartCtor] = await Promise.all([
+			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`),
+			loadChart()
+		]);
 		const result = await res.json();
 		modalLoading = false;
 		if (!result.card) return;
@@ -28,7 +32,7 @@
 		setTimeout(() => {
 			if (!modalChartCanvas || !result.history.length) return;
 			modalChart?.destroy();
-			modalChart = new Chart(modalChartCanvas, {
+			modalChart = new ChartCtor(modalChartCanvas, {
 				type: 'line',
 				data: {
 					labels: result.history.map((h: Record<string, unknown>) => priceDate(h.recorded_at as string)),
@@ -80,9 +84,9 @@
 			: null
 	);
 
-	// Auto-open edit modal from URL param (e.g. from prices page)
+	// Auto-open edit modal from URL param (e.g. from prices page). Chart.js
+	// registration is deferred until the user opens a chart modal.
 	onMount(() => {
-		Chart.register(...registerables);
 		if (data.editCard) {
 			openEdit(data.editCard);
 		}
