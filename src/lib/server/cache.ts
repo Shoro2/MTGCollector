@@ -18,6 +18,10 @@ export function createCache<T>(fetcher: () => T, ttlMs: number) {
 
 export function createUserCache<T>(fetcher: (userId: string) => Promise<T>, ttlMs: number) {
 	const entries = new Map<string, { value: T; at: number }>();
+	// Tracks in-flight fetches so concurrent get(userId) calls that miss the
+	// cache share a single fetcher run instead of stampeding — important for
+	// the priceDataCache where the fetcher issues three heavy SQL aggregations.
+	const inflight = new Map<string, Promise<T>>();
 	let accessesSinceLastSweep = 0;
 	// Every 64 accesses, evict entries older than 2×TTL to keep the map bounded
 	// even if users log out and never return.
@@ -40,9 +44,20 @@ export function createUserCache<T>(fetcher: (userId: string) => Promise<T>, ttlM
 			if (entry && Date.now() - entry.at <= ttlMs) {
 				return entry.value;
 			}
-			const value = await fetcher(userId);
-			entries.set(userId, { value, at: Date.now() });
-			return value;
+			const existing = inflight.get(userId);
+			if (existing) return existing;
+
+			const promise = (async () => {
+				try {
+					const value = await fetcher(userId);
+					entries.set(userId, { value, at: Date.now() });
+					return value;
+				} finally {
+					inflight.delete(userId);
+				}
+			})();
+			inflight.set(userId, promise);
+			return promise;
 		},
 		invalidate(userId: string) {
 			entries.delete(userId);

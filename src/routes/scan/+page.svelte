@@ -625,6 +625,18 @@
 				cardContours = cardContours.slice(0, 1);
 			}
 
+			// Dispose cloned `corners` Mats for candidates that didn't survive
+			// containment / size / single-mode filters. Without this, every
+			// rejected candidate leaks a 4-point Mat into the WASM heap — small
+			// individually, but additive across repeat scans. Grid-inferred
+			// synthetic candidates live only in cardContours (not allCandidates),
+			// so they're naturally retained here.
+			const keepCorners = new Set(cardContours.map((c) => c.corners));
+			for (const cand of allCandidates) {
+				if (!keepCorners.has(cand.corners)) cand.corners.delete();
+			}
+			allCandidates = [];
+
 			if (cardContours.length === 0) {
 				log('No cards detected');
 				scanProgress = 'No cards detected. Try a clearer photo.';
