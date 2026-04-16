@@ -71,7 +71,10 @@
 
 	function log(msg: string) {
 		const elapsed = ((performance.now() - scanStartTime) / 1000).toFixed(2);
-		debugLog = [...debugLog, `[+${elapsed}s] ${msg}`];
+		// Push instead of spread — spread allocates a new array per call
+		// and we log ~70+ times per scan.
+		debugLog.push(`[+${elapsed}s] ${msg}`);
+		debugLog = debugLog;
 	}
 
 	async function copyDebugLog() {
@@ -106,21 +109,62 @@
 		});
 	}
 
-	let tesseractWorker: any = null;
+	let tesseractPool: any[] = [];
+	let tesseractCreatePromise: Promise<any[]> | null = null;
 
-	async function getTesseractWorker() {
-		if (tesseractWorker) return tesseractWorker;
-		const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
-		const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
-		if (!createWorker) throw new Error('Failed to load Tesseract.js');
-		tesseractWorker = await createWorker('eng');
-		// Restrict character set to what appears on MTG cards
-		// Prevents misreads like 1→), •→«, etc.
-		await tesseractWorker.setParameters({
-			tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&',
-			tessedit_pageseg_mode: '6' // Assume single block of text
-		});
-		return tesseractWorker;
+	async function getTesseractPool(): Promise<any[]> {
+		if (tesseractPool.length > 0) return tesseractPool;
+		if (tesseractCreatePromise) return tesseractCreatePromise;
+
+		tesseractCreatePromise = (async () => {
+			const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
+			const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
+			if (!createWorker) throw new Error('Failed to load Tesseract.js');
+
+			// Cap at 4 — more than that rarely helps and eats memory on mobile.
+			const hw = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
+			const poolSize = Math.min(4, Math.max(1, hw >= 4 ? 4 : hw));
+			tesseractPool = await Promise.all(
+				Array.from({ length: poolSize }, () => createWorker('eng'))
+			);
+			return tesseractPool;
+		})();
+		return tesseractCreatePromise;
+	}
+
+	async function setPoolParameters(pool: any[], params: Record<string, unknown>) {
+		await Promise.all(pool.map((w) => w.setParameters(params)));
+	}
+
+	// Recognize a batch of image URLs across the worker pool in parallel.
+	// onProgress is called after each image completes with (doneCount, total).
+	async function recognizeBatch(
+		pool: any[],
+		urls: string[],
+		onProgress?: (done: number, total: number) => void
+	): Promise<string[]> {
+		const total = urls.length;
+		const results: string[] = new Array(total).fill('');
+		let done = 0;
+		let next = 0;
+
+		async function runWorker(worker: any) {
+			while (true) {
+				const i = next++;
+				if (i >= total) return;
+				try {
+					const r = await worker.recognize(urls[i]);
+					results[i] = (r.data.text ?? '').toString();
+				} catch {
+					results[i] = '';
+				}
+				done++;
+				onProgress?.(done, total);
+			}
+		}
+
+		await Promise.all(pool.map(runWorker));
+		return results;
 	}
 
 	function onFileSelect(e: Event) {
@@ -259,114 +303,120 @@
 			const maxArea = imgArea * 0.5;
 			log(`Area thresholds: min=${minArea.toFixed(0)} (0.8%), max=${maxArea.toFixed(0)} (50%)`);
 
+			// Pre-compute blur(gray, 5x5) once and share across strategies 1/2/4/6
+			// (all of them used identical parameters). Also cache the two structuring
+			// elements reused throughout. cv.threshold / adaptiveThreshold / Canny
+			// read their source without modifying it, so one blur5 is safe to share.
+			const blur5 = new cv.Mat();
+			cv.GaussianBlur(gray, blur5, new cv.Size(5, 5), 0);
+			const sepKernel5 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+			const dilateKernel3 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+
 			for (const params of cannyParams) {
-				const blurMat = new cv.Mat();
 				const edgeMat = new cv.Mat();
-				cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
-				cv.Canny(blurMat, edgeMat, params.low, params.high);
-
-				const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-				cv.dilate(edgeMat, edgeMat, kernel);
-
-				findCardContours(edgeMat, minArea, maxArea);
-				log(`Strategy 1 Canny(blur=${params.blur}, ${params.low}-${params.high}): ${allCandidates.length} total candidates`);
-
-				blurMat.delete(); edgeMat.delete(); kernel.delete();
+				try {
+					if (params.blur === 5) {
+						cv.Canny(blur5, edgeMat, params.low, params.high);
+					} else {
+						const localBlur = new cv.Mat();
+						try {
+							cv.GaussianBlur(gray, localBlur, new cv.Size(params.blur, params.blur), 0);
+							cv.Canny(localBlur, edgeMat, params.low, params.high);
+						} finally {
+							localBlur.delete();
+						}
+					}
+					cv.dilate(edgeMat, edgeMat, dilateKernel3);
+					findCardContours(edgeMat, minArea, maxArea);
+					log(`Strategy 1 Canny(blur=${params.blur}, ${params.low}-${params.high}): ${allCandidates.length} total candidates`);
+				} finally {
+					edgeMat.delete();
+				}
 			}
 
 			// === Strategy 2: Threshold segmentation for tightly packed cards ===
-			const blurForThresh = new cv.Mat();
-			cv.GaussianBlur(gray, blurForThresh, new cv.Size(5, 5), 0);
 			const threshMat = new cv.Mat();
-			cv.adaptiveThreshold(blurForThresh, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, -5);
-
-			const sepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			cv.erode(threshMat, threshMat, sepKernel);
-			cv.dilate(threshMat, threshMat, sepKernel);
-
-			findCardContours(threshMat, minArea, maxArea);
-			log(`Strategy 2 AdaptiveThreshold(blockSize=51, delta=-5): ${allCandidates.length} total candidates`);
-
-			blurForThresh.delete(); threshMat.delete(); sepKernel.delete();
+			try {
+				cv.adaptiveThreshold(blur5, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, -5);
+				cv.erode(threshMat, threshMat, sepKernel5);
+				cv.dilate(threshMat, threshMat, sepKernel5);
+				findCardContours(threshMat, minArea, maxArea);
+				log(`Strategy 2 AdaptiveThreshold(blockSize=51, delta=-5): ${allCandidates.length} total candidates`);
+			} finally {
+				threshMat.delete();
+			}
 
 			// === Strategy 3: Histogram equalization + Canny for low-contrast cards ===
 			const eqHist = new cv.Mat();
-			cv.equalizeHist(gray, eqHist);
 			const eqBlur = new cv.Mat();
-			cv.GaussianBlur(eqHist, eqBlur, new cv.Size(5, 5), 0);
 			const eqEdge = new cv.Mat();
-			cv.Canny(eqBlur, eqEdge, 40, 120);
-			const eqKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-			cv.dilate(eqEdge, eqEdge, eqKernel);
-
-			findCardContours(eqEdge, minArea, maxArea);
-			log(`Strategy 3 HistEq+Canny(40-120): ${allCandidates.length} total candidates`);
-
-			eqHist.delete(); eqBlur.delete(); eqEdge.delete(); eqKernel.delete();
+			try {
+				cv.equalizeHist(gray, eqHist);
+				cv.GaussianBlur(eqHist, eqBlur, new cv.Size(5, 5), 0);
+				cv.Canny(eqBlur, eqEdge, 40, 120);
+				cv.dilate(eqEdge, eqEdge, dilateKernel3);
+				findCardContours(eqEdge, minArea, maxArea);
+				log(`Strategy 3 HistEq+Canny(40-120): ${allCandidates.length} total candidates`);
+			} finally {
+				eqHist.delete(); eqBlur.delete(); eqEdge.delete();
+			}
 
 			// === Strategy 4: Otsu global threshold ===
-			const otsuBlur = new cv.Mat();
-			cv.GaussianBlur(gray, otsuBlur, new cv.Size(5, 5), 0);
 			const otsuMat = new cv.Mat();
-			cv.threshold(otsuBlur, otsuMat, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
-			const otsuSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			cv.erode(otsuMat, otsuMat, otsuSepKernel);
-			cv.dilate(otsuMat, otsuMat, otsuSepKernel);
-
-			findCardContours(otsuMat, minArea, maxArea);
-			log(`Strategy 4 Otsu: ${allCandidates.length} total candidates`);
-
-			otsuBlur.delete(); otsuMat.delete(); otsuSepKernel.delete();
+			try {
+				cv.threshold(blur5, otsuMat, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+				cv.erode(otsuMat, otsuMat, sepKernel5);
+				cv.dilate(otsuMat, otsuMat, sepKernel5);
+				findCardContours(otsuMat, minArea, maxArea);
+				log(`Strategy 4 Otsu: ${allCandidates.length} total candidates`);
+			} finally {
+				otsuMat.delete();
+			}
 
 			// === Strategy 5: Color saturation mask ===
 			// Cards have colored frames/art that are more saturated than a plain background.
 			// This helps detect light-bordered cards that blend with the background in grayscale.
-			const hsv = new cv.Mat();
-			cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+			// try/finally so a throw mid-pipeline doesn't leak Mats into the WASM heap.
+			const rgb = new cv.Mat();
 			const hsvMat = new cv.Mat();
-			cv.cvtColor(hsv, hsvMat, cv.COLOR_RGB2HSV);
-			hsv.delete();
-
 			const channels = new cv.MatVector();
-			cv.split(hsvMat, channels);
-			const saturation = channels.get(1);
-			hsvMat.delete();
-
-			// Threshold on saturation — cards with colored borders will have higher saturation
 			const satThresh = new cv.Mat();
-			cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
-
-			// Morphological close to fill gaps within cards, then erode to separate
 			const satCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
-			cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
 			const satSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			cv.erode(satThresh, satThresh, satSepKernel);
-			cv.dilate(satThresh, satThresh, satSepKernel);
-
-			findCardContours(satThresh, minArea, maxArea);
-			log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
-
-			saturation.delete(); satThresh.delete();
-			satCloseKernel.delete(); satSepKernel.delete();
-			channels.delete();
+			try {
+				cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+				cv.cvtColor(rgb, hsvMat, cv.COLOR_RGB2HSV);
+				cv.split(hsvMat, channels);
+				const saturation = channels.get(1);
+				cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
+				cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
+				cv.erode(satThresh, satThresh, satSepKernel);
+				cv.dilate(satThresh, satThresh, satSepKernel);
+				findCardContours(satThresh, minArea, maxArea);
+				log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
+				saturation.delete();
+			} finally {
+				satThresh.delete();
+				satCloseKernel.delete();
+				satSepKernel.delete();
+				channels.delete();
+				hsvMat.delete();
+				rgb.delete();
+			}
 
 			// === Strategy 6: Inverted Otsu for light cards on light backgrounds ===
 			// Some cards (lands with light borders) blend with white backgrounds.
-			// Inverted threshold can catch them.
-			const invOtsuBlur = new cv.Mat();
-			cv.GaussianBlur(gray, invOtsuBlur, new cv.Size(5, 5), 0);
+			// Inverted threshold can catch them. Reuses the shared blur5 + sepKernel5.
 			const invOtsuMat = new cv.Mat();
-			cv.threshold(invOtsuBlur, invOtsuMat, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-
-			const invSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			cv.erode(invOtsuMat, invOtsuMat, invSepKernel);
-			cv.dilate(invOtsuMat, invOtsuMat, invSepKernel);
-
-			findCardContours(invOtsuMat, minArea, maxArea);
-			log(`Strategy 6 InvertedOtsu: ${allCandidates.length} total candidates`);
-
-			invOtsuBlur.delete(); invOtsuMat.delete(); invSepKernel.delete();
+			try {
+				cv.threshold(blur5, invOtsuMat, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+				cv.erode(invOtsuMat, invOtsuMat, sepKernel5);
+				cv.dilate(invOtsuMat, invOtsuMat, sepKernel5);
+				findCardContours(invOtsuMat, minArea, maxArea);
+				log(`Strategy 6 InvertedOtsu: ${allCandidates.length} total candidates`);
+			} finally {
+				invOtsuMat.delete();
+			}
 
 			// Filter out contours contained within larger ones
 			allCandidates.sort((a, b) => b.area - a.area);
@@ -402,34 +452,42 @@
 				const relaxedMinAspect = 0.4;
 				const relaxedMaxAspect = 0.95;
 
-				// Re-run Canny with relaxed params
+				// Re-run Canny with relaxed params, stopping early if we've
+				// already surfaced enough candidates for the expected card count.
+				// Reuses the shared blur5 for params.blur === 5.
 				for (const params of [{ blur: 5, low: 20, high: 80 }, { blur: 7, low: 30, high: 100 }]) {
-					const blurMat = new cv.Mat();
 					const edgeMat = new cv.Mat();
-					cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
-					cv.Canny(blurMat, edgeMat, params.low, params.high);
+					try {
+						if (params.blur === 5) {
+							cv.Canny(blur5, edgeMat, params.low, params.high);
+						} else {
+							const localBlur = new cv.Mat();
+							try {
+								cv.GaussianBlur(gray, localBlur, new cv.Size(params.blur, params.blur), 0);
+								cv.Canny(localBlur, edgeMat, params.low, params.high);
+							} finally {
+								localBlur.delete();
+							}
+						}
+						cv.dilate(edgeMat, edgeMat, sepKernel5);
+						findCardContours(edgeMat, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+					} finally {
+						edgeMat.delete();
+					}
 
-					const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-					cv.dilate(edgeMat, edgeMat, kernel);
-
-					findCardContours(edgeMat, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
-
-					blurMat.delete(); edgeMat.delete(); kernel.delete();
+					if (allCandidates.length >= expectedCardCount * 1.5) break;
 				}
 
-				// Re-run adaptive threshold with different params
-				const relaxBlur = new cv.Mat();
-				cv.GaussianBlur(gray, relaxBlur, new cv.Size(5, 5), 0);
+				// Re-run adaptive threshold with different params (reuses shared blur5).
 				const relaxThresh = new cv.Mat();
-				cv.adaptiveThreshold(relaxBlur, relaxThresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, -3);
-
-				const relaxSep = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-				cv.erode(relaxThresh, relaxThresh, relaxSep);
-				cv.dilate(relaxThresh, relaxThresh, relaxSep);
-
-				findCardContours(relaxThresh, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
-
-				relaxBlur.delete(); relaxThresh.delete(); relaxSep.delete();
+				try {
+					cv.adaptiveThreshold(blur5, relaxThresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, -3);
+					cv.erode(relaxThresh, relaxThresh, dilateKernel3);
+					cv.dilate(relaxThresh, relaxThresh, dilateKernel3);
+					findCardContours(relaxThresh, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+				} finally {
+					relaxThresh.delete();
+				}
 
 				// Re-filter containment with all new candidates
 				allCandidates.sort((a, b) => b.area - a.area);
@@ -567,11 +625,24 @@
 				cardContours = cardContours.slice(0, 1);
 			}
 
+			// Dispose cloned `corners` Mats for candidates that didn't survive
+			// containment / size / single-mode filters. Without this, every
+			// rejected candidate leaks a 4-point Mat into the WASM heap — small
+			// individually, but additive across repeat scans. Grid-inferred
+			// synthetic candidates live only in cardContours (not allCandidates),
+			// so they're naturally retained here.
+			const keepCorners = new Set(cardContours.map((c) => c.corners));
+			for (const cand of allCandidates) {
+				if (!keepCorners.has(cand.corners)) cand.corners.delete();
+			}
+			allCandidates = [];
+
 			if (cardContours.length === 0) {
 				log('No cards detected');
 				scanProgress = 'No cards detected. Try a clearer photo.';
 				scanning = false;
 				src.delete(); gray.delete();
+				blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();
 				return;
 			}
 
@@ -708,97 +779,128 @@
 
 			// Cleanup OpenCV mats
 			src.delete(); gray.delete();
+			blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();
 
 			// === Name-first OCR approach ===
-			// Phase 1: OCR name areas with Tesseract (large text = high accuracy)
-			log('Phase 1: Name OCR (Tesseract PSM 7, letter whitelist)');
-			const worker = await getTesseractWorker();
-			await worker.setParameters({
+			// Phase 1: OCR name areas with Tesseract in parallel across a worker pool.
+			// Sequential recognition was the single biggest wall-clock bottleneck —
+			// a 10-card scan spent ~5s here.
+			const pool = await getTesseractPool();
+			log(`Phase 1: Name OCR (Tesseract PSM 7, ${pool.length} workers in parallel)`);
+			await setPoolParameters(pool, {
 				tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.",
 				tessedit_pageseg_mode: '7' // single text line
 			});
 
+			const nameUrls = detectedCards.map((c) => c.nameUrl);
+			const nameTexts = await recognizeBatch(pool, nameUrls, (done, total) => {
+				scanProgress = `Reading names ${done}/${total}...`;
+			});
 			for (let i = 0; i < detectedCards.length; i++) {
-				scanProgress = `Reading name ${i + 1}/${detectedCards.length}...`;
-				const card = detectedCards[i];
-				try {
-					const result = await worker.recognize(card.nameUrl);
-					card.nameText = result.data.text.replace(/[\r\n]+/g, ' ').trim();
-				} catch { card.nameText = ''; }
-				log(`Card ${i + 1} name OCR: "${card.nameText}"`);
-				detectedCards = [...detectedCards];
+				detectedCards[i].nameText = nameTexts[i].replace(/[\r\n]+/g, ' ').trim();
+				log(`Card ${i + 1} name OCR: "${detectedCards[i].nameText}"`);
 			}
+			detectedCards = [...detectedCards];
 
-			// Phase 2: Search DB by name → get all reprints
-			log('Phase 2: Name search in DB');
+			// Phase 2: Batch-search all names server-side in a single round trip.
+			// Previously this was 1+ fetch per card (and a second fetch per word
+			// fallback), which dominated wall-clock time at low network latency.
+			log('Phase 2: Name search in DB (batched)');
+
+			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
 			for (let i = 0; i < detectedCards.length; i++) {
 				const card = detectedCards[i];
 				if (!card.nameText || card.nameText.length < 2) {
 					log(`Card ${i + 1}: name too short or empty, skipping search`);
 					continue;
 				}
+				const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
+				namesToSearch.push({ cardIdx: i, cleanName });
+			}
 
-				// Only strip leading non-letter junk (OCR artifacts)
-				// Don't remove trailing chars — similarity scoring handles OCR noise
-				let cleanName = card.nameText
-					.replace(/^[^A-Za-z]+/, '')
-					.trim();
-
-				scanProgress = `Searching "${cleanName}"...`;
-				log(`Card ${i + 1}: searching "${cleanName}"`);
+			scanProgress = `Searching ${namesToSearch.length} name(s)...`;
+			let primaryBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+			if (namesToSearch.length > 0) {
 				try {
 					const res = await fetch('/scan', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ query: cleanName })
+						body: JSON.stringify({ queries: namesToSearch.map((n) => n.cleanName) })
 					});
-					const searchData = await res.json();
-					log(`Card ${i + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
-					if (searchData.results.length > 0) {
-						// Pick best matching name by similarity score
-						const best = bestNameMatch(searchData.results, cleanName);
-						log(`Card ${i + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
-						if (best.score >= 0.6) {
-							card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
-							card.matchType = searchData.matchType;
-							log(`Card ${i + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
-						} else {
-							log(`Card ${i + 1}: score below threshold, rejected`);
-						}
-					}
-
-					// Fallback: search by longest word if full name didn't match well
-					if (card.results.length === 0) {
-						const words = cleanName.split(/\s+/).filter(w => w.length >= 3);
-						// Try longest word first (most distinctive)
-						words.sort((a, b) => b.length - a.length);
-						log(`Card ${i + 1}: trying word fallback with [${words.slice(0, 2).join(', ')}]`);
-						for (const word of words.slice(0, 2)) {
-							const wRes = await fetch('/scan', {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ query: word })
-							});
-							const wData = await wRes.json();
-							log(`Card ${i + 1}: word "${word}" -> ${wData.results.length} results`);
-							if (wData.results.length > 0) {
-								const best = bestNameMatch(wData.results, cleanName);
-								log(`Card ${i + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
-								if (best.score >= 0.6) {
-									card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
-									card.matchType = 'similarity';
-									log(`Card ${i + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
-									break;
-								}
-							}
-						}
-					}
-				} catch (err) { log(`Card ${i + 1}: search error: ${err}`); }
-				detectedCards = [...detectedCards];
+					const data = await res.json();
+					primaryBatch = Array.isArray(data?.batch) ? data.batch : [];
+				} catch (err) {
+					log(`Batch name search error: ${err}`);
+				}
 			}
 
+			// Collect fallback words for cards that didn't match, then batch those too.
+			const fallbackWords: Array<{ cardIdx: number; cleanName: string; word: string }> = [];
+			for (let k = 0; k < namesToSearch.length; k++) {
+				const { cardIdx, cleanName } = namesToSearch[k];
+				const card = detectedCards[cardIdx];
+				const searchData = primaryBatch[k];
+				log(`Card ${cardIdx + 1}: searching "${cleanName}"`);
+				if (searchData && searchData.results.length > 0) {
+					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
+					const best = bestNameMatch(searchData.results, cleanName);
+					log(`Card ${cardIdx + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
+					if (best.score >= 0.6) {
+						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
+						card.matchType = searchData.matchType;
+						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
+						continue;
+					}
+					log(`Card ${cardIdx + 1}: score below threshold, rejected`);
+				}
+
+				// Queue word fallback — longest 2 words sorted by length.
+				const words = cleanName.split(/\s+/).filter((w) => w.length >= 3);
+				words.sort((a, b) => b.length - a.length);
+				for (const word of words.slice(0, 2)) {
+					fallbackWords.push({ cardIdx, cleanName, word });
+				}
+			}
+
+			if (fallbackWords.length > 0) {
+				log(`Phase 2 fallback: ${fallbackWords.length} word queries for ${new Set(fallbackWords.map((f) => f.cardIdx)).size} card(s)`);
+				let fallbackBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+				try {
+					const res = await fetch('/scan', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ queries: fallbackWords.map((f) => f.word) })
+					});
+					const data = await res.json();
+					fallbackBatch = Array.isArray(data?.batch) ? data.batch : [];
+				} catch (err) {
+					log(`Batch fallback search error: ${err}`);
+				}
+
+				// Walk fallback results in order, stopping per-card as soon as one matches.
+				for (let k = 0; k < fallbackWords.length; k++) {
+					const { cardIdx, cleanName, word } = fallbackWords[k];
+					const card = detectedCards[cardIdx];
+					if (card.results.length > 0) continue;
+					const wData = fallbackBatch[k];
+					if (!wData || wData.results.length === 0) {
+						log(`Card ${cardIdx + 1}: word "${word}" -> 0 results`);
+						continue;
+					}
+					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
+					const best = bestNameMatch(wData.results, cleanName);
+					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
+					if (best.score >= 0.6) {
+						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
+						card.matchType = 'similarity';
+						log(`Card ${cardIdx + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
+					}
+				}
+			}
+			detectedCards = [...detectedCards];
+
 			// Phase 3: OCR bottom areas for disambiguation + foil detection
-			await worker.setParameters({
+			await setPoolParameters(pool, {
 				tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&',
 				tessedit_pageseg_mode: '6'
 			});
@@ -896,21 +998,22 @@
 				}
 			}
 
-			// Phase 3a: Run Tesseract bottom OCR + first matching pass for every card
-			log('Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6)');
+			// Phase 3a: Batch Tesseract bottom OCR across the worker pool, then
+			// run the (fast, in-memory) matching pass sequentially afterwards.
+			log(`Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6, ${pool.length} workers)`);
+			const bottomUrls = detectedCards.map((c) => c.bottomUrl);
+			const bottomTexts = await recognizeBatch(pool, bottomUrls, (done, total) => {
+				scanProgress = `OCR bottom ${done}/${total}...`;
+			});
 			for (let i = 0; i < detectedCards.length; i++) {
-				const card = detectedCards[i];
-				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
-
-				try {
-					const result = await worker.recognize(card.bottomUrl);
-					card.ocrText = result.data.text.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-				} catch { card.ocrText = ''; }
-				log(`Card ${i + 1} bottom OCR: "${card.ocrText}"`);
-
-				await applyBottomMatch(card, i + 1);
-				detectedCards = [...detectedCards];
+				detectedCards[i].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+				log(`Card ${i + 1} bottom OCR: "${detectedCards[i].ocrText}"`);
 			}
+			for (let i = 0; i < detectedCards.length; i++) {
+				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
+				await applyBottomMatch(detectedCards[i], i + 1);
+			}
+			detectedCards = [...detectedCards];
 
 			// Phase 3b: Optional Google Vision retry. If the user has stored a personal
 			// API key in /settings AND the toggle on this page is enabled, re-OCR any
@@ -1089,65 +1192,6 @@
 		}
 
 		return result;
-	}
-
-	function detectFoilFromWords(words: any[], bottomUrl: string, setCode: string, langs: string): boolean {
-		if (!setCode || !words?.length) return false;
-
-		const langList = langs.split('|');
-		const setUpper = setCode.toUpperCase();
-
-		// Find the SET word and LANG word in Tesseract's word list
-		let setWord: any = null;
-		let langWord: any = null;
-		for (const w of words) {
-			const t = w.text.toUpperCase().replace(/[^A-Z]/g, '');
-			if (t === setUpper) setWord = w;
-			if (langList.includes(t) && setWord) { langWord = w; break; }
-		}
-
-		if (!setWord || !langWord) return false;
-
-		// Get bounding boxes — the separator is between SET's right edge and LANG's left edge
-		const sepX1 = setWord.bbox.x1;  // right edge of SET
-		const sepX2 = langWord.bbox.x0; // left edge of LANG
-		const sepY0 = Math.min(setWord.bbox.y0, langWord.bbox.y0);
-		const sepY1 = Math.max(setWord.bbox.y1, langWord.bbox.y1);
-		const sepW = sepX2 - sepX1;
-		const sepH = sepY1 - sepY0;
-
-		if (sepW < 3 || sepH < 3) return false;
-
-		// Draw the OCR image onto a canvas to read pixels
-		const img = new Image();
-		img.src = bottomUrl;
-
-		try {
-			const canvas = document.createElement('canvas');
-			canvas.width = img.naturalWidth || img.width;
-			canvas.height = img.naturalHeight || img.height;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return false;
-			ctx.drawImage(img, 0, 0);
-
-			// Read the separator region pixels
-			const imageData = ctx.getImageData(sepX1, sepY0, sepW, sepH);
-			const pixels = imageData.data;
-
-			// Count bright pixels (the symbol is light text on dark background)
-			let brightPixels = 0;
-			const totalPixels = sepW * sepH;
-			for (let i = 0; i < pixels.length; i += 4) {
-				const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-				if (brightness > 140) brightPixels++;
-			}
-
-			const brightRatio = brightPixels / totalPixels;
-			// Star ★ fills ~15-30% of its bounding box, dot • fills ~5-12%
-			return brightRatio > 0.14;
-		} catch {
-			return false;
-		}
 	}
 
 	// Normalized similarity score (0-1) based on Levenshtein distance

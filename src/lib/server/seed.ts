@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { mkdirSync, createWriteStream, existsSync, unlinkSync, readFileSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { createReadStream } from 'node:fs';
+import { SCHEMA_SQL } from './schema-sql.js';
 
 const dataDir = join(process.cwd(), 'data');
 mkdirSync(dataDir, { recursive: true });
@@ -79,81 +80,8 @@ function importCards(filePath: string) {
 	sqlite.pragma('synchronous = OFF');
 	sqlite.pragma('cache_size = -64000');
 
-	// Create tables
-	sqlite.exec(`
-		CREATE TABLE IF NOT EXISTS cards (
-			id TEXT PRIMARY KEY,
-			oracle_id TEXT,
-			name TEXT NOT NULL,
-			mana_cost TEXT,
-			cmc REAL,
-			type_line TEXT,
-			oracle_text TEXT,
-			colors TEXT,
-			color_identity TEXT,
-			keywords TEXT,
-			set_code TEXT,
-			set_name TEXT,
-			collector_number TEXT,
-			rarity TEXT,
-			power TEXT,
-			toughness TEXT,
-			loyalty TEXT,
-			image_uri TEXT,
-			local_image_path TEXT,
-			layout TEXT,
-			legalities TEXT,
-			released_at TEXT,
-			scryfall_uri TEXT,
-			price_eur REAL,
-			price_eur_foil REAL,
-			price_usd REAL,
-			price_usd_foil REAL
-		);
-
-		CREATE TABLE IF NOT EXISTS card_faces (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			card_id TEXT NOT NULL REFERENCES cards(id),
-			face_index INTEGER NOT NULL,
-			name TEXT,
-			mana_cost TEXT,
-			type_line TEXT,
-			oracle_text TEXT,
-			image_uri TEXT,
-			power TEXT,
-			toughness TEXT
-		);
-
-		CREATE TABLE IF NOT EXISTS collection_cards (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			card_id TEXT NOT NULL REFERENCES cards(id),
-			quantity INTEGER NOT NULL DEFAULT 1,
-			condition TEXT DEFAULT 'near_mint',
-			foil INTEGER DEFAULT 0,
-			notes TEXT,
-			added_at TEXT
-		);
-
-		CREATE TABLE IF NOT EXISTS tags (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			color TEXT DEFAULT '#3b82f6'
-		);
-
-		CREATE TABLE IF NOT EXISTS collection_card_tags (
-			collection_card_id INTEGER NOT NULL REFERENCES collection_cards(id) ON DELETE CASCADE,
-			tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-			PRIMARY KEY (collection_card_id, tag_id)
-		);
-
-		CREATE TABLE IF NOT EXISTS price_history (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			card_id TEXT NOT NULL REFERENCES cards(id),
-			price_eur REAL,
-			price_eur_foil REAL,
-			recorded_at TEXT
-		);
-	`);
+	// Schema is shared with the main app's initDb() to avoid drift.
+	sqlite.exec(SCHEMA_SQL);
 
 	console.log('Reading JSON file...');
 	// Read and parse in chunks - the file can be very large
@@ -278,28 +206,11 @@ function importCards(filePath: string) {
 		process.stdout.write(`\rImported ${imported}/${englishCards.length} (${pct}%)`);
 	}
 
-	console.log('\nBuilding indexes...');
-	sqlite.exec(`
-		CREATE INDEX IF NOT EXISTS idx_cards_name ON cards(name);
-		CREATE INDEX IF NOT EXISTS idx_cards_set_code ON cards(set_code);
-		CREATE INDEX IF NOT EXISTS idx_cards_rarity ON cards(rarity);
-		CREATE INDEX IF NOT EXISTS idx_cards_cmc ON cards(cmc);
-		CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
-		CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
-		CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
-		CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
-		CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
-	`);
-
 	console.log('Building full-text search index...');
-	sqlite.exec(`DROP TABLE IF EXISTS cards_fts`);
+	// Indexes are created by SCHEMA_SQL. Rebuild FTS5 contents for speed
+	// (inserting ~100k rows via triggers would be slower than a bulk INSERT).
+	sqlite.exec(`DELETE FROM cards_fts`);
 	sqlite.exec(`
-		CREATE VIRTUAL TABLE cards_fts USING fts5(
-			card_id,
-			name,
-			type_line,
-			oracle_text
-		);
 		INSERT INTO cards_fts(card_id, name, type_line, oracle_text)
 			SELECT id, name, COALESCE(type_line, ''), COALESCE(oracle_text, '') FROM cards;
 	`);

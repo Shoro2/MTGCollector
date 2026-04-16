@@ -3,17 +3,8 @@
 	import { formatPrice, priceDate } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import { onMount } from 'svelte';
-	import {
-		Chart,
-		LineController,
-		LineElement,
-		PointElement,
-		LinearScale,
-		CategoryScale,
-		Filler,
-		Legend,
-		Tooltip
-	} from 'chart.js';
+	import type { Chart } from 'chart.js';
+	import { loadChart } from '$lib/chart-loader';
 
 	let { data }: { data: PageData } = $props();
 
@@ -55,7 +46,10 @@
 		modalLoading = true;
 		modalOpen = true;
 		modalCard = null;
-		const res = await fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`);
+		const [res, ChartCtor] = await Promise.all([
+			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`),
+			loadChart()
+		]);
 		const result = await res.json();
 		modalLoading = false;
 		if (!result.card) return;
@@ -63,7 +57,7 @@
 		setTimeout(() => {
 			if (!modalChartCanvas || !result.history.length) return;
 			modalChart?.destroy();
-			modalChart = new Chart(modalChartCanvas, {
+			modalChart = new ChartCtor(modalChartCanvas, {
 				type: 'line',
 				data: {
 					labels: result.history.map((h: Record<string, unknown>) => priceDate(h.recorded_at as string)),
@@ -173,14 +167,15 @@
 		return `${diffD} day${diffD > 1 ? 's' : ''} ago (${d.toLocaleDateString()})`;
 	}
 
-	function buildProfitChart() {
+	async function buildProfitChart() {
 		profitChart?.destroy();
 		if (profitHistory.length > 0 && profitChartCanvas) {
+			const ChartCtor = await loadChart();
 			const profitData = profitHistory.map((h) => ({
 				date: priceDate(h.recorded_at),
 				profit: (h.total_value ?? 0) - (h.total_purchase ?? 0)
 			}));
-			profitChart = new Chart(profitChartCanvas, {
+			profitChart = new ChartCtor(profitChartCanvas, {
 				type: 'line',
 				data: {
 					labels: profitData.map((h) => h.date),
@@ -223,10 +218,9 @@
 	}
 
 	onMount(() => {
-		Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Filler, Legend, Tooltip);
-
 		loadPricesData().then(() => {
-			// Build chart after data is loaded (need to wait a tick for canvas to render)
+			// Build chart after data is loaded (need to wait a tick for canvas
+			// to render). Chart.js itself is loaded lazily inside buildProfitChart.
 			setTimeout(() => buildProfitChart(), 0);
 		});
 

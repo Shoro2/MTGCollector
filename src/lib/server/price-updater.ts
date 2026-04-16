@@ -1,5 +1,5 @@
 import { sqlite } from './db.js';
-import { priceDataCache } from './cache.js';
+import { priceDataCache, setsCache, tagsCache } from './cache.js';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -129,8 +129,18 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 			await unlink(priceDataPath);
 		}
 
-		// Invalidate cached price data for all users
+		// Invalidate cached price data for all users, plus sets/tags lookups
+		// which may have grown with freshly imported cards.
 		priceDataCache.invalidateAll();
+		setsCache.invalidate();
+		tagsCache.invalidate();
+
+		// Refresh query planner stats after bulk insert so new indexes get used.
+		try {
+			sqlite.pragma('optimize');
+		} catch (err) {
+			console.warn('[price-updater] PRAGMA optimize failed:', err);
+		}
 
 		console.log('[price-updater] Price update complete!');
 		return { updated, snapshotted };
