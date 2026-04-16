@@ -582,17 +582,13 @@
 				for (let j = 0; j < 4; j++) {
 					points.push([pts.data32S[j * 2], pts.data32S[j * 2 + 1]]);
 				}
+				// orderCornersForCard returns [TL, TR, BR, BL] such that TL→TR is
+				// always the short edge of the card — this handles arbitrary rotation
+				// without a separate landscape→portrait flip step.
 				let ordered = orderCorners(points);
-				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]})`);
-
-				// Check if card is landscape (sideways) - rotate to portrait
 				const edgeTop = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-				const rotated = edgeTop > edgeLeft;
-				log(`Card ${i + 1}: edgeTop=${edgeTop.toFixed(0)} edgeLeft=${edgeLeft.toFixed(0)} -> ${rotated ? 'ROTATED to portrait' : 'upright'}`);
-				if (rotated) {
-					ordered = [ordered[1], ordered[2], ordered[3], ordered[0]];
-				}
+				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]}) shortEdge=${edgeTop.toFixed(0)} longEdge=${edgeLeft.toFixed(0)}`);
 
 				// Expand each corner outward to capture the full card including black border.
 				// The detected contour is on the inner colored frame — expand 5% to get the black border.
