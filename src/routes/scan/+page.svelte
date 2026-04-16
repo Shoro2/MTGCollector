@@ -869,16 +869,29 @@
 			}
 
 			// Re-run set/number parsing + reprint disambiguation for a single card
-			// using whatever is currently in card.ocrText. Used both after the first
-			// Tesseract pass and after the optional Google Vision retry.
-			async function applyBottomMatch(card: typeof detectedCards[number], cardIdx: number) {
+			// using whatever is currently in card.ocrText. Used both after the
+			// Tesseract pass (trustFoilChar=false) and after Google Vision retry
+			// (trustFoilChar=true). Tesseract routinely misreads the bullet
+			// separator • as * at small sizes, so we can't trust its foil hint
+			// for non-foil cards — card.foil is only set from OCR text when the
+			// upstream engine distinguishes the two symbols reliably.
+			async function applyBottomMatch(
+				card: typeof detectedCards[number],
+				cardIdx: number,
+				trustFoilChar: boolean
+			) {
 				const parsed = parseCollectorInfo(card.ocrText, langs, (msg) => log(`Card ${cardIdx}: ${msg}`));
 				card.setCode = parsed.setCode;
 				card.collectorNumber = parsed.collectorNumber;
 
-				// Foil detection from separator char (* = foil, . = non-foil)
-				card.foil = parsed.foilFromText;
-				log(`Card ${cardIdx}: parsed set="${parsed.setCode}" num="${parsed.collectorNumber}" foil=${parsed.foilFromText}`);
+				if (trustFoilChar) {
+					card.foil = parsed.foilFromText;
+					log(`Card ${cardIdx}: parsed set="${parsed.setCode}" num="${parsed.collectorNumber}" foil=${parsed.foilFromText} (trusted)`);
+				} else {
+					// Tesseract — never auto-flip foil; user toggles manually if needed.
+					card.foil = false;
+					log(`Card ${cardIdx}: parsed set="${parsed.setCode}" num="${parsed.collectorNumber}" (foil hint "${parsed.foilFromText}" ignored — Tesseract * / . misread)`);
+				}
 
 				if (card.results.length === 1) {
 					// Unique card from name search — done
@@ -983,7 +996,7 @@
 			await prefetchSetNumberLookups(detectedCards);
 			for (let i = 0; i < detectedCards.length; i++) {
 				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
-				await applyBottomMatch(detectedCards[i], i + 1);
+				await applyBottomMatch(detectedCards[i], i + 1, false);
 			}
 			detectedCards = [...detectedCards];
 
@@ -1023,7 +1036,7 @@
 									const oldText = card.ocrText;
 									card.ocrText = newText;
 									log(`Card ${cardIdx + 1}: Vision text="${newText}" (Tesseract was="${oldText}")`);
-									await applyBottomMatch(card, cardIdx + 1);
+									await applyBottomMatch(card, cardIdx + 1, true);
 									visionRetriedCount++;
 									log(`Card ${cardIdx + 1}: after Vision retry -> status=${card.status}, results=${card.results.length}`);
 								}
