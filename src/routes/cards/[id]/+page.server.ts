@@ -9,7 +9,10 @@ const CARD_COLUMNS = `id, oracle_id, name, mana_cost, cmc, type_line, oracle_tex
 const CARD_FACE_COLUMNS = `id, card_id, face_index, name, mana_cost, type_line,
 	oracle_text, image_uri, power, toughness`;
 
-export async function load({ params, locals }) {
+export async function load({ params, locals, depends }) {
+	// Named dependency so collection/wishlist mutations invalidate this load
+	// without re-running every load in the tree.
+	depends('app:card-detail');
 	const card = sqlite.prepare(`SELECT ${CARD_COLUMNS} FROM cards WHERE id = ?`).get(params.id) as Record<string, unknown> | undefined;
 	if (!card) throw error(404, 'Card not found');
 

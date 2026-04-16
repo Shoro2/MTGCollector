@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { goto, invalidateAll } from '$app/navigation';
+	import { goto, invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import { formatPrice, conditionLabel, priceDate } from '$lib/utils';
+	import { formatPrice, conditionLabel, priceDate, scryfallSrcset } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
@@ -130,7 +130,7 @@
 		});
 		saving = false;
 		closeEdit();
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	async function deleteFromEdit() {
@@ -141,7 +141,7 @@
 			body: JSON.stringify({ id: editItem.id })
 		});
 		closeEdit();
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	function doSearch() {
@@ -187,7 +187,7 @@
 		});
 		newTagName = '';
 		showTagForm = false;
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	async function deleteTag(tagId: number) {
@@ -196,7 +196,7 @@
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id: tagId })
 		});
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	async function toggleTag(collectionCardId: number, tagId: number, hasTag: boolean) {
@@ -209,14 +209,14 @@
 				tagId
 			})
 		});
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	async function fillPurchasePrices() {
 		fillingPrices = true;
 		await fetch('/collection', { method: 'PATCH' });
 		fillingPrices = false;
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	async function removeFromCollection(id: number) {
@@ -225,7 +225,7 @@
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id })
 		});
-		await invalidateAll();
+		await invalidate('app:collection');
 	}
 
 	function priceChange(item: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
@@ -387,7 +387,7 @@
 						<div>
 							<span class="block text-xs text-[var(--color-text-muted)] mb-1.5">Tags</span>
 							<div class="flex flex-wrap gap-1.5">
-								{#each data.tags as tag}
+								{#each data.tags as tag (tag.id)}
 									{@const hasTag = (editItem.tags as Array<Record<string, unknown>>).some((t) => t.id === tag.id)}
 									<button
 										onclick={() => toggleTag(editItem!.id as number, tag.id as number, hasTag)}
@@ -508,7 +508,7 @@
 		>
 			All
 		</button>
-		{#each data.tags as tag}
+		{#each data.tags as tag (tag.id)}
 			<span class="px-3 py-1 rounded-full text-xs transition-colors flex items-center gap-1 cursor-pointer"
 				style="background: {data.filters.tagFilter === String(tag.id) ? tag.color : 'transparent'}; border: 1px solid {tag.color}; color: {data.filters.tagFilter === String(tag.id) ? 'white' : tag.color}"
 			>
@@ -570,8 +570,9 @@
 		</div>
 	{:else}
 		<div class="space-y-2">
-			{#each data.items as item}
+			{#each data.items as item (item.id)}
 				{@const imgSrc = getImageSrc(item)}
+				{@const srcset = item.local_image_path ? null : scryfallSrcset(item.image_uri as string | null)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -582,7 +583,7 @@
 					<div class="flex-shrink-0">
 						{#if imgSrc}
 							<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
-								<img src={imgSrc} alt={item.name as string} class="w-14 h-20 sm:w-16 sm:h-22 object-cover rounded" loading="lazy" />
+								<img src={imgSrc} srcset={srcset ?? undefined} sizes="80px" alt={item.name as string} class="w-14 h-20 sm:w-16 sm:h-22 object-cover rounded" loading="lazy" />
 							</CardPreview>
 						{:else}
 							<div class="w-14 h-20 sm:w-16 sm:h-22 bg-[var(--color-bg)] rounded"></div>

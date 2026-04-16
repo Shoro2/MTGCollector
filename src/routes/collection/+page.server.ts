@@ -3,8 +3,11 @@ import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { redirect } from '@sveltejs/kit';
 import { tagsCache } from '$lib/server/cache';
 
-export async function load({ url, locals }) {
+export async function load({ url, locals, depends }) {
 	if (!locals.user) throw redirect(302, '/login');
+	// Named dependency so client-side mutations can target only this load via
+	// invalidate('app:collection') instead of paying for a full invalidateAll.
+	depends('app:collection');
 	const userId = locals.user.id;
 	const usdToEur = await getUsdToEurRate();
 

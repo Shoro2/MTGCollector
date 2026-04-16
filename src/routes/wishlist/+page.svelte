@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { goto, invalidateAll } from '$app/navigation';
-	import { formatPrice, formatManaCost } from '$lib/utils';
+	import { goto, invalidate } from '$app/navigation';
+	import { formatPrice, formatManaCost, scryfallSrcset } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -47,7 +47,7 @@
 			body: JSON.stringify({ id })
 		});
 		removing = null;
-		await invalidateAll();
+		await invalidate('app:wishlist');
 	}
 
 	function startCollect(cardId: string, wishlistId: number) {
@@ -71,7 +71,7 @@
 		});
 		adding = null;
 		collectingItem = null;
-		await invalidateAll();
+		await invalidate('app:wishlist');
 	}
 
 	function getImageSrc(item: Record<string, unknown>): string {
@@ -129,15 +129,16 @@
 		</div>
 	{:else}
 		<div class="space-y-2">
-			{#each data.items as item}
+			{#each data.items as item (item.id)}
 				{@const imgSrc = getImageSrc(item)}
+				{@const srcset = item.local_image_path ? null : scryfallSrcset(item.image_uri as string | null)}
 				{@const inCollection = collectedSet.has(item.card_id as string)}
 				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 flex items-start sm:items-center gap-3 sm:gap-4 hover:bg-[var(--color-surface-hover)] transition-colors">
 					<!-- Card Image -->
 					{#if imgSrc}
 						<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
 							<a href="/cards/{item.card_id}">
-								<img src={imgSrc} alt={item.name as string} class="w-12 h-16 sm:w-14 sm:h-20 object-cover rounded flex-shrink-0" loading="lazy" />
+								<img src={imgSrc} srcset={srcset ?? undefined} sizes="80px" alt={item.name as string} class="w-12 h-16 sm:w-14 sm:h-20 object-cover rounded flex-shrink-0" loading="lazy" />
 							</a>
 						</CardPreview>
 					{/if}
