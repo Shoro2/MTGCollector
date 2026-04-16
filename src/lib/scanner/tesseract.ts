@@ -9,10 +9,16 @@
 
 // Loose typing — the upstream types don't match what's actually shipped
 // through the CDN ESM bundle.
+export type WordBox = {
+	text: string;
+	bbox: { x0: number; y0: number; x1: number; y1: number };
+};
 type TesseractWorker = {
-	recognize: (url: string) => Promise<{ data: { text: string } }>;
+	recognize: (url: string) => Promise<{ data: { text: string; words?: WordBox[] } }>;
 	setParameters: (params: Record<string, unknown>) => Promise<unknown>;
 };
+
+export type DetailedOcrResult = { text: string; words: WordBox[] };
 
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js';
 
@@ -76,4 +82,25 @@ export async function recognizeBatch(
 
 	await Promise.all(p.map(runWorker));
 	return results;
+}
+
+/**
+ * Single-image recognize that also returns word-level bounding boxes.
+ * Used by single-card mode for pixel-based foil detection; batching
+ * doesn't buy anything for one image so we just use pool[0].
+ */
+export async function recognizeDetailed(
+	p: TesseractWorker[],
+	url: string
+): Promise<DetailedOcrResult> {
+	if (p.length === 0) return { text: '', words: [] };
+	try {
+		const r = await p[0].recognize(url);
+		return {
+			text: (r.data.text ?? '').toString(),
+			words: Array.isArray(r.data.words) ? r.data.words : []
+		};
+	} catch {
+		return { text: '', words: [] };
+	}
 }

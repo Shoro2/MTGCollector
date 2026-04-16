@@ -4,10 +4,11 @@
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import { onMount } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
-	import { getTesseractPool, setPoolParameters, recognizeBatch } from '$lib/scanner/tesseract';
+	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { bestNameMatch } from '$lib/scanner/similarity';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
+	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 
 	let { data }: { data: PageData } = $props();
 	let loggedIn = $derived(!!data.user);
@@ -572,6 +573,10 @@
 
 			// Process each detected card
 			const cards: typeof detectedCards = [];
+			// Bottom canvases kept outside $state so Svelte doesn't try to proxy
+			// HTMLCanvasElement instances. Used for pixel-based foil detection
+			// in single-card mode after OCR completes.
+			const bottomCanvases: HTMLCanvasElement[] = [];
 
 			for (let i = 0; i < cardContours.length; i++) {
 				const pts = cardContours[i].corners;
@@ -582,17 +587,13 @@
 				for (let j = 0; j < 4; j++) {
 					points.push([pts.data32S[j * 2], pts.data32S[j * 2 + 1]]);
 				}
+				// orderCornersForCard returns [TL, TR, BR, BL] such that TL→TR is
+				// always the short edge of the card — this handles arbitrary rotation
+				// without a separate landscape→portrait flip step.
 				let ordered = orderCorners(points);
-				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]})`);
-
-				// Check if card is landscape (sideways) - rotate to portrait
 				const edgeTop = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-				const rotated = edgeTop > edgeLeft;
-				log(`Card ${i + 1}: edgeTop=${edgeTop.toFixed(0)} edgeLeft=${edgeLeft.toFixed(0)} -> ${rotated ? 'ROTATED to portrait' : 'upright'}`);
-				if (rotated) {
-					ordered = [ordered[1], ordered[2], ordered[3], ordered[0]];
-				}
+				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]}) shortEdge=${edgeTop.toFixed(0)} longEdge=${edgeLeft.toFixed(0)}`);
 
 				// Expand each corner outward to capture the full card including black border.
 				// The detected contour is on the inner colored frame — expand 5% to get the black border.
@@ -673,6 +674,7 @@
 				const bottomCanvas = document.createElement('canvas');
 				cv.imshow(bottomCanvas, scaled);
 				const bottomUrl = bottomCanvas.toDataURL();
+				bottomCanvases.push(bottomCanvas);
 
 				cards.push({
 					index: i,
@@ -997,6 +999,28 @@
 			for (let i = 0; i < detectedCards.length; i++) {
 				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
 				await applyBottomMatch(detectedCards[i], i + 1, false);
+			}
+
+			// Pixel-based foil detection — only for single-card mode where the
+			// bottom strip is large enough to reliably sample the separator.
+			// Multi-card scans skip this (per-card resolution too low).
+			if (scanMode === 'single' && detectedCards.length === 1 && bottomCanvases[0]) {
+				const card = detectedCards[0];
+				if (card.setCode) {
+					const detailed = await recognizeDetailed(pool, card.bottomUrl);
+					const langList = langs.split('|');
+					const foilResult = detectFoilFromSeparator(
+						bottomCanvases[0],
+						detailed.words,
+						card.setCode,
+						langList,
+						(m) => log(`Card 1: ${m}`)
+					);
+					if (foilResult) {
+						card.foil = foilResult.foil;
+						log(`Card 1: pixel foil detection -> foil=${foilResult.foil} (bright=${(foilResult.brightRatio * 100).toFixed(1)}%)`);
+					}
+				}
 			}
 			detectedCards = [...detectedCards];
 
