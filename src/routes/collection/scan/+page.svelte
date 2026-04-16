@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { formatPrice } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
-	import { getTesseractPool, setPoolParameters, recognizeBatch } from '$lib/scanner/tesseract';
+	import { getTesseractPool, setPoolParameters, recognizeBatch, terminatePool } from '$lib/scanner/tesseract';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
+
+	// Terminate Tesseract workers when leaving the page (see /routes/scan
+	// for the rationale — each worker holds ~50 MB of runtime).
+	onDestroy(() => {
+		terminatePool().catch(() => { /* already gone */ });
+	});
 
 	// State
 	let imagePreview = $state('');

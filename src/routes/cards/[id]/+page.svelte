@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { formatManaCost, formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidate } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
@@ -34,7 +34,7 @@
 		});
 		adding = false;
 		showAddForm = false;
-		await invalidateAll();
+		await invalidate('app:card-detail');
 	}
 
 	async function removeFromCollection(collectionCardId: number) {
@@ -43,7 +43,7 @@
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ id: collectionCardId })
 		});
-		await invalidateAll();
+		await invalidate('app:card-detail');
 	}
 
 	let togglingWishlist = $state(false);
@@ -64,7 +64,7 @@
 			});
 		}
 		togglingWishlist = false;
-		await invalidateAll();
+		await invalidate('app:card-detail');
 	}
 
 	function getImageSrc(): string {
@@ -398,7 +398,7 @@
 
 				{#if data.inCollection.length > 0}
 					<div class="space-y-2">
-						{#each data.inCollection as entry}
+						{#each data.inCollection as entry (entry.id)}
 							<div class="flex items-center justify-between bg-[var(--color-bg)] rounded px-3 py-2">
 								<div class="flex items-center gap-3 text-sm">
 									<span class="font-medium">{entry.quantity}x</span>
@@ -426,7 +426,7 @@
 				<div>
 					<h3 class="text-sm text-[var(--color-text-muted)] mb-2">Other Printings ({data.reprints.length})</h3>
 					<div class="flex flex-wrap gap-2">
-						{#each data.reprints as reprint}
+						{#each data.reprints as reprint (reprint.id)}
 							<a
 								href="/cards/{reprint.id}"
 								class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-3 py-1.5 text-sm hover:border-[var(--color-primary)] transition-colors"

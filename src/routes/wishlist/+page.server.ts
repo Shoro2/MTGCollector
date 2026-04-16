@@ -1,8 +1,9 @@
 import { sqlite } from '$lib/server/db';
 import { redirect } from '@sveltejs/kit';
 
-export async function load({ url, locals }) {
+export async function load({ url, locals, depends }) {
 	if (!locals.user) throw redirect(302, '/login');
+	depends('app:wishlist');
 	const userId = locals.user.id;
 
 	const search = url.searchParams.get('q') || '';

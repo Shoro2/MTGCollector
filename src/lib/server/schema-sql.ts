@@ -77,8 +77,10 @@ CREATE TABLE IF NOT EXISTS collection_cards (
 
 CREATE TABLE IF NOT EXISTS tags (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	name TEXT NOT NULL UNIQUE,
-	color TEXT DEFAULT '#3b82f6'
+	user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	color TEXT DEFAULT '#3b82f6',
+	UNIQUE(user_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS collection_card_tags (
@@ -112,18 +114,18 @@ CREATE INDEX IF NOT EXISTS idx_cards_rarity ON cards(rarity);
 CREATE INDEX IF NOT EXISTS idx_cards_cmc ON cards(cmc);
 CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
 CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
+CREATE INDEX IF NOT EXISTS idx_cards_released_at ON cards(released_at);
 CREATE INDEX IF NOT EXISTS idx_card_faces_card_id_face ON card_faces(card_id, face_index);
 CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
-CREATE INDEX IF NOT EXISTS idx_collection_cards_user_card ON collection_cards(user_id, card_id);
-CREATE INDEX IF NOT EXISTS idx_collection_cards_user_id ON collection_cards(user_id);
-CREATE INDEX IF NOT EXISTS idx_collection_cards_user_added ON collection_cards(user_id, added_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wishlist_cards_card_id ON wishlist_cards(card_id);
-CREATE INDEX IF NOT EXISTS idx_wishlist_cards_user_id ON wishlist_cards(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_recorded ON price_history(card_id, recorded_at DESC);
+-- Indexes referencing user_id on collection_cards/wishlist_cards/tags live in
+-- migrations.ts (0002, 0012, 0013). They must run AFTER the ALTER TABLE steps
+-- that add the user_id column on upgraded databases.
 
 -- External-content FTS5: the index is stored here but the searchable text is
 -- read from cards via its rowid. This avoids duplicating name/type_line/

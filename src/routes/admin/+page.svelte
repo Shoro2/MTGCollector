@@ -290,7 +290,7 @@
 			</span>
 		</h2>
 		<div class="space-y-3">
-			{#each data.users as user}
+			{#each data.users as user ((user as Record<string, unknown>).id as string)}
 				<div class="bg-[var(--color-bg)] rounded-lg p-4 flex flex-col md:flex-row md:items-center gap-4">
 					<div class="flex items-center gap-4 min-w-0">
 						{#if user.avatar_url}

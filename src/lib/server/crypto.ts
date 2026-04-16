@@ -5,8 +5,9 @@
 // plaintext and passed through unchanged — this keeps existing users working
 // while `decryptSecret` opportunistically re-encrypts them on next write.
 
-import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { platform } from 'node:os';
 import { join } from 'node:path';
 
 const ALGO = 'aes-256-gcm';
@@ -35,9 +36,23 @@ function loadOrCreateKey(): Buffer {
 
 	const key = randomBytes(KEY_BYTES);
 	writeFileSync(keyPath, key.toString('hex'), { encoding: 'utf-8' });
-	try {
-		chmodSync(keyPath, 0o600);
-	} catch { /* windows / restricted fs */ }
+	// On POSIX filesystems, assert the key ended up with mode 0600. Silent
+	// failure here is a real risk — a world-readable key file would expose
+	// every user's Vision API key.
+	if (platform() !== 'win32') {
+		try {
+			chmodSync(keyPath, 0o600);
+			const mode = statSync(keyPath).mode & 0o777;
+			if (mode !== 0o600) {
+				console.warn(
+					`[crypto] secret-key.hex has mode ${mode.toString(8)}, expected 600 — ` +
+					`check filesystem permissions (data dir should not be group- or world-readable)`
+				);
+			}
+		} catch (err) {
+			console.error('[crypto] Failed to restrict secret-key.hex permissions:', err);
+		}
+	}
 	cachedKey = key;
 	return key;
 }
@@ -82,4 +97,16 @@ export function decryptSecret(stored: string): string | null {
 /** True if the stored value was written by `encryptSecret`. */
 export function isEncrypted(stored: string): boolean {
 	return !!stored && stored.startsWith(`${PREFIX}:`);
+}
+
+/**
+ * Keyed hash for pseudonymising short identifiers (IPs, etc.) before storage.
+ * Uses HMAC-SHA256 with the same server-side secret that encrypts user
+ * secrets, so plain SHA-256 rainbow-table lookups don't work. The hash is
+ * stable across calls on the same server instance but rotates if the key
+ * file is regenerated.
+ */
+export function hashIdentifier(value: string, domain = 'default'): string {
+	const key = loadOrCreateKey();
+	return createHmac('sha256', key).update(`${domain}:${value}`).digest('hex').slice(0, 32);
 }

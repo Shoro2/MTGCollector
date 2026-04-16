@@ -2,7 +2,7 @@
 	import type { PageData } from './$types';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { formatManaCost, formatPrice, getRarityColor } from '$lib/utils';
+	import { formatManaCost, formatPrice, getRarityColor, scryfallSrcset } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -297,8 +297,9 @@
 
 	<!-- Card Grid -->
 	<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-		{#each data.cards as card, i}
+		{#each data.cards as card, i (card.id)}
 			{@const imgSrc = getImageSrc(card)}
+			{@const srcset = card.local_image_path ? null : scryfallSrcset(card.image_uri as string | null)}
 			{@const inCollection = collectedSet.has(card.id as string)}
 			{@const onWishlist = wishlistSet.has(card.id as string)}
 			<a
@@ -310,6 +311,8 @@
 						<CardPreview src={imgSrc} alt={"Magic: The Gathering - " + (card.name as string)} scale={2}>
 							<img
 								src={imgSrc}
+								srcset={srcset ?? undefined}
+								sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, 20vw"
 								alt="Magic: The Gathering - {card.name}"
 								width="488"
 								height="680"

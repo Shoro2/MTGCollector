@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, primaryKey } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, primaryKey, unique } from 'drizzle-orm/sqlite-core';
 
 export const cards = sqliteTable('cards', {
 	id: text('id').primaryKey(),
@@ -80,11 +80,16 @@ export const wishlistCards = sqliteTable('wishlist_cards', {
 	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
 });
 
-export const tags = sqliteTable('tags', {
-	id: integer('id').primaryKey({ autoIncrement: true }),
-	name: text('name').notNull().unique(),
-	color: text('color').default('#3b82f6')
-});
+export const tags = sqliteTable(
+	'tags',
+	{
+		id: integer('id').primaryKey({ autoIncrement: true }),
+		userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
+		name: text('name').notNull(),
+		color: text('color').default('#3b82f6')
+	},
+	(table) => [unique().on(table.userId, table.name)]
+);
 
 export const collectionCardTags = sqliteTable(
 	'collection_card_tags',

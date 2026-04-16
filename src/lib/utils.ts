@@ -55,6 +55,22 @@ export function conditionLabel(condition: string): string {
 	return labels[condition] || condition;
 }
 
+/**
+ * Build a Scryfall srcset from a single `image_uri`. Scryfall serves every
+ * card at three usable sizes (small 146w, normal 488w, large 672w) on the
+ * same URL structure — swapping the size segment yields the variant. Returns
+ * `null` for non-Scryfall URLs and for local cached paths, which only exist
+ * at a single size on disk.
+ */
+export function scryfallSrcset(imageUri: string | null | undefined): string | null {
+	if (!imageUri) return null;
+	const match = imageUri.match(/cards\.scryfall\.io\/(small|normal|large)\//);
+	if (!match) return null;
+	const current = match[1];
+	const make = (size: string) => imageUri.replace(`/${current}/`, `/${size}/`);
+	return `${make('small')} 146w, ${make('normal')} 488w, ${make('large')} 672w`;
+}
+
 /** Format a price history date for chart labels.
  *  Accepts both effective date strings ("2026-04-03") and full ISO timestamps. */
 export function priceDate(dateString: string): string {

@@ -68,8 +68,42 @@ export function createUserCache<T>(fetcher: (userId: string) => Promise<T>, ttlM
 	};
 }
 
-export const tagsCache = createCache(
-	() => sqlite.prepare('SELECT id, name, color FROM tags ORDER BY name').all() as Array<Record<string, unknown>>,
+// Per-user tag list. Sync because the underlying query is a single indexed
+// lookup — no reason to pay the async machinery cost.
+export function createSyncUserCache<T>(fetcher: (userId: string) => T, ttlMs: number) {
+	const entries = new Map<string, { value: T; at: number }>();
+	let accessesSinceLastSweep = 0;
+	const sweepInterval = 64;
+	const evictAfterMs = ttlMs * 2;
+
+	function maybeSweep() {
+		if (++accessesSinceLastSweep < sweepInterval) return;
+		accessesSinceLastSweep = 0;
+		const cutoff = Date.now() - evictAfterMs;
+		for (const [key, val] of entries) {
+			if (val.at < cutoff) entries.delete(key);
+		}
+	}
+
+	return {
+		get(userId: string): T {
+			maybeSweep();
+			const entry = entries.get(userId);
+			if (entry && Date.now() - entry.at <= ttlMs) return entry.value;
+			const value = fetcher(userId);
+			entries.set(userId, { value, at: Date.now() });
+			return value;
+		},
+		invalidate(userId: string) { entries.delete(userId); },
+		invalidateAll() { entries.clear(); }
+	};
+}
+
+export const tagsCache = createSyncUserCache(
+	(userId: string) =>
+		sqlite
+			.prepare('SELECT id, name, color FROM tags WHERE user_id = ? ORDER BY name')
+			.all(userId) as Array<Record<string, unknown>>,
 	30 * 1000 // 30 seconds
 );
 
