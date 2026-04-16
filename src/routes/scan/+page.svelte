@@ -3,6 +3,11 @@
 	import { formatPrice } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import { onMount } from 'svelte';
+	import { loadOpenCV } from '$lib/scanner/opencv';
+	import { getTesseractPool, setPoolParameters, recognizeBatch } from '$lib/scanner/tesseract';
+	import { parseCollectorInfo } from '$lib/scanner/parse';
+	import { bestNameMatch } from '$lib/scanner/similarity';
+	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 
 	let { data }: { data: PageData } = $props();
 	let loggedIn = $derived(!!data.user);
@@ -48,8 +53,6 @@
 	let manualResults = $state<Array<Record<string, unknown>>>([]);
 	let manualCardIndex = $state<number | null>(null);
 
-	let cvReady = $state(false);
-	let cvLoading = $state(false);
 	// Toggle for Google Vision retry on cards Tesseract failed to identify.
 	// Persisted in localStorage; only meaningful when the user has stored their
 	// own Vision API key in /settings.
@@ -83,89 +86,7 @@
 		setTimeout(() => debugLogCopied = false, 2000);
 	}
 
-	// Load OpenCV.js
-	async function loadOpenCV(): Promise<void> {
-		if ((window as any).cv?.Mat) { cvReady = true; return; }
-		if (cvLoading) return;
-		cvLoading = true;
-
-		return new Promise((resolve, reject) => {
-			const script = document.createElement('script');
-			script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
-			script.async = true;
-			script.onload = () => {
-				const checkCv = () => {
-					if ((window as any).cv?.Mat) {
-						cvReady = true;
-						resolve();
-					} else {
-						setTimeout(checkCv, 100);
-					}
-				};
-				checkCv();
-			};
-			script.onerror = () => reject(new Error('Failed to load OpenCV.js'));
-			document.head.appendChild(script);
-		});
-	}
-
-	let tesseractPool: any[] = [];
-	let tesseractCreatePromise: Promise<any[]> | null = null;
-
-	async function getTesseractPool(): Promise<any[]> {
-		if (tesseractPool.length > 0) return tesseractPool;
-		if (tesseractCreatePromise) return tesseractCreatePromise;
-
-		tesseractCreatePromise = (async () => {
-			const Tesseract = await import('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.esm.min.js');
-			const createWorker = Tesseract.createWorker || Tesseract.default?.createWorker;
-			if (!createWorker) throw new Error('Failed to load Tesseract.js');
-
-			// Cap at 4 — more than that rarely helps and eats memory on mobile.
-			const hw = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-			const poolSize = Math.min(4, Math.max(1, hw >= 4 ? 4 : hw));
-			tesseractPool = await Promise.all(
-				Array.from({ length: poolSize }, () => createWorker('eng'))
-			);
-			return tesseractPool;
-		})();
-		return tesseractCreatePromise;
-	}
-
-	async function setPoolParameters(pool: any[], params: Record<string, unknown>) {
-		await Promise.all(pool.map((w) => w.setParameters(params)));
-	}
-
-	// Recognize a batch of image URLs across the worker pool in parallel.
-	// onProgress is called after each image completes with (doneCount, total).
-	async function recognizeBatch(
-		pool: any[],
-		urls: string[],
-		onProgress?: (done: number, total: number) => void
-	): Promise<string[]> {
-		const total = urls.length;
-		const results: string[] = new Array(total).fill('');
-		let done = 0;
-		let next = 0;
-
-		async function runWorker(worker: any) {
-			while (true) {
-				const i = next++;
-				if (i >= total) return;
-				try {
-					const r = await worker.recognize(urls[i]);
-					results[i] = (r.data.text ?? '').toString();
-				} catch {
-					results[i] = '';
-				}
-				done++;
-				onProgress?.(done, total);
-			}
-		}
-
-		await Promise.all(pool.map(runWorker));
-		return results;
-	}
+	// OpenCV + Tesseract + name/parse helpers come from src/lib/scanner/.
 
 	function onFileSelect(e: Event) {
 		const input = e.target as HTMLInputElement;
@@ -1127,177 +1048,8 @@
 		}
 	}
 
-	function loadImage(file: File): Promise<HTMLImageElement> {
-		return new Promise((resolve, reject) => {
-			const img = new Image();
-			img.onload = () => resolve(img);
-			img.onerror = reject;
-			img.src = URL.createObjectURL(file);
-		});
-	}
-
-	// Fix common OCR misreads of digits
-	function fixOcrDigits(s: string): string {
-		return s
-			.replace(/[JjIil|!]/g, '1')  // J, I, l, |, ! → 1
-			.replace(/[Oo]/g, '0')        // O, o → 0
-			.replace(/[Ss]/g, '5')        // S, s → 5
-			.replace(/[Bb]/g, '8')        // B → 8
-			.replace(/[Zz]/g, '2')        // Z → 2
-			.replace(/[)]/g, '1')         // ) → 1
-			.replace(/[^0-9]/g, '');       // remove anything else
-	}
-
-	function stripLeadingZeros(s: string): string {
-		const stripped = s.replace(/^0+/, '');
-		return stripped || '0';
-	}
-
-	function parseCollectorInfo(text: string, langs: string, dbg?: (msg: string) => void): { setCode: string; collectorNumber: string; foilFromText: boolean } {
-		const result = { setCode: '', collectorNumber: '', foilFromText: false };
-
-		// Step 1: Find anchor — <SET 3-letter> followed by <LANG 2-letter> within a few chars
-		const anchor = new RegExp(`\\b([A-Z]{3})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'i');
-		const anchorMatch = text.match(anchor);
-
-		if (anchorMatch) {
-			result.setCode = anchorMatch[1].toLowerCase();
-			dbg?.(`anchor matched: "${anchorMatch[0]}" -> set="${result.setCode}"`);
-
-			// Check separator character for foil hint
-			const sep = anchorMatch[2] || '';
-			result.foilFromText = /[*#&]/.test(sep);
-			dbg?.(`separator="${sep}" foilFromSep=${result.foilFromText}`);
-
-			// Step 2: Extract collector number from text BEFORE the set code
-			const before = text.substring(0, anchorMatch.index);
-			dbg?.(`text before anchor: "${before}"`);
-
-			// Handle fraction format first (Era 3): "010/277"
-			const fractionMatch = before.match(/([\dOoIilJjBbSsZz]{1,4})\/([\dOoIilJjBbSsZz]{1,4})/);
-			if (fractionMatch) {
-				result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
-				dbg?.(`fraction format: "${fractionMatch[0]}" -> num="${result.collectorNumber}"`);
-			} else {
-				// Strategy: find the collector number near the end of `before`.
-				// It may be split by spaces/OCR errors: "C 0 045" or "0045" or "024 J"
-				// Take the last ~20 chars before the set code and extract all digit-like content
-				const tail = before.slice(-20).trim();
-				dbg?.(`tail (last 20 chars): "${tail}"`);
-
-				// Try to find a rarity+number pattern: "C 0045", "R 024 J", "M0085"
-				const rarityNumMatch = tail.match(/[CURM]\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
-				if (rarityNumMatch) {
-					const fixed = fixOcrDigits(rarityNumMatch[1].replace(/\s/g, ''));
-					if (fixed.length > 0 && fixed.length <= 4) {
-						result.collectorNumber = stripLeadingZeros(fixed);
-						dbg?.(`rarity+number: "${rarityNumMatch[0]}" -> num="${result.collectorNumber}"`);
-					}
-				}
-
-				// Fallback: just find the last digit sequence
-				if (!result.collectorNumber) {
-					const allDigits = [...before.matchAll(/\d{1,4}/g)];
-					if (allDigits.length > 0) {
-						const lastMatch = allDigits[allDigits.length - 1];
-						let raw = lastMatch[0];
-						const afterIdx = (lastMatch.index ?? 0) + raw.length;
-						const after = before.substring(afterIdx).replace(/^\s+/, '');
-						if (after.length > 0 && /^[JjIil|!)Oo](?:\s|$)/.test(after)) {
-							raw += after[0];
-						}
-						const fixed = fixOcrDigits(raw);
-						if (fixed.length > 0 && fixed.length <= 4) {
-							result.collectorNumber = stripLeadingZeros(fixed);
-							dbg?.(`last-digit fallback: raw="${raw}" -> num="${result.collectorNumber}"`);
-						}
-					}
-					if (!result.collectorNumber) {
-						dbg?.('no collector number found in before-text');
-					}
-				}
-			}
-		} else {
-			dbg?.('no anchor match (SET+LANG pattern not found)');
-		}
-
-		// Fallback: any 3-letter uppercase + any number
-		if (!result.setCode) {
-			const setMatch = text.match(/\b([A-Z]{3})\b/);
-			if (setMatch) result.setCode = setMatch[1].toLowerCase();
-			const fractionMatch = text.match(/(\d{1,4})\/\d{1,4}/);
-			if (fractionMatch) {
-				result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
-			} else {
-				const numMatch = text.match(/(\d{1,4})/);
-				if (numMatch) result.collectorNumber = stripLeadingZeros(numMatch[1]);
-			}
-			dbg?.(`generic fallback: set="${result.setCode}" num="${result.collectorNumber}"`);
-		}
-
-		// Foil fallback: if anchor didn't match, check for * anywhere in text
-		// The star/bullet separator is distinctive enough as a foil indicator
-		if (!result.foilFromText && text.includes('*')) {
-			result.foilFromText = true;
-			dbg?.('foil detected via * in text');
-		}
-
-		return result;
-	}
-
-	// Normalized similarity score (0-1) based on Levenshtein distance
-	function similarity(a: string, b: string): number {
-		const al = a.toLowerCase();
-		const bl = b.toLowerCase();
-		if (al === bl) return 1;
-		const maxLen = Math.max(al.length, bl.length);
-		if (maxLen === 0) return 1;
-
-		// Levenshtein distance via dynamic programming
-		const prev = Array.from({ length: bl.length + 1 }, (_, i) => i);
-		for (let i = 1; i <= al.length; i++) {
-			let prevDiag = prev[0];
-			prev[0] = i;
-			for (let j = 1; j <= bl.length; j++) {
-				const temp = prev[j];
-				prev[j] = al[i - 1] === bl[j - 1]
-					? prevDiag
-					: 1 + Math.min(prev[j], prev[j - 1], prevDiag);
-				prevDiag = temp;
-			}
-		}
-		return 1 - prev[bl.length] / maxLen;
-	}
-
-	// Pick best matching card name from results by similarity score
-	function bestNameMatch(results: Array<Record<string, unknown>>, query: string): { name: string; score: number } {
-		let bestName = '';
-		let bestScore = 0;
-		const seen = new Set<string>();
-		for (const r of results) {
-			const name = r.name as string;
-			if (seen.has(name)) continue;
-			seen.add(name);
-			const score = similarity(query, name);
-			if (score > bestScore) {
-				bestScore = score;
-				bestName = name;
-			}
-		}
-		return { name: bestName, score: bestScore };
-	}
-
-	function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
-		// Sort by sum (x+y) to find TL and BR
-		const sorted = [...pts].sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
-		const tl = sorted[0];
-		const br = sorted[3];
-		// Sort by diff (x-y) to find TR and BL
-		const sorted2 = [...pts].sort((a, b) => (a[0] - a[1]) - (b[0] - b[1]));
-		const bl = sorted2[0];
-		const tr = sorted2[3];
-		return [tl, tr, br, bl];
-	}
+	// loadImage, fixOcrDigits, stripLeadingZeros, parseCollectorInfo,
+	// similarity, bestNameMatch, orderCorners all come from src/lib/scanner/.
 
 	async function addToCollection(cardId: string, cardName: string, foil: boolean = false) {
 		adding = cardId;
