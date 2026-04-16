@@ -93,13 +93,17 @@ export async function POST({ request, locals }) {
 	}
 	const mime = (file.type || '').toLowerCase();
 	const name = (file.name || '').toLowerCase();
-	const looksLikeCsv =
-		mime === 'text/csv' ||
-		mime === 'application/csv' ||
-		mime === 'application/vnd.ms-excel' ||
-		mime === '' ||
-		mime === 'text/plain' ||
-		name.endsWith('.csv');
+	// Accept a small allow-list of CSV-ish MIME types. Empty MIME types are
+	// only tolerated when the filename ends in `.csv` — bare empty types from
+	// arbitrary clients used to silently pass through.
+	const knownCsvMimes = new Set([
+		'text/csv',
+		'application/csv',
+		'application/vnd.ms-excel',
+		'text/plain'
+	]);
+	const hasCsvExtension = name.endsWith('.csv');
+	const looksLikeCsv = knownCsvMimes.has(mime) || (mime === '' && hasCsvExtension);
 	if (!looksLikeCsv) {
 		return json({ success: false, message: 'Only CSV files are accepted' }, { status: 400 });
 	}

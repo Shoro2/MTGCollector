@@ -90,6 +90,12 @@ export function invalidateSessionCache(sessionId?: string) {
 	else sessionCache.clear();
 }
 
+export function invalidateSessionCacheForUser(userId: string) {
+	for (const [sid, entry] of sessionCache) {
+		if (entry.user.id === userId) sessionCache.delete(sid);
+	}
+}
+
 export function findOrCreateUser(googleId: string, email: string, name: string, avatarUrl: string | null): string {
 	const existing = sqlite.prepare('SELECT id FROM users WHERE google_id = ?').get(googleId) as { id: string } | undefined;
 	if (existing) {

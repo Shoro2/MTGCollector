@@ -1,5 +1,5 @@
 import { sqlite } from './db.js';
-import { priceDataCache, setsCache, tagsCache } from './cache.js';
+import { priceDataCache, setsCache } from './cache.js';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -158,7 +158,6 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 
 		priceDataCache.invalidateAll();
 		setsCache.invalidate();
-		tagsCache.invalidate();
 
 		try {
 			sqlite.pragma('optimize');
@@ -184,4 +183,25 @@ export function checkAndUpdatePrices(): void {
 	runPriceUpdate().catch((err) => {
 		console.error('[price-updater] Background price update failed:', err.message);
 	});
+}
+
+/**
+ * Did we miss a daily snapshot? Returns true if there's no price_history row
+ * dated today (UTC) while at least one card has a price. The daily `setTimeout`
+ * only fires at the next 18:00 UTC, so without this check a server that was
+ * down for a day won't catch up until the day after tomorrow.
+ */
+export function isMissingTodaySnapshot(): boolean {
+	const hasPriceableCard = sqlite.prepare(
+		`SELECT 1 FROM cards
+		 WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL
+		    OR price_usd IS NOT NULL OR price_usd_foil IS NOT NULL
+		 LIMIT 1`
+	).get();
+	if (!hasPriceableCard) return false;
+
+	const today = sqlite.prepare(
+		`SELECT 1 FROM price_history WHERE DATE(recorded_at) = DATE('now') LIMIT 1`
+	).get();
+	return !today;
 }

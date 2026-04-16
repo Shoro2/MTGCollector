@@ -80,6 +80,49 @@ function ensurePriceHistoryDailyUnique() {
 	);
 }
 
+function migrateTagsToPerUser() {
+	// Old schema had `name TEXT NOT NULL UNIQUE` (column-level, auto-indexed and
+	// undroppable), so the only way to get (user_id, name) composite uniqueness
+	// is to recreate the table. Idempotent: skipped once user_id exists.
+	const cols = tableColumnNames('tags');
+	if (cols.has('user_id')) return;
+
+	// Pick a default owner for existing (formerly global) tags: prefer the
+	// ADMIN_EMAIL user, fall back to the oldest account. If there are no
+	// users at all (dev scaffold), wipe the orphan tags and their join rows —
+	// they're already unreachable through the user-scoped UI.
+	const adminEmail = (process.env.ADMIN_EMAIL ?? '').toLowerCase();
+	const defaultOwner = sqlite.prepare(
+		`SELECT id FROM users
+		 ORDER BY CASE WHEN LOWER(email) = ? THEN 0 ELSE 1 END, created_at ASC
+		 LIMIT 1`
+	).get(adminEmail) as { id: string } | undefined;
+
+	sqlite.transaction(() => {
+		sqlite.exec(`
+			CREATE TABLE tags_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+				name TEXT NOT NULL,
+				color TEXT DEFAULT '#3b82f6',
+				UNIQUE(user_id, name)
+			)
+		`);
+
+		if (defaultOwner) {
+			sqlite.prepare(
+				`INSERT INTO tags_new (id, user_id, name, color)
+				 SELECT id, ?, name, color FROM tags`
+			).run(defaultOwner.id);
+		} else {
+			sqlite.exec('DELETE FROM collection_card_tags');
+		}
+
+		sqlite.exec('DROP TABLE tags');
+		sqlite.exec('ALTER TABLE tags_new RENAME TO tags');
+	})();
+}
+
 export function initDb() {
 	sqlite.exec(SCHEMA_SQL);
 
@@ -120,8 +163,15 @@ export function initDb() {
 	addColumnIfMissing('users', 'google_vision_api_key', 'TEXT');
 
 	migrateFtsToExternalContent();
+	migrateTagsToPerUser();
 	dedupePriceHistoryPerDay();
 	ensurePriceHistoryDailyUnique();
+
+	// Indexes that may not be present on pre-existing databases. The schema-sql
+	// CREATE INDEX IF NOT EXISTS statements run inside SCHEMA_SQL above, so
+	// these are for belt-and-suspenders in case that block gets re-ordered.
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id)');
+	sqlite.exec('CREATE INDEX IF NOT EXISTS idx_cards_released_at ON cards(released_at)');
 
 	// API usage tracking
 	sqlite.exec(`

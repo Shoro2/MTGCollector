@@ -5,7 +5,7 @@
 // plaintext and passed through unchanged — this keeps existing users working
 // while `decryptSecret` opportunistically re-encrypts them on next write.
 
-import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
+import { randomBytes, createCipheriv, createDecipheriv, createHmac } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -82,4 +82,16 @@ export function decryptSecret(stored: string): string | null {
 /** True if the stored value was written by `encryptSecret`. */
 export function isEncrypted(stored: string): boolean {
 	return !!stored && stored.startsWith(`${PREFIX}:`);
+}
+
+/**
+ * Keyed hash for pseudonymising short identifiers (IPs, etc.) before storage.
+ * Uses HMAC-SHA256 with the same server-side secret that encrypts user
+ * secrets, so plain SHA-256 rainbow-table lookups don't work. The hash is
+ * stable across calls on the same server instance but rotates if the key
+ * file is regenerated.
+ */
+export function hashIdentifier(value: string, domain = 'default'): string {
+	const key = loadOrCreateKey();
+	return createHmac('sha256', key).update(`${domain}:${value}`).digest('hex').slice(0, 32);
 }

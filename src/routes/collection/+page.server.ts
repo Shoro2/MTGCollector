@@ -94,8 +94,8 @@ export async function load({ url, locals }) {
 		tags: tagsMap.get(item.id as number) || []
 	})) as Array<Record<string, unknown> & { tags: Array<Record<string, unknown>> }>;
 
-	// Get all tags (cached, short TTL)
-	const allTags = tagsCache.get();
+	// Get the user's tags (cached per-user, short TTL)
+	const allTags = tagsCache.get(userId);
 
 	// Get collection stats
 	const stats = sqlite

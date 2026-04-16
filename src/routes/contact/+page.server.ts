@@ -1,6 +1,6 @@
 import { sqlite } from '$lib/server/db';
 import { fail } from '@sveltejs/kit';
-import { createHash } from 'node:crypto';
+import { hashIdentifier } from '$lib/server/crypto';
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 import type { Actions, PageServerLoad } from './$types';
@@ -83,7 +83,9 @@ export const actions: Actions = {
 		}
 
 		const ip = getClientAddress();
-		const ipHash = createHash('sha256').update(ip).digest('hex').slice(0, 32);
+		// HMAC with the server secret so rainbow-table lookups against common
+		// residential IP ranges don't trivially recover the original address.
+		const ipHash = hashIdentifier(ip, 'contact-ip');
 
 		const turnstileToken = String(form.get('cf-turnstile-response') ?? '');
 		if (!(await verifyTurnstile(turnstileToken, ip))) {

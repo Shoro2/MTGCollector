@@ -1,5 +1,5 @@
-import { initDb } from '$lib/server/db';
-import { checkAndUpdatePrices } from '$lib/server/price-updater';
+import { sqlite, initDb } from '$lib/server/db';
+import { checkAndUpdatePrices, isMissingTodaySnapshot } from '$lib/server/price-updater';
 import { validateSession } from '$lib/server/auth';
 import { error, redirect, type Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
@@ -19,8 +19,42 @@ function scheduleDailyPriceUpdate() {
 		checkAndUpdatePrices();
 		setInterval(() => checkAndUpdatePrices(), 24 * 60 * 60 * 1000);
 	}, msUntilNext);
+
+	// Catch-up: if the server was offline over a scheduled 18:00 UTC slot,
+	// today's snapshot is missing. Run an update ~30s after boot (idempotent
+	// against the main schedule thanks to the `updateInProgress` guard and the
+	// UNIQUE(card_id, DATE(recorded_at)) upsert in runPriceUpdate).
+	setTimeout(() => {
+		try {
+			if (isMissingTodaySnapshot()) {
+				console.log('[price-updater] Missing snapshot for today — running catch-up update');
+				checkAndUpdatePrices();
+			}
+		} catch (err) {
+			console.error('[price-updater] Catch-up check failed:', err);
+		}
+	}, 30_000);
 }
 scheduleDailyPriceUpdate();
+
+// Graceful shutdown so in-flight SQLite writes finish and the WAL flushes
+// before the process exits. Without this, `docker stop` or `kubectl delete`
+// SIGTERM would tear the process down mid-transaction after the 10s grace.
+let shuttingDown = false;
+function shutdown(signal: string) {
+	if (shuttingDown) return;
+	shuttingDown = true;
+	console.log(`[shutdown] ${signal} received, closing DB`);
+	try {
+		sqlite.pragma('wal_checkpoint(TRUNCATE)');
+		sqlite.close();
+	} catch (err) {
+		console.error('[shutdown] DB close failed:', err);
+	}
+	process.exit(0);
+}
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
 
 const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz', '/contact', '/api/health'];
 

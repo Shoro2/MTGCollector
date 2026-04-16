@@ -9,27 +9,50 @@ const USERS_PAGE_SIZE = 50;
 export async function load({ locals, url }) {
 	if (!locals.user?.isAdmin) throw redirect(302, '/');
 
-	// Users — paginated to stay responsive with large user counts.
+	// Users — paginated to stay responsive with large user counts. Aggregates
+	// are pulled via LEFT JOIN on grouped subqueries so the engine visits each
+	// dependent table once instead of once per user row (as scalar subqueries
+	// would force).
 	const page = Math.max(1, parseInt(url.searchParams.get('usersPage') || '1') || 1);
 	const offset = (page - 1) * USERS_PAGE_SIZE;
 	const users = sqlite.prepare(
 		`SELECT u.id, u.name, u.email, u.avatar_url, u.created_at,
-			(SELECT COUNT(*) FROM collection_cards WHERE user_id = u.id) as collection_count,
-			(SELECT COALESCE(SUM(quantity), 0) FROM collection_cards WHERE user_id = u.id) as total_cards,
-			(SELECT COUNT(*) FROM wishlist_cards WHERE user_id = u.id) as wishlist_count,
-			(SELECT COUNT(*) FROM sessions WHERE user_id = u.id AND expires_at > datetime('now')) as active_sessions
-		FROM users u ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
+			COALESCE(cc.collection_count, 0) as collection_count,
+			COALESCE(cc.total_cards, 0) as total_cards,
+			COALESCE(wl.wishlist_count, 0) as wishlist_count,
+			COALESCE(sn.active_sessions, 0) as active_sessions
+		FROM users u
+		LEFT JOIN (
+			SELECT user_id, COUNT(*) as collection_count, COALESCE(SUM(quantity), 0) as total_cards
+			FROM collection_cards GROUP BY user_id
+		) cc ON cc.user_id = u.id
+		LEFT JOIN (
+			SELECT user_id, COUNT(*) as wishlist_count FROM wishlist_cards GROUP BY user_id
+		) wl ON wl.user_id = u.id
+		LEFT JOIN (
+			SELECT user_id, COUNT(*) as active_sessions
+			FROM sessions WHERE expires_at > datetime('now') GROUP BY user_id
+		) sn ON sn.user_id = u.id
+		ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
 	).all(USERS_PAGE_SIZE, offset) as Array<Record<string, unknown>>;
 
-	// Database stats
-	const cardCount = (sqlite.prepare('SELECT COUNT(*) as c FROM cards').get() as { c: number }).c;
-	const collectionCount = (sqlite.prepare('SELECT COUNT(*) as c FROM collection_cards').get() as { c: number }).c;
-	const wishlistCount = (sqlite.prepare('SELECT COUNT(*) as c FROM wishlist_cards').get() as { c: number }).c;
-	const priceHistoryCount = (sqlite.prepare('SELECT COUNT(*) as c FROM price_history').get() as { c: number }).c;
-	const tagCount = (sqlite.prepare('SELECT COUNT(*) as c FROM tags').get() as { c: number }).c;
-	const sessionCount = (sqlite.prepare('SELECT COUNT(*) as c FROM sessions').get() as { c: number }).c;
-	const userCount = (sqlite.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number }).c;
-	const cardFaceCount = (sqlite.prepare('SELECT COUNT(*) as c FROM card_faces').get() as { c: number }).c;
+	// Database stats — one roundtrip instead of eight.
+	const stats = sqlite.prepare(
+		`SELECT
+			(SELECT COUNT(*) FROM cards) as cardCount,
+			(SELECT COUNT(*) FROM collection_cards) as collectionCount,
+			(SELECT COUNT(*) FROM wishlist_cards) as wishlistCount,
+			(SELECT COUNT(*) FROM price_history) as priceHistoryCount,
+			(SELECT COUNT(*) FROM tags) as tagCount,
+			(SELECT COUNT(*) FROM sessions) as sessionCount,
+			(SELECT COUNT(*) FROM users) as userCount,
+			(SELECT COUNT(*) FROM card_faces) as cardFaceCount`
+	).get() as {
+		cardCount: number; collectionCount: number; wishlistCount: number;
+		priceHistoryCount: number; tagCount: number; sessionCount: number;
+		userCount: number; cardFaceCount: number;
+	};
+	const { cardCount, collectionCount, wishlistCount, priceHistoryCount, tagCount, sessionCount, userCount, cardFaceCount } = stats;
 
 	// Table sizes (row counts + estimated sizes)
 	const tables = sqlite.prepare(
