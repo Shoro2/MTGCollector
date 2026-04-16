@@ -71,7 +71,10 @@
 
 	function log(msg: string) {
 		const elapsed = ((performance.now() - scanStartTime) / 1000).toFixed(2);
-		debugLog = [...debugLog, `[+${elapsed}s] ${msg}`];
+		// Push instead of spread — spread allocates a new array per call
+		// and we log ~70+ times per scan.
+		debugLog.push(`[+${elapsed}s] ${msg}`);
+		debugLog = debugLog;
 	}
 
 	async function copyDebugLog() {
@@ -322,34 +325,33 @@
 			// === Strategy 5: Color saturation mask ===
 			// Cards have colored frames/art that are more saturated than a plain background.
 			// This helps detect light-bordered cards that blend with the background in grayscale.
-			const hsv = new cv.Mat();
-			cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+			// try/finally so a throw mid-pipeline doesn't leak Mats into the WASM heap.
+			const rgb = new cv.Mat();
 			const hsvMat = new cv.Mat();
-			cv.cvtColor(hsv, hsvMat, cv.COLOR_RGB2HSV);
-			hsv.delete();
-
 			const channels = new cv.MatVector();
-			cv.split(hsvMat, channels);
-			const saturation = channels.get(1);
-			hsvMat.delete();
-
-			// Threshold on saturation — cards with colored borders will have higher saturation
 			const satThresh = new cv.Mat();
-			cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
-
-			// Morphological close to fill gaps within cards, then erode to separate
 			const satCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
-			cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
 			const satSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			cv.erode(satThresh, satThresh, satSepKernel);
-			cv.dilate(satThresh, satThresh, satSepKernel);
-
-			findCardContours(satThresh, minArea, maxArea);
-			log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
-
-			saturation.delete(); satThresh.delete();
-			satCloseKernel.delete(); satSepKernel.delete();
-			channels.delete();
+			try {
+				cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+				cv.cvtColor(rgb, hsvMat, cv.COLOR_RGB2HSV);
+				cv.split(hsvMat, channels);
+				const saturation = channels.get(1);
+				cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
+				cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
+				cv.erode(satThresh, satThresh, satSepKernel);
+				cv.dilate(satThresh, satThresh, satSepKernel);
+				findCardContours(satThresh, minArea, maxArea);
+				log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
+				saturation.delete();
+			} finally {
+				satThresh.delete();
+				satCloseKernel.delete();
+				satSepKernel.delete();
+				channels.delete();
+				hsvMat.delete();
+				rgb.delete();
+			}
 
 			// === Strategy 6: Inverted Otsu for light cards on light backgrounds ===
 			// Some cards (lands with light borders) blend with white backgrounds.
@@ -402,19 +404,22 @@
 				const relaxedMinAspect = 0.4;
 				const relaxedMaxAspect = 0.95;
 
-				// Re-run Canny with relaxed params
+				// Re-run Canny with relaxed params, stopping early if we've
+				// already surfaced enough candidates for the expected card count.
 				for (const params of [{ blur: 5, low: 20, high: 80 }, { blur: 7, low: 30, high: 100 }]) {
 					const blurMat = new cv.Mat();
 					const edgeMat = new cv.Mat();
-					cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
-					cv.Canny(blurMat, edgeMat, params.low, params.high);
-
 					const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-					cv.dilate(edgeMat, edgeMat, kernel);
+					try {
+						cv.GaussianBlur(gray, blurMat, new cv.Size(params.blur, params.blur), 0);
+						cv.Canny(blurMat, edgeMat, params.low, params.high);
+						cv.dilate(edgeMat, edgeMat, kernel);
+						findCardContours(edgeMat, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+					} finally {
+						blurMat.delete(); edgeMat.delete(); kernel.delete();
+					}
 
-					findCardContours(edgeMat, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
-
-					blurMat.delete(); edgeMat.delete(); kernel.delete();
+					if (allCandidates.length >= expectedCardCount * 1.5) break;
 				}
 
 				// Re-run adaptive threshold with different params
@@ -1089,65 +1094,6 @@
 		}
 
 		return result;
-	}
-
-	function detectFoilFromWords(words: any[], bottomUrl: string, setCode: string, langs: string): boolean {
-		if (!setCode || !words?.length) return false;
-
-		const langList = langs.split('|');
-		const setUpper = setCode.toUpperCase();
-
-		// Find the SET word and LANG word in Tesseract's word list
-		let setWord: any = null;
-		let langWord: any = null;
-		for (const w of words) {
-			const t = w.text.toUpperCase().replace(/[^A-Z]/g, '');
-			if (t === setUpper) setWord = w;
-			if (langList.includes(t) && setWord) { langWord = w; break; }
-		}
-
-		if (!setWord || !langWord) return false;
-
-		// Get bounding boxes — the separator is between SET's right edge and LANG's left edge
-		const sepX1 = setWord.bbox.x1;  // right edge of SET
-		const sepX2 = langWord.bbox.x0; // left edge of LANG
-		const sepY0 = Math.min(setWord.bbox.y0, langWord.bbox.y0);
-		const sepY1 = Math.max(setWord.bbox.y1, langWord.bbox.y1);
-		const sepW = sepX2 - sepX1;
-		const sepH = sepY1 - sepY0;
-
-		if (sepW < 3 || sepH < 3) return false;
-
-		// Draw the OCR image onto a canvas to read pixels
-		const img = new Image();
-		img.src = bottomUrl;
-
-		try {
-			const canvas = document.createElement('canvas');
-			canvas.width = img.naturalWidth || img.width;
-			canvas.height = img.naturalHeight || img.height;
-			const ctx = canvas.getContext('2d');
-			if (!ctx) return false;
-			ctx.drawImage(img, 0, 0);
-
-			// Read the separator region pixels
-			const imageData = ctx.getImageData(sepX1, sepY0, sepW, sepH);
-			const pixels = imageData.data;
-
-			// Count bright pixels (the symbol is light text on dark background)
-			let brightPixels = 0;
-			const totalPixels = sepW * sepH;
-			for (let i = 0; i < pixels.length; i += 4) {
-				const brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
-				if (brightness > 140) brightPixels++;
-			}
-
-			const brightRatio = brightPixels / totalPixels;
-			// Star ★ fills ~15-30% of its bounding box, dot • fills ~5-12%
-			return brightRatio > 0.14;
-		} catch {
-			return false;
-		}
 	}
 
 	// Normalized similarity score (0-1) based on Levenshtein distance

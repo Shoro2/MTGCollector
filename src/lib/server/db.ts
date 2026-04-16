@@ -12,6 +12,7 @@ const sqlite = new Database(dbPath);
 
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
+sqlite.pragma('cache_size = -131072'); // 128MB page cache (default is ~8MB)
 
 export const db = drizzle(sqlite, { schema });
 
@@ -123,10 +124,12 @@ export function initDb() {
 		CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
 		CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
 		CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
+		CREATE INDEX IF NOT EXISTS idx_collection_cards_user_card ON collection_cards(user_id, card_id);
 		CREATE INDEX IF NOT EXISTS idx_wishlist_cards_card_id ON wishlist_cards(card_id);
 		CREATE INDEX IF NOT EXISTS idx_wishlist_cards_user_id ON wishlist_cards(user_id);
 		CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
 		CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
+		CREATE INDEX IF NOT EXISTS idx_price_history_card_recorded ON price_history(card_id, recorded_at DESC);
 
 		CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
 			card_id,

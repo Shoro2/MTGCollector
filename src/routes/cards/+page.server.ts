@@ -1,13 +1,7 @@
 import { db, sqlite } from '$lib/server/db';
 import { cards } from '$lib/server/schema';
 import { sql } from 'drizzle-orm';
-import { createCache } from '$lib/server/cache';
-
-const setsCache = createCache(
-	() => sqlite.prepare('SELECT DISTINCT set_code, set_name FROM cards ORDER BY set_name ASC')
-		.all() as Array<{ set_code: string; set_name: string }>,
-	60 * 60 * 1000 // 1 hour
-);
+import { setsCache } from '$lib/server/cache';
 
 export async function load({ url, locals }) {
 	const query = url.searchParams.get('q') || '';
