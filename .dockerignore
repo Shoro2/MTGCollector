@@ -1,0 +1,14 @@
+.git
+.github
+.svelte-kit
+build
+data
+dist
+node_modules
+static/card-images
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+README.md

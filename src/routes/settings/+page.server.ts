@@ -1,6 +1,7 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { decryptSecret, encryptSecret } from '$lib/server/crypto';
+import { invalidateSessionCache } from '$lib/server/auth';
 import type { PageServerLoad, Actions } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -64,7 +65,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
-	setVisionKey: async ({ request, locals }) => {
+	setVisionKey: async ({ request, locals, cookies }) => {
 		if (!locals.user) {
 			throw redirect(302, '/login');
 		}
@@ -81,17 +82,19 @@ export const actions: Actions = {
 
 		sqlite.prepare('UPDATE users SET google_vision_api_key = ? WHERE id = ?')
 			.run(encryptSecret(apiKey), locals.user.id);
+		invalidateSessionCache(cookies.get('session'));
 
 		return { setVisionKey: { success: true } };
 	},
 
-	clearVisionKey: async ({ locals }) => {
+	clearVisionKey: async ({ locals, cookies }) => {
 		if (!locals.user) {
 			throw redirect(302, '/login');
 		}
 
 		sqlite.prepare('UPDATE users SET google_vision_api_key = NULL WHERE id = ?')
 			.run(locals.user.id);
+		invalidateSessionCache(cookies.get('session'));
 
 		return { clearVisionKey: { success: true } };
 	}

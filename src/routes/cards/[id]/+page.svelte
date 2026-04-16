@@ -192,7 +192,7 @@
 		<!-- Card Image -->
 		<div>
 			{#if getImageSrc()}
-				<img src={getImageSrc()} alt="Magic: The Gathering - {card.name} ({card.set_name})" class="w-full rounded-lg shadow-lg" />
+				<img src={getImageSrc()} alt="Magic: The Gathering - {card.name} ({card.set_name})" width="488" height="680" class="w-full rounded-lg shadow-lg aspect-[488/680] object-cover" loading="eager" fetchpriority="high" />
 			{:else}
 				<div class="w-full aspect-[488/680] bg-[var(--color-surface)] rounded-lg flex items-center justify-center text-[var(--color-text-muted)]">
 					No image
@@ -204,7 +204,7 @@
 				<div class="mt-4 grid grid-cols-2 gap-2">
 					{#each data.faces as face}
 						{#if face.image_uri}
-							<img src={face.image_uri as string} alt="Magic: The Gathering - {face.name}" class="w-full rounded" />
+							<img src={face.image_uri as string} alt="Magic: The Gathering - {face.name}" width="488" height="680" class="w-full rounded aspect-[488/680] object-cover" loading="lazy" />
 						{/if}
 					{/each}
 				</div>

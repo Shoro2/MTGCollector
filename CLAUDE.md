@@ -84,12 +84,12 @@ All `collection_cards` and `wishlist_cards` queries filter by `user_id`. Each us
 
 - **EUR primary, USD fallback**: Prices display in EUR when available, otherwise USD with `$` prefix
 - **USD→EUR conversion**: For profit/loss calculations, USD prices are converted using a live exchange rate from `frankfurter.dev` (cached 6 hours, fallback 0.92). See `src/lib/server/exchange-rate.ts`
-- **Price history**: Deduplicated to one entry per day (`MAX(recorded_at) GROUP BY DATE(recorded_at)`)
+- **Price history**: At most one entry per card per calendar day (enforced by `UNIQUE(card_id, DATE(recorded_at))`). A new row is only written when at least one of the four prices differs from the card's previous snapshot, so static prices don't produce daily duplicates.
 - **Price snapshots**: Include both EUR and USD prices (`price_eur`, `price_eur_foil`, `price_usd`, `price_usd_foil`)
 
 ### Price Updates
 
-Background job checks Scryfall `bulk-data` API for new data, downloads only when newer data exists. Runs 5s after server start (deferred to avoid SSR fetch warning). Snapshots prices only for cards in any user's collection. Manual trigger: `npm run import-cards` or POST to `/api/prices` (admin only).
+Background job checks Scryfall `bulk-data` API for new data, downloads only when newer data exists. Runs 5s after server start (deferred to avoid SSR fetch warning). Snapshots prices for **all cards that have at least one Scryfall price** (so the history is available for every card, not just collection cards). The snapshot INSERT is change-aware: it compares the new price with the card's latest `price_history` row and skips cards whose four prices are identical. Manual trigger: `npm run import-cards` or POST to `/api/prices` (admin only).
 
 ## Directory Structure
 
@@ -217,12 +217,28 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 
 ## Database Migrations
 
-New columns/tables are added via try/catch in `src/lib/server/db.ts:initDb()`:
+New columns/tables are added via `addColumnIfMissing` in `src/lib/server/db.ts:initDb()` (PRAGMA-checked so real ALTER errors propagate):
 
 ```typescript
-try {
-  sqlite.exec('ALTER TABLE collection_cards ADD COLUMN user_id TEXT');
-} catch { /* Column already exists */ }
+addColumnIfMissing('collection_cards', 'user_id', 'TEXT REFERENCES users(id) ON DELETE CASCADE');
 ```
 
-This pattern allows the app to work with both fresh and existing databases.
+Structural migrations beyond column adds (e.g. the FTS5 external-content rebuild and the `price_history` same-day dedup + UNIQUE index) are done in dedicated helpers that are idempotent and run on every boot.
+
+## Backups
+
+The app's state is two files under `data/`:
+
+- `data/mtg.db` — primary SQLite database (+ the transient `-wal`/`-shm` companions when the DB is open).
+- `data/secret-key.hex` — AES-256 key used to encrypt per-user Google Vision API keys. Lose this file and existing users have to re-enter their key from `/settings`.
+
+Recommended backup flow (safe while the app is running, because SQLite is in WAL mode):
+
+```bash
+# Consistent snapshot of the DB, even under load
+sqlite3 data/mtg.db ".backup 'backups/mtg-$(date +%Y%m%d-%H%M%S).db'"
+# And the secret key alongside it
+cp data/secret-key.hex backups/secret-key-$(date +%Y%m%d-%H%M%S).hex
+```
+
+For Docker deployments, mount `/app/data` as a volume and include it in your host's backup job. `.backup` creates a consistent copy even while writers are active — prefer it over `cp mtg.db`, which can capture a torn page mid-write.

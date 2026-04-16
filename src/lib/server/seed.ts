@@ -1,9 +1,9 @@
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
-import { mkdirSync, createWriteStream, existsSync, unlinkSync, readFileSync } from 'node:fs';
+import { mkdirSync, createWriteStream, existsSync, unlinkSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
-import { createReadStream } from 'node:fs';
 import { SCHEMA_SQL } from './schema-sql.js';
+import { parseScryfallBulkStream } from './bulk-stream.js';
 
 const dataDir = join(process.cwd(), 'data');
 mkdirSync(dataDir, { recursive: true });
@@ -72,25 +72,16 @@ async function downloadBulkData(): Promise<string> {
 	return bulkDataPath;
 }
 
-function importCards(filePath: string) {
+async function importCards(filePath: string) {
 	console.log('Opening database...');
 	const sqlite = new Database(dbPath);
 	sqlite.pragma('journal_mode = WAL');
 	sqlite.pragma('foreign_keys = ON');
-	sqlite.pragma('synchronous = OFF');
-	sqlite.pragma('cache_size = -64000');
+	sqlite.pragma('synchronous = OFF'); // Bulk import: durability traded for speed
+	sqlite.pragma('cache_size = -131072');
+	sqlite.pragma('temp_store = MEMORY');
 
-	// Schema is shared with the main app's initDb() to avoid drift.
 	sqlite.exec(SCHEMA_SQL);
-
-	console.log('Reading JSON file...');
-	// Read and parse in chunks - the file can be very large
-	const fileContent = readFileSync(filePath, 'utf-8');
-	const allCards: ScryfallCard[] = JSON.parse(fileContent);
-
-	// Filter to English cards only
-	const englishCards = allCards.filter((c) => c.lang === 'en');
-	console.log(`Found ${allCards.length} total cards, ${englishCards.length} English cards`);
 
 	const insertCard = sqlite.prepare(`
 		INSERT OR REPLACE INTO cards (
@@ -116,21 +107,20 @@ function importCards(filePath: string) {
 	`);
 
 	const insertPrice = sqlite.prepare(`
-		INSERT INTO price_history (card_id, price_eur, price_eur_foil, recorded_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 	`);
 
-	// Delete existing card_faces to avoid duplicates on re-import
 	sqlite.exec('DELETE FROM card_faces');
 
 	const now = new Date().toISOString();
 	const batchSize = 5000;
 	let imported = 0;
+	let pendingBatch: ScryfallCard[] = [];
 
-	console.log('Importing cards...');
-
-	for (let i = 0; i < englishCards.length; i += batchSize) {
-		const batch = englishCards.slice(i, i + batchSize);
+	const applyBatch = () => {
+		const batch = pendingBatch;
+		pendingBatch = [];
 		const transaction = sqlite.transaction(() => {
 			for (const card of batch) {
 				const imageUri =
@@ -176,7 +166,6 @@ function importCards(filePath: string) {
 					priceUsdFoil
 				);
 
-				// Insert card faces for multi-faced cards
 				if (card.card_faces && card.card_faces.length > 1) {
 					for (let fi = 0; fi < card.card_faces.length; fi++) {
 						const face = card.card_faces[fi];
@@ -194,29 +183,48 @@ function importCards(filePath: string) {
 					}
 				}
 
-				// Record initial price
-				if (priceEur !== null || priceEurFoil !== null) {
-					insertPrice.run(card.id, priceEur, priceEurFoil, now);
+				if (priceEur !== null || priceEurFoil !== null || priceUsd !== null || priceUsdFoil !== null) {
+					insertPrice.run(card.id, priceEur, priceEurFoil, priceUsd, priceUsdFoil, now);
 				}
 			}
 		});
 		transaction();
-		imported += batch.length;
-		const pct = ((imported / englishCards.length) * 100).toFixed(1);
-		process.stdout.write(`\rImported ${imported}/${englishCards.length} (${pct}%)`);
+	};
+
+	console.log('Streaming JSON and importing cards (English only)...');
+	for await (const card of parseScryfallBulkStream<ScryfallCard>(filePath)) {
+		if (card.lang !== 'en') continue;
+		pendingBatch.push(card);
+		if (pendingBatch.length >= batchSize) {
+			applyBatch();
+			imported += batchSize;
+			process.stdout.write(`\rImported ${imported} cards...`);
+		}
+	}
+	if (pendingBatch.length > 0) {
+		imported += pendingBatch.length;
+		applyBatch();
 	}
 
-	console.log('Building full-text search index...');
-	// Indexes are created by SCHEMA_SQL. Rebuild FTS5 contents for speed
-	// (inserting ~100k rows via triggers would be slower than a bulk INSERT).
-	sqlite.exec(`DELETE FROM cards_fts`);
+	console.log('\nBuilding full-text search index...');
+	// External-content FTS5: rebuild reads directly from cards by rowid.
+	sqlite.exec(`INSERT INTO cards_fts(cards_fts) VALUES('rebuild')`);
+
+	// Collapse same-day duplicates (initial seed writes one snapshot per card;
+	// re-seeding on an existing DB would otherwise create a second row).
 	sqlite.exec(`
-		INSERT INTO cards_fts(card_id, name, type_line, oracle_text)
-			SELECT id, name, COALESCE(type_line, ''), COALESCE(oracle_text, '') FROM cards;
+		DELETE FROM price_history
+		WHERE id NOT IN (
+			SELECT MAX(id) FROM price_history
+			GROUP BY card_id, DATE(recorded_at)
+		)
 	`);
+	sqlite.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_day ON price_history(card_id, DATE(recorded_at))`
+	);
 
 	const count = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };
-	console.log(`\nDone! ${count.count} cards in database.`);
+	console.log(`Done! ${count.count} cards in database.`);
 
 	sqlite.close();
 }
@@ -231,9 +239,8 @@ async function main() {
 		console.log('Using existing bulk data file.');
 	}
 
-	importCards(bulkDataPath);
+	await importCards(bulkDataPath);
 
-	// Clean up downloaded file to save space
 	if (args.includes('--cleanup') && existsSync(bulkDataPath)) {
 		unlinkSync(bulkDataPath);
 		console.log('Cleaned up bulk data file.');

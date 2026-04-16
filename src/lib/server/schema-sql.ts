@@ -112,20 +112,30 @@ CREATE INDEX IF NOT EXISTS idx_cards_rarity ON cards(rarity);
 CREATE INDEX IF NOT EXISTS idx_cards_cmc ON cards(cmc);
 CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
 CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
+CREATE INDEX IF NOT EXISTS idx_card_faces_card_id_face ON card_faces(card_id, face_index);
 CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
 CREATE INDEX IF NOT EXISTS idx_collection_cards_user_card ON collection_cards(user_id, card_id);
 CREATE INDEX IF NOT EXISTS idx_collection_cards_user_id ON collection_cards(user_id);
+CREATE INDEX IF NOT EXISTS idx_collection_cards_user_added ON collection_cards(user_id, added_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wishlist_cards_card_id ON wishlist_cards(card_id);
 CREATE INDEX IF NOT EXISTS idx_wishlist_cards_user_id ON wishlist_cards(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_recorded ON price_history(card_id, recorded_at DESC);
 
+-- External-content FTS5: the index is stored here but the searchable text is
+-- read from cards via its rowid. This avoids duplicating name/type_line/
+-- oracle_text in the FTS auxiliary tables (~50–100 MB saved at scale) and
+-- keeps writes cheaper. Queries must match via "cards.rowid IN (SELECT rowid
+-- FROM cards_fts WHERE cards_fts MATCH ?)". The old content-stored schema
+-- (which included a card_id column) is migrated away in db.ts.
 CREATE VIRTUAL TABLE IF NOT EXISTS cards_fts USING fts5(
-	card_id,
 	name,
 	type_line,
-	oracle_text
+	oracle_text,
+	content='cards',
+	content_rowid='rowid'
 );
 `;

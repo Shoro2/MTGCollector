@@ -27,7 +27,7 @@ export async function load({ url, locals }) {
 
 	// Full-text search
 	if (query) {
-		conditions.push(`cards.id IN (SELECT card_id FROM cards_fts WHERE cards_fts MATCH ?)`);
+		conditions.push(`cards.rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)`);
 		// Escape FTS5 special characters and add prefix matching
 		const ftsQuery = query
 			.replace(/['"]/g, '')
