@@ -84,7 +84,7 @@ All `collection_cards` and `wishlist_cards` queries filter by `user_id`. Each us
 
 - **EUR primary, USD fallback**: Prices display in EUR when available, otherwise USD with `$` prefix
 - **USD→EUR conversion**: For profit/loss calculations, USD prices are converted using a live exchange rate from `frankfurter.dev` (cached 6 hours, fallback 0.92). See `src/lib/server/exchange-rate.ts`
-- **Price history**: At most one entry per card per calendar day (enforced by `UNIQUE(card_id, DATE(recorded_at))`). A new row is only written when at least one of the four prices differs from the card's previous snapshot, so static prices don't produce daily duplicates.
+- **Price history**: At most one entry per card per calendar day (enforced by `UNIQUE(card_id, snapshot_date)` on a dedicated `snapshot_date` column, independent of server timezone). A new row is only written when at least one of the four prices differs from the card's previous snapshot, so static prices don't produce daily duplicates.
 - **Price snapshots**: Include both EUR and USD prices (`price_eur`, `price_eur_foil`, `price_usd`, `price_usd_foil`)
 
 ### Price Updates

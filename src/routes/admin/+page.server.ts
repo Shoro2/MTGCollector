@@ -106,9 +106,10 @@ export async function load({ locals, url }) {
 
 	// Recent price history snapshots (unique dates)
 	const recentSnapshots = sqlite.prepare(
-		`SELECT DATE(recorded_at) as snapshot_date, COUNT(DISTINCT card_id) as cards_snapshotted
+		`SELECT snapshot_date, COUNT(DISTINCT card_id) as cards_snapshotted
 		 FROM price_history
-		 GROUP BY DATE(recorded_at)
+		 WHERE snapshot_date IS NOT NULL
+		 GROUP BY snapshot_date
 		 ORDER BY snapshot_date DESC
 		 LIMIT 10`
 	).all() as Array<{ snapshot_date: string; cards_snapshotted: number }>;
