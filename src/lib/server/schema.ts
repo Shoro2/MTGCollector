@@ -109,5 +109,6 @@ export const priceHistory = sqliteTable('price_history', {
 	cardId: text('card_id').notNull().references(() => cards.id),
 	priceEur: real('price_eur'),
 	priceEurFoil: real('price_eur_foil'),
-	recordedAt: text('recorded_at').$defaultFn(() => new Date().toISOString())
+	recordedAt: text('recorded_at').$defaultFn(() => new Date().toISOString()),
+	snapshotDate: text('snapshot_date')
 });

@@ -214,6 +214,30 @@ const MIGRATIONS: Migration[] = [
 			addColumnIfMissing(db, 'wishlist_cards', 'user_id', 'TEXT REFERENCES users(id) ON DELETE CASCADE');
 			db.exec('CREATE INDEX IF NOT EXISTS idx_wishlist_cards_user_id ON wishlist_cards(user_id)');
 		}
+	},
+	{
+		id: '0014_price_history_snapshot_date',
+		run: (db) => {
+			// Materialize the snapshot day as its own column instead of deriving it
+			// from DATE(recorded_at) at query time. Keeps the daily grouping stable
+			// regardless of server timezone and lets callers index/filter directly.
+			addColumnIfMissing(db, 'price_history', 'snapshot_date', 'TEXT');
+
+			// Backfill existing rows with the same value the old DATE(recorded_at)
+			// expression produced (SQLite DATE() is UTC), so the admin stats and
+			// the UNIQUE constraint stay byte-compatible across the migration.
+			db.exec(
+				`UPDATE price_history SET snapshot_date = DATE(recorded_at) WHERE snapshot_date IS NULL`
+			);
+
+			// Replace the expression-based UNIQUE with a plain column UNIQUE.
+			// Migration 0008 already collapsed same-day duplicates, so the new
+			// index can't fail on existing data.
+			db.exec(
+				`CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_snapshot_date ON price_history(card_id, snapshot_date)`
+			);
+			db.exec('DROP INDEX IF EXISTS idx_price_history_card_day');
+		}
 	}
 ];
 

@@ -114,10 +114,11 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 
 		// Change-aware daily snapshot. Only inserts a new price_history row
 		// when the card's current price differs from its most recent snapshot
-		// (or there's no snapshot yet). The UNIQUE(card_id, DATE(recorded_at))
+		// (or there's no snapshot yet). The UNIQUE(card_id, snapshot_date)
 		// upsert guarantees at most one row per card per day even if this job
 		// runs multiple times (e.g. after a restart or manual trigger).
 		const now = new Date().toISOString();
+		const snapshotDate = now.slice(0, 10);
 		const snapshotResult = sqlite.prepare(`
 			WITH last_snap AS (
 				SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil
@@ -127,8 +128,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 					FROM price_history
 				) WHERE rn = 1
 			)
-			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
-			SELECT c.id, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, ?
+			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at, snapshot_date)
+			SELECT c.id, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, ?, ?
 			FROM cards c
 			LEFT JOIN last_snap l ON l.card_id = c.id
 			WHERE (c.price_eur IS NOT NULL OR c.price_eur_foil IS NOT NULL OR c.price_usd IS NOT NULL OR c.price_usd_foil IS NOT NULL)
@@ -139,13 +140,13 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 			    OR c.price_usd IS NOT l.price_usd
 			    OR c.price_usd_foil IS NOT l.price_usd_foil
 			  )
-			ON CONFLICT(card_id, DATE(recorded_at)) DO UPDATE SET
+			ON CONFLICT(card_id, snapshot_date) DO UPDATE SET
 				price_eur = excluded.price_eur,
 				price_eur_foil = excluded.price_eur_foil,
 				price_usd = excluded.price_usd,
 				price_usd_foil = excluded.price_usd_foil,
 				recorded_at = excluded.recorded_at
-		`).run(now);
+		`).run(now, snapshotDate);
 
 		const snapshotted = snapshotResult.changes;
 		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards (change-only)`);
@@ -186,12 +187,13 @@ export function checkAndUpdatePrices(): void {
 }
 
 /**
- * Did we miss a daily snapshot? Returns true if there's no price_history row
- * dated today (UTC) while at least one card has a price. The daily `setTimeout`
- * only fires at the next 18:00 UTC, so without this check a server that was
- * down for a day won't catch up until the day after tomorrow.
+ * Did the server miss the previous day's scheduled snapshot? Returns true if
+ * at least one card has a price but no price_history row exists for yesterday
+ * (UTC). Used by the boot-time catch-up: we only want to trigger a premature
+ * snapshot when we actually missed a 18:00 slot — not every time the server
+ * restarts in the morning before today's slot has fired.
  */
-export function isMissingTodaySnapshot(): boolean {
+export function isMissingYesterdaySnapshot(): boolean {
 	const hasPriceableCard = sqlite.prepare(
 		`SELECT 1 FROM cards
 		 WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL
@@ -200,8 +202,8 @@ export function isMissingTodaySnapshot(): boolean {
 	).get();
 	if (!hasPriceableCard) return false;
 
-	const today = sqlite.prepare(
-		`SELECT 1 FROM price_history WHERE DATE(recorded_at) = DATE('now') LIMIT 1`
+	const yesterday = sqlite.prepare(
+		`SELECT 1 FROM price_history WHERE snapshot_date = DATE('now', '-1 day') LIMIT 1`
 	).get();
-	return !today;
+	return !yesterday;
 }
