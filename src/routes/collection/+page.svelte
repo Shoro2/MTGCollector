@@ -358,6 +358,85 @@
 		}
 	}
 
+	// Import-prices modal
+	type PriceImportResult = {
+		success: boolean;
+		format?: string;
+		mode?: string;
+		total?: number;
+		matchedCards?: number;
+		updatedRows?: number;
+		notInCollection?: number;
+		notInCollectionLabels?: string[];
+		notMatched?: number;
+		notMatchedLabels?: string[];
+		parseErrors?: string[];
+		parseErrorCount?: number;
+		message?: string;
+	};
+
+	let showPriceImportModal = $state(false);
+	let priceImportFormat = $state<'text' | 'cardmarket' | 'cardtrader'>('text');
+	let priceImportMode = $state<'fill' | 'overwrite'>('fill');
+	let priceImportText = $state('');
+	let priceImportFile = $state<File | null>(null);
+	let priceImportFileInput = $state<HTMLInputElement>(null!);
+	let priceImporting = $state(false);
+	let priceImportResult = $state<PriceImportResult | null>(null);
+
+	function openPriceImportModal() {
+		showPriceImportModal = true;
+		priceImportFormat = 'text';
+		priceImportMode = 'fill';
+		priceImportText = '';
+		priceImportFile = null;
+		priceImportResult = null;
+	}
+
+	function closePriceImportModal() {
+		if (priceImporting) return;
+		showPriceImportModal = false;
+	}
+
+	function setPriceImportFormat(f: 'text' | 'cardmarket' | 'cardtrader') {
+		priceImportFormat = f;
+		priceImportResult = null;
+		priceImportFile = null;
+	}
+
+	function onPriceImportFileChange(e: Event) {
+		const input = e.target as HTMLInputElement;
+		priceImportFile = input.files?.[0] ?? null;
+		priceImportResult = null;
+	}
+
+	async function doPriceImport() {
+		if (priceImportFormat === 'text' && !priceImportText.trim()) return;
+		if ((priceImportFormat === 'cardmarket' || priceImportFormat === 'cardtrader') && !priceImportFile) return;
+
+		priceImporting = true;
+		const formData = new FormData();
+		formData.append('format', priceImportFormat);
+		formData.append('mode', priceImportMode);
+		if (priceImportFormat === 'text') {
+			formData.append('text', priceImportText);
+		} else if (priceImportFile) {
+			formData.append('file', priceImportFile);
+		}
+
+		try {
+			const response = await fetch('/collection/prices', { method: 'POST', body: formData });
+			priceImportResult = await response.json();
+		} catch (err) {
+			priceImportResult = { success: false, message: (err as Error).message || 'Import failed' };
+		}
+		priceImporting = false;
+
+		if (priceImportResult?.success) {
+			await invalidate('app:collection');
+		}
+	}
+
 	function priceChange(item: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
 		const purchasePrice = item.purchase_price as number | null;
 		let currentPrice = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
@@ -608,6 +687,12 @@
 				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
 			>
 				Export
+			</button>
+			<button
+				onclick={openPriceImportModal}
+				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
+			>
+				Import prices
 			</button>
 		</div>
 	</div>
@@ -1048,6 +1133,207 @@
 							{exportCopied ? 'Copied!' : 'Copy to clipboard'}
 						</button>
 					{/if}
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Import Prices Modal -->
+{#if showPriceImportModal}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+		onclick={(e) => { if (e.target === e.currentTarget) closePriceImportModal(); }}
+		onkeydown={(e) => { if (e.key === 'Escape') closePriceImportModal(); }}
+	>
+		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+			<div class="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
+				<h2 class="text-lg font-bold">Import Purchase Prices</h2>
+				<button onclick={closePriceImportModal} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
+			</div>
+
+			<div class="p-5 space-y-5">
+				<!-- Format tabs -->
+				<div class="flex gap-1 border-b border-[var(--color-border)] flex-wrap">
+					<button
+						type="button"
+						onclick={() => setPriceImportFormat('text')}
+						class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px {priceImportFormat === 'text' ? 'border-[var(--color-primary)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>
+						Text paste
+					</button>
+					<button
+						type="button"
+						onclick={() => setPriceImportFormat('cardmarket')}
+						class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px {priceImportFormat === 'cardmarket' ? 'border-[var(--color-primary)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>
+						Cardmarket CSV
+					</button>
+					<button
+						type="button"
+						onclick={() => setPriceImportFormat('cardtrader')}
+						class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px {priceImportFormat === 'cardtrader' ? 'border-[var(--color-primary)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+					>
+						Cardtrader XLS
+					</button>
+				</div>
+
+				<!-- Mode selection -->
+				<div class="space-y-2">
+					<p class="text-sm font-medium">Existing purchase prices</p>
+					<div class="flex flex-col sm:flex-row gap-3">
+						<label class="flex items-start gap-3 bg-[var(--color-bg)] rounded-lg p-3 border cursor-pointer flex-1 transition-colors {priceImportMode === 'fill' ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}">
+							<input type="radio" bind:group={priceImportMode} value="fill" class="mt-1" />
+							<div>
+								<p class="font-medium text-sm">Fill only empty</p>
+								<p class="text-xs text-[var(--color-text-muted)]">Only set a price where no purchase price exists yet.</p>
+							</div>
+						</label>
+						<label class="flex items-start gap-3 bg-[var(--color-bg)] rounded-lg p-3 border cursor-pointer flex-1 transition-colors {priceImportMode === 'overwrite' ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}">
+							<input type="radio" bind:group={priceImportMode} value="overwrite" class="mt-1" />
+							<div>
+								<p class="font-medium text-sm">Overwrite existing</p>
+								<p class="text-xs text-[var(--color-text-muted)]">Replace existing purchase prices with the imported values.</p>
+							</div>
+						</label>
+					</div>
+				</div>
+
+				<!-- Body per format -->
+				{#if priceImportFormat === 'text'}
+					<div class="bg-[var(--color-bg)] rounded-lg p-3 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] space-y-1">
+						<p class="font-medium text-[var(--color-text)]">Format: <code>count Name (SET) number price E|D</code></p>
+						<p><code>E</code> = EUR, <code>D</code> = USD (converted to EUR using the current rate).</p>
+						<p>Example: <code>1 An Offer You Can't Refuse (SNC) 51 1.51E</code></p>
+					</div>
+					<div>
+						<label for="price-import-text" class="block text-sm font-medium mb-2">Card list with prices</label>
+						<textarea
+							id="price-import-text"
+							bind:value={priceImportText}
+							rows="10"
+							placeholder={`1 An Offer You Can't Refuse (SNC) 51 1.51E\n1 Arcane Signet (WOC) 145 0.99E\n1 Brainstorm (ICE) 61 2.50D`}
+							class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-[var(--color-primary)]"
+						></textarea>
+					</div>
+				{:else if priceImportFormat === 'cardmarket'}
+					<div class="bg-[var(--color-bg)] rounded-lg p-3 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] space-y-1">
+						<p class="font-medium text-[var(--color-text)]">Cardmarket "Articles from Shipment" CSV</p>
+						<p>Semicolon-separated export with <code>idProduct</code>, <code>price</code>, <code>isFoil</code> columns.</p>
+						<p>Cards are matched via their Cardmarket product ID — run <code>npm run import-cards</code> or wait for the next price update if you recently upgraded, otherwise matches may be empty.</p>
+					</div>
+					<div>
+						<label for="price-import-cm" class="block text-sm font-medium mb-2">CSV file</label>
+						<input
+							id="price-import-cm"
+							type="file"
+							accept=".csv,text/csv"
+							onchange={onPriceImportFileChange}
+							bind:this={priceImportFileInput}
+							class="block w-full text-sm text-[var(--color-text-muted)]
+								file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0
+								file:text-sm file:font-medium file:bg-[var(--color-primary-button)]
+								file:text-white file:cursor-pointer hover:file:bg-[var(--color-primary-hover)]"
+						/>
+						{#if priceImportFile}
+							<p class="text-xs text-[var(--color-text-muted)] mt-1">{priceImportFile.name} ({(priceImportFile.size / 1024).toFixed(1)} KB)</p>
+						{/if}
+					</div>
+				{:else}
+					<div class="bg-[var(--color-bg)] rounded-lg p-3 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] space-y-1">
+						<p class="font-medium text-[var(--color-text)]">Cardtrader order export (.xls)</p>
+						<p>Matches on Set Code + Collector Number; Cardtrader's collector-booster "C"-prefixed codes are auto-stripped.</p>
+						<p>Prices come from the <code>Price in EUR Cents</code> column.</p>
+					</div>
+					<div>
+						<label for="price-import-ct" class="block text-sm font-medium mb-2">XLS file</label>
+						<input
+							id="price-import-ct"
+							type="file"
+							accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+							onchange={onPriceImportFileChange}
+							bind:this={priceImportFileInput}
+							class="block w-full text-sm text-[var(--color-text-muted)]
+								file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0
+								file:text-sm file:font-medium file:bg-[var(--color-primary-button)]
+								file:text-white file:cursor-pointer hover:file:bg-[var(--color-primary-hover)]"
+						/>
+						{#if priceImportFile}
+							<p class="text-xs text-[var(--color-text-muted)] mt-1">{priceImportFile.name} ({(priceImportFile.size / 1024).toFixed(1)} KB)</p>
+						{/if}
+					</div>
+				{/if}
+
+				<button
+					onclick={doPriceImport}
+					disabled={priceImporting || (priceImportFormat === 'text' ? !priceImportText.trim() : !priceImportFile)}
+					class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50"
+				>
+					{priceImporting ? 'Importing...' : 'Import prices'}
+				</button>
+
+				<!-- Result -->
+				{#if priceImportResult}
+					<div class="rounded-lg p-4 border {priceImportResult.success ? 'bg-green-900/20 border-green-500/50' : 'bg-red-900/20 border-red-500/50'}">
+						{#if priceImportResult.success}
+							<p class="font-medium text-green-300">
+								Updated {priceImportResult.updatedRows} collection entr{priceImportResult.updatedRows === 1 ? 'y' : 'ies'}
+								from {priceImportResult.matchedCards} matched card{priceImportResult.matchedCards === 1 ? '' : 's'}
+								(of {priceImportResult.total} input rows).
+							</p>
+							<p class="text-sm text-green-300/70 mt-1">
+								Mode: {priceImportResult.mode === 'overwrite' ? 'overwrite existing' : 'fill only empty'}.
+							</p>
+							{#if priceImportResult.notInCollection && priceImportResult.notInCollection > 0}
+								<div class="mt-3">
+									<p class="text-sm text-yellow-300">
+										{priceImportResult.notInCollection} card{priceImportResult.notInCollection === 1 ? '' : 's'} not in your collection (or already had a price in fill-only mode):
+									</p>
+									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
+										{#each priceImportResult.notInCollectionLabels ?? [] as lbl}
+											<li>{lbl}</li>
+										{/each}
+										{#if priceImportResult.notInCollection > (priceImportResult.notInCollectionLabels?.length ?? 0)}
+											<li>...and {priceImportResult.notInCollection - (priceImportResult.notInCollectionLabels?.length ?? 0)} more</li>
+										{/if}
+									</ul>
+								</div>
+							{/if}
+							{#if priceImportResult.notMatched && priceImportResult.notMatched > 0}
+								<div class="mt-3">
+									<p class="text-sm text-yellow-300">
+										{priceImportResult.notMatched} card{priceImportResult.notMatched === 1 ? '' : 's'} could not be matched in the database:
+									</p>
+									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
+										{#each priceImportResult.notMatchedLabels ?? [] as lbl}
+											<li>{lbl}</li>
+										{/each}
+										{#if priceImportResult.notMatched > (priceImportResult.notMatchedLabels?.length ?? 0)}
+											<li>...and {priceImportResult.notMatched - (priceImportResult.notMatchedLabels?.length ?? 0)} more</li>
+										{/if}
+									</ul>
+								</div>
+							{/if}
+							{#if priceImportResult.parseErrorCount && priceImportResult.parseErrorCount > 0}
+								<div class="mt-3">
+									<p class="text-sm text-yellow-300">
+										{priceImportResult.parseErrorCount} lines could not be parsed:
+									</p>
+									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto font-mono">
+										{#each priceImportResult.parseErrors ?? [] as line}
+											<li>{line}</li>
+										{/each}
+										{#if priceImportResult.parseErrorCount > (priceImportResult.parseErrors?.length ?? 0)}
+											<li>...and {priceImportResult.parseErrorCount - (priceImportResult.parseErrors?.length ?? 0)} more</li>
+										{/if}
+									</ul>
+								</div>
+							{/if}
+						{:else}
+							<p class="font-medium text-red-300">{priceImportResult.message || 'Import failed.'}</p>
+						{/if}
+					</div>
 				{/if}
 			</div>
 		</div>

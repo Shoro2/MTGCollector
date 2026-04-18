@@ -214,6 +214,13 @@ const MIGRATIONS: Migration[] = [
 			addColumnIfMissing(db, 'wishlist_cards', 'user_id', 'TEXT REFERENCES users(id) ON DELETE CASCADE');
 			db.exec('CREATE INDEX IF NOT EXISTS idx_wishlist_cards_user_id ON wishlist_cards(user_id)');
 		}
+	},
+	{
+		id: '0014_cards_cardmarket_id',
+		run: (db) => {
+			addColumnIfMissing(db, 'cards', 'cardmarket_id', 'INTEGER');
+			db.exec('CREATE INDEX IF NOT EXISTS idx_cards_cardmarket_id ON cards(cardmarket_id)');
+		}
 	}
 ];
 
