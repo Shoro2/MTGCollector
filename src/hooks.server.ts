@@ -1,5 +1,5 @@
 import { sqlite, initDb } from '$lib/server/db';
-import { checkAndUpdatePrices, isMissingTodaySnapshot } from '$lib/server/price-updater';
+import { checkAndUpdatePrices, isMissingYesterdaySnapshot } from '$lib/server/price-updater';
 import { validateSession } from '$lib/server/auth';
 import { error, redirect, type Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
@@ -20,14 +20,17 @@ function scheduleDailyPriceUpdate() {
 		setInterval(() => checkAndUpdatePrices(), 24 * 60 * 60 * 1000);
 	}, msUntilNext);
 
-	// Catch-up: if the server was offline over a scheduled 18:00 UTC slot,
-	// today's snapshot is missing. Run an update ~30s after boot (idempotent
-	// against the main schedule thanks to the `updateInProgress` guard and the
-	// UNIQUE(card_id, DATE(recorded_at)) upsert in runPriceUpdate).
+	// Catch-up: only trigger if the server was offline over yesterday's 18:00
+	// slot so the daily history still has no entry for yesterday. Restarting
+	// mid-morning on a normal day must NOT preempt today's scheduled 18:00 run
+	// — otherwise the change-aware insert captures only the tiny overnight
+	// diff and produces misleading "6 cards at 10am" days. Idempotent against
+	// the main schedule via `updateInProgress` and the
+	// UNIQUE(card_id, snapshot_date) upsert in runPriceUpdate.
 	setTimeout(() => {
 		try {
-			if (isMissingTodaySnapshot()) {
-				console.log('[price-updater] Missing snapshot for today — running catch-up update');
+			if (isMissingYesterdaySnapshot()) {
+				console.log('[price-updater] Missing snapshot for yesterday — running catch-up update');
 				checkAndUpdatePrices();
 			}
 		} catch (err) {
