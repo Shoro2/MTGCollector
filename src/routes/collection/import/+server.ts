@@ -14,6 +14,17 @@ interface MoxfieldRow {
 	'Purchase Price': string;
 }
 
+interface ImportRow {
+	setCode: string;
+	collectorNumber: string;
+	quantity: number;
+	condition: string;
+	foil: 0 | 1;
+	purchasePrice: number | null;
+	tags: string;
+	originalName: string;
+}
+
 function parseCSV(text: string): MoxfieldRow[] {
 	const lines = text.split('\n').filter((l) => l.trim());
 	if (lines.length < 2) return [];
@@ -73,6 +84,76 @@ function mapCondition(moxfieldCondition: string): string {
 	return map[moxfieldCondition] || 'near_mint';
 }
 
+function moxfieldRowsToImportRows(rows: MoxfieldRow[]): ImportRow[] {
+	return rows.map((row) => {
+		const purchasePriceStr = row['Purchase Price'] || '';
+		const parsedPrice = purchasePriceStr ? parseFloat(purchasePriceStr) : NaN;
+		return {
+			setCode: row.Edition.toLowerCase(),
+			collectorNumber: row['Collector Number'],
+			quantity: parseInt(row.Count) || 1,
+			condition: mapCondition(row.Condition),
+			foil: row.Foil === 'foil' || row.Foil === 'etched' ? 1 : 0,
+			purchasePrice: isNaN(parsedPrice) ? null : parsedPrice,
+			tags: row.Tags || '',
+			originalName: row.Name
+		};
+	});
+}
+
+const TEXT_LINE_REGEX = /^\s*(\d+)\s+(.+?)\s+\(([A-Za-z0-9]+)\)\s+(\S+?)(\s+\*F\*)?\s*$/;
+
+function parseTextDeckList(text: string): { rows: ImportRow[]; parseErrors: string[]; parseErrorCount: number } {
+	const lines = text.split('\n');
+	const parseErrors: string[] = [];
+	let parseErrorCount = 0;
+	const byKey = new Map<string, ImportRow>();
+	const order: string[] = [];
+
+	for (const rawLine of lines) {
+		const line = rawLine.trim();
+		if (!line) continue;
+		if (line.startsWith('#') || line.startsWith('//')) continue;
+
+		const match = TEXT_LINE_REGEX.exec(line);
+		if (!match) {
+			parseErrorCount++;
+			if (parseErrors.length < 20) parseErrors.push(line);
+			continue;
+		}
+
+		const quantity = parseInt(match[1], 10) || 1;
+		const name = match[2].trim();
+		const setCode = match[3].toLowerCase();
+		const collectorNumber = match[4];
+		const foil: 0 | 1 = match[5] ? 1 : 0;
+
+		const key = `${setCode}|${collectorNumber}|${foil}`;
+		const existing = byKey.get(key);
+		if (existing) {
+			existing.quantity += quantity;
+		} else {
+			byKey.set(key, {
+				setCode,
+				collectorNumber,
+				quantity,
+				condition: 'near_mint',
+				foil,
+				purchasePrice: null,
+				tags: '',
+				originalName: name
+			});
+			order.push(key);
+		}
+	}
+
+	return {
+		rows: order.map((k) => byKey.get(k)!),
+		parseErrors,
+		parseErrorCount
+	};
+}
+
 export async function POST({ request, locals }) {
 	if (!locals.user) {
 		return json({ success: false, message: 'Not authenticated' }, { status: 401 });
@@ -80,42 +161,68 @@ export async function POST({ request, locals }) {
 	const userId = locals.user.id;
 
 	const MAX_CSV_BYTES = 10 * 1024 * 1024;
+	const MAX_TEXT_BYTES = 1 * 1024 * 1024;
 
 	const formData = await request.formData();
-	const file = formData.get('file');
+	const format = (formData.get('format') as string) || 'csv';
 	const mode = formData.get('mode') as string; // 'sync' or 'append'
 
-	if (!(file instanceof File)) {
-		return json({ success: false, message: 'No file provided' }, { status: 400 });
-	}
-	if (file.size > MAX_CSV_BYTES) {
-		return json({ success: false, message: 'CSV too large (>10 MB)' }, { status: 413 });
-	}
-	const mime = (file.type || '').toLowerCase();
-	const name = (file.name || '').toLowerCase();
-	// Accept a small allow-list of CSV-ish MIME types. Empty MIME types are
-	// only tolerated when the filename ends in `.csv` — bare empty types from
-	// arbitrary clients used to silently pass through.
-	const knownCsvMimes = new Set([
-		'text/csv',
-		'application/csv',
-		'application/vnd.ms-excel',
-		'text/plain'
-	]);
-	const hasCsvExtension = name.endsWith('.csv');
-	const looksLikeCsv = knownCsvMimes.has(mime) || (mime === '' && hasCsvExtension);
-	if (!looksLikeCsv) {
-		return json({ success: false, message: 'Only CSV files are accepted' }, { status: 400 });
-	}
 	if (mode !== 'sync' && mode !== 'append') {
 		return json({ success: false, message: 'Invalid mode' }, { status: 400 });
 	}
+	if (format !== 'csv' && format !== 'text') {
+		return json({ success: false, message: 'Invalid format' }, { status: 400 });
+	}
 
-	const text = await file.text();
-	const rows = parseCSV(text);
+	let rows: ImportRow[] = [];
+	let parseErrors: string[] = [];
+	let parseErrorCount = 0;
 
-	if (rows.length === 0) {
-		return json({ success: false, message: 'No data found in CSV' }, { status: 400 });
+	if (format === 'csv') {
+		const file = formData.get('file');
+		if (!(file instanceof File)) {
+			return json({ success: false, message: 'No file provided' }, { status: 400 });
+		}
+		if (file.size > MAX_CSV_BYTES) {
+			return json({ success: false, message: 'CSV too large (>10 MB)' }, { status: 413 });
+		}
+		const mime = (file.type || '').toLowerCase();
+		const name = (file.name || '').toLowerCase();
+		const knownCsvMimes = new Set([
+			'text/csv',
+			'application/csv',
+			'application/vnd.ms-excel',
+			'text/plain'
+		]);
+		const hasCsvExtension = name.endsWith('.csv');
+		const looksLikeCsv = knownCsvMimes.has(mime) || (mime === '' && hasCsvExtension);
+		if (!looksLikeCsv) {
+			return json({ success: false, message: 'Only CSV files are accepted' }, { status: 400 });
+		}
+
+		const text = await file.text();
+		const csvRows = parseCSV(text);
+		if (csvRows.length === 0) {
+			return json({ success: false, message: 'No data found in CSV' }, { status: 400 });
+		}
+		rows = moxfieldRowsToImportRows(csvRows);
+	} else {
+		const text = formData.get('text');
+		if (typeof text !== 'string' || !text.trim()) {
+			return json({ success: false, message: 'No text provided' }, { status: 400 });
+		}
+		// Byte length check (UTF-8)
+		if (new TextEncoder().encode(text).byteLength > MAX_TEXT_BYTES) {
+			return json({ success: false, message: 'Text too large (>1 MB)' }, { status: 413 });
+		}
+		const parsed = parseTextDeckList(text);
+		rows = parsed.rows;
+		parseErrors = parsed.parseErrors;
+		parseErrorCount = parsed.parseErrorCount;
+
+		if (rows.length === 0 && parseErrorCount === 0) {
+			return json({ success: false, message: 'No cards found in text' }, { status: 400 });
+		}
 	}
 
 	const findCard = sqlite.prepare(
@@ -132,7 +239,6 @@ export async function POST({ request, locals }) {
 	);
 
 	let imported = 0;
-	let skipped = 0;
 	let notFound = 0;
 	const notFoundCards: string[] = [];
 
@@ -144,40 +250,38 @@ export async function POST({ request, locals }) {
 		}
 
 		for (const row of rows) {
-			const setCode = row.Edition.toLowerCase();
-			const collectorNumber = row['Collector Number'];
-			const quantity = parseInt(row.Count) || 1;
-			const condition = mapCondition(row.Condition);
-			const foil = row.Foil === 'foil' || row.Foil === 'etched' ? 1 : 0;
-			const purchasePriceStr = row['Purchase Price'] || '';
-			const purchasePrice = purchasePriceStr ? parseFloat(purchasePriceStr) : null;
-			const tags = row.Tags || '';
+			// Try set_code + collector_number, tolerant of leading zeros for numeric values
+			let card = findCard.get(row.setCode, row.collectorNumber) as { id: string } | undefined;
 
-			// Try to find card by set_code + collector_number
-			let card = findCard.get(setCode, collectorNumber) as { id: string } | undefined;
+			if (!card && /^\d+$/.test(row.collectorNumber)) {
+				const trimmed = String(parseInt(row.collectorNumber, 10));
+				if (trimmed !== row.collectorNumber) {
+					card = findCard.get(row.setCode, trimmed) as { id: string } | undefined;
+				}
+			}
 
 			// Fallback: search by name
 			if (!card) {
-				card = findCardByName.get(row.Name) as { id: string } | undefined;
+				card = findCardByName.get(row.originalName) as { id: string } | undefined;
 			}
 
 			if (!card) {
 				notFound++;
 				if (notFoundCards.length < 20) {
-					notFoundCards.push(`${row.Name} (${setCode} #${collectorNumber})`);
+					notFoundCards.push(`${row.originalName} (${row.setCode} #${row.collectorNumber})`);
 				}
 				continue;
 			}
 
-			const notes = tags ? `Moxfield tags: ${tags}` : null;
+			const notes = row.tags ? `Moxfield tags: ${row.tags}` : null;
 
 			insertCollection.run(
 				userId,
 				card.id,
-				quantity,
-				condition,
-				foil,
-				purchasePrice != null && !isNaN(purchasePrice) ? purchasePrice : null,
+				row.quantity,
+				row.condition,
+				row.foil,
+				row.purchasePrice,
 				notes,
 				new Date().toISOString()
 			);
@@ -193,10 +297,13 @@ export async function POST({ request, locals }) {
 	return json({
 		success: true,
 		imported,
-		skipped,
+		skipped: 0,
 		notFound,
 		notFoundCards,
+		parseErrors,
+		parseErrorCount,
 		total: rows.length,
-		mode
+		mode,
+		format
 	});
 }

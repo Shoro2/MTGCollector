@@ -13,8 +13,15 @@ function csvField(val: string | number | null | undefined): string {
 	return `"${String(val ?? '').replace(/"/g, '""')}"`;
 }
 
-export async function GET({ locals }) {
+function displayName(rawName: string): string {
+	const parts = rawName.split(' // ');
+	return parts.length === 2 && parts[0] === parts[1] ? parts[0] : rawName;
+}
+
+export async function GET({ locals, url }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
+
+	const format = url.searchParams.get('format') === 'text' ? 'text' : 'csv';
 
 	const items = sqlite
 		.prepare(
@@ -27,13 +34,28 @@ export async function GET({ locals }) {
 		)
 		.all(locals.user.id) as Array<Record<string, unknown>>;
 
+	if (format === 'text') {
+		const lines = items.map((item) => {
+			const qty = item.quantity as number;
+			const name = displayName(item.name as string);
+			const set = (item.set_code as string).toUpperCase();
+			const num = item.collector_number as string;
+			const foilTag = item.foil ? ' *F*' : '';
+			return `${qty} ${name} (${set}) ${num}${foilTag}`;
+		});
+
+		return new Response(lines.join('\n'), {
+			headers: {
+				'Content-Type': 'text/plain; charset=utf-8'
+			}
+		});
+	}
+
 	const header = '"Count","Tradelist Count","Name","Edition","Condition","Language","Foil","Tags","Last Modified","Collector Number","Alter","Proxy","Purchase Price"';
 
 	const rows = items.map((item) => {
 		const qty = item.quantity as number;
-		const rawName = item.name as string;
-		const parts = rawName.split(' // ');
-		const name = parts.length === 2 && parts[0] === parts[1] ? parts[0] : rawName;
+		const name = displayName(item.name as string);
 		const set = (item.set_code as string).toLowerCase();
 		const condition = conditionMap[item.condition as string] || 'Near Mint';
 		const foil = item.foil ? 'foil' : '';

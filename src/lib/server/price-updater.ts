@@ -23,6 +23,7 @@ interface ScryfallPriceCard {
 		usd?: string | null;
 		usd_foil?: string | null;
 	};
+	cardmarket_id?: number;
 }
 
 function getLastBulkUpdate(): string | null {
@@ -78,7 +79,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		// Stream-parse the bulk file so memory doesn't spike to ~1.2 GB on
 		// the 600 MB payload. We apply price updates in batched transactions.
 		const updatePrice = sqlite.prepare(
-			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ? WHERE id = ?'
+			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id) WHERE id = ?'
 		);
 
 		let updated = 0;
@@ -94,7 +95,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 					const priceEurFoil = card.prices?.eur_foil ? parseFloat(card.prices.eur_foil) : null;
 					const priceUsd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
 					const priceUsdFoil = card.prices?.usd_foil ? parseFloat(card.prices.usd_foil) : null;
-					const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, card.id);
+					const cardmarketId = card.cardmarket_id ?? null;
+					const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId, card.id);
 					if (result.changes > 0) updated++;
 				}
 			});

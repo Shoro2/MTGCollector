@@ -238,6 +238,13 @@ const MIGRATIONS: Migration[] = [
 			);
 			db.exec('DROP INDEX IF EXISTS idx_price_history_card_day');
 		}
+	},
+	{
+		id: '0015_cards_cardmarket_id',
+		run: (db) => {
+			addColumnIfMissing(db, 'cards', 'cardmarket_id', 'INTEGER');
+			db.exec('CREATE INDEX IF NOT EXISTS idx_cards_cardmarket_id ON cards(cardmarket_id)');
+		}
 	}
 ];
 

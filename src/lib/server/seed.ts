@@ -35,6 +35,7 @@ interface ScryfallCard {
 	released_at?: string;
 	scryfall_uri?: string;
 	prices?: { eur?: string | null; eur_foil?: string | null; usd?: string | null; usd_foil?: string | null };
+	cardmarket_id?: number;
 	lang: string;
 	card_faces?: Array<{
 		name?: string;
@@ -89,13 +90,13 @@ async function importCards(filePath: string) {
 			colors, color_identity, keywords, set_code, set_name,
 			collector_number, rarity, power, toughness, loyalty,
 			image_uri, layout, legalities, released_at, scryfall_uri,
-			price_eur, price_eur_foil, price_usd, price_usd_foil
+			price_eur, price_eur_foil, price_usd, price_usd_foil, cardmarket_id
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?, ?
 		)
 	`);
 
@@ -163,7 +164,8 @@ async function importCards(filePath: string) {
 					priceEur,
 					priceEurFoil,
 					priceUsd,
-					priceUsdFoil
+					priceUsdFoil,
+					card.cardmarket_id ?? null
 				);
 
 				if (card.card_faces && card.card_faces.length > 1) {

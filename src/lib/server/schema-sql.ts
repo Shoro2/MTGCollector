@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS cards (
 	price_eur REAL,
 	price_eur_foil REAL,
 	price_usd REAL,
-	price_usd_foil REAL
+	price_usd_foil REAL,
+	cardmarket_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS card_faces (
@@ -116,6 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_cards_cmc ON cards(cmc);
 CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
 CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
 CREATE INDEX IF NOT EXISTS idx_cards_released_at ON cards(released_at);
+CREATE INDEX IF NOT EXISTS idx_cards_cardmarket_id ON cards(cardmarket_id);
 CREATE INDEX IF NOT EXISTS idx_card_faces_card_id_face ON card_faces(card_id, face_index);
 CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
 CREATE INDEX IF NOT EXISTS idx_wishlist_cards_card_id ON wishlist_cards(card_id);
