@@ -174,38 +174,76 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 		.prepare('SELECT COUNT(*) as count FROM collection_cards WHERE user_id = ? AND purchase_price IS NULL')
 		.get(userId) as { count: number };
 
-	// Profit history
+	// Profit history. For each day that has any snapshot at all, and for every
+	// collection card, carry forward the latest price_history row with
+	// effective_date <= that day. The change-aware snapshot in price-updater.ts
+	// only writes rows for cards whose price changed that day, so a naive
+	// INNER JOIN per day would miss unchanged cards and produce a partial sum.
 	const profitHistory = sqlite
 		.prepare(
-			`WITH daily_prices AS (
-				SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at,
-					DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) as effective_date,
-					ROW_NUMBER() OVER (
-						PARTITION BY card_id, DATE(recorded_at, CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END)
-						ORDER BY recorded_at DESC
-					) as rn
+			`WITH series_days AS (
+				SELECT DISTINCT DATE(
+					recorded_at,
+					CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10
+					     THEN '-1 day' ELSE '0 days' END
+				) AS day
 				FROM price_history
 			),
+			user_cards AS (
+				SELECT card_id, foil, quantity
+				FROM collection_cards
+				WHERE user_id = ? AND purchase_price IS NOT NULL
+			),
 			purchase_total AS (
-				SELECT COALESCE(SUM(cc2.purchase_price * cc2.quantity), 0) as total
-				FROM collection_cards cc2
-				WHERE cc2.user_id = ? AND cc2.purchase_price IS NOT NULL
+				SELECT COALESCE(SUM(purchase_price * quantity), 0) AS total
+				FROM collection_cards
+				WHERE user_id = ? AND purchase_price IS NOT NULL
+			),
+			card_day_price AS (
+				SELECT
+					sd.day,
+					uc.foil,
+					uc.quantity,
+					(SELECT ph.price_eur FROM price_history ph
+						WHERE ph.card_id = uc.card_id
+						  AND DATE(ph.recorded_at,
+						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
+						           THEN '-1 day' ELSE '0 days' END) <= sd.day
+						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_eur,
+					(SELECT ph.price_eur_foil FROM price_history ph
+						WHERE ph.card_id = uc.card_id
+						  AND DATE(ph.recorded_at,
+						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
+						           THEN '-1 day' ELSE '0 days' END) <= sd.day
+						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_eur_foil,
+					(SELECT ph.price_usd FROM price_history ph
+						WHERE ph.card_id = uc.card_id
+						  AND DATE(ph.recorded_at,
+						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
+						           THEN '-1 day' ELSE '0 days' END) <= sd.day
+						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_usd,
+					(SELECT ph.price_usd_foil FROM price_history ph
+						WHERE ph.card_id = uc.card_id
+						  AND DATE(ph.recorded_at,
+						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
+						           THEN '-1 day' ELSE '0 days' END) <= sd.day
+						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_usd_foil
+				FROM series_days sd
+				CROSS JOIN user_cards uc
 			)
 			SELECT
-				dp.effective_date as recorded_at,
+				cdp.day AS recorded_at,
 				SUM(COALESCE(
-					CASE WHEN cc.foil = 1 THEN dp.price_eur_foil ELSE dp.price_eur END,
-					CASE WHEN cc.foil = 1 THEN dp.price_usd_foil ELSE dp.price_usd END * ?
-				) * cc.quantity) as total_value,
-				pt.total as total_purchase
-			FROM daily_prices dp
-			JOIN collection_cards cc ON dp.card_id = cc.card_id
+					CASE WHEN cdp.foil = 1 THEN cdp.price_eur_foil ELSE cdp.price_eur END,
+					CASE WHEN cdp.foil = 1 THEN cdp.price_usd_foil ELSE cdp.price_usd END * ?
+				) * cdp.quantity) AS total_value,
+				pt.total AS total_purchase
+			FROM card_day_price cdp
 			CROSS JOIN purchase_total pt
-			WHERE dp.rn = 1 AND cc.user_id = ? AND cc.purchase_price IS NOT NULL
-			GROUP BY dp.effective_date
-			ORDER BY dp.effective_date ASC`
+			GROUP BY cdp.day, pt.total
+			ORDER BY cdp.day ASC`
 		)
-		.all(userId, usdToEur, userId);
+		.all(userId, userId, usdToEur);
 
 	return {
 		topCards,
