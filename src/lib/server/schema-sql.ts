@@ -117,7 +117,6 @@ CREATE INDEX IF NOT EXISTS idx_cards_cmc ON cards(cmc);
 CREATE INDEX IF NOT EXISTS idx_cards_oracle_id ON cards(oracle_id);
 CREATE INDEX IF NOT EXISTS idx_cards_type_line ON cards(type_line);
 CREATE INDEX IF NOT EXISTS idx_cards_released_at ON cards(released_at);
-CREATE INDEX IF NOT EXISTS idx_cards_cardmarket_id ON cards(cardmarket_id);
 CREATE INDEX IF NOT EXISTS idx_card_faces_card_id_face ON card_faces(card_id, face_index);
 CREATE INDEX IF NOT EXISTS idx_collection_cards_card_id ON collection_cards(card_id);
 CREATE INDEX IF NOT EXISTS idx_wishlist_cards_card_id ON wishlist_cards(card_id);
@@ -126,10 +125,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_recorded ON price_history(card_id, recorded_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_snapshot_date ON price_history(card_id, snapshot_date);
 -- Indexes referencing user_id on collection_cards/wishlist_cards/tags live in
 -- migrations.ts (0002, 0012, 0013). They must run AFTER the ALTER TABLE steps
--- that add the user_id column on upgraded databases.
+-- that add the user_id column on upgraded databases. The same applies to
+-- idx_cards_cardmarket_id (migration 0015) and
+-- idx_price_history_card_snapshot_date (migration 0014), whose columns are
+-- only added on upgraded installs via those migrations.
 
 -- External-content FTS5: the index is stored here but the searchable text is
 -- read from cards via its rowid. This avoids duplicating name/type_line/
