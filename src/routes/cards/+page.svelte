@@ -9,6 +9,63 @@
 	let collectedSet = $derived(new Set(data.collectedCardIds));
 	let wishlistSet = $derived(new Set(data.wishlistCardIds));
 
+	let setSearch = $state('');
+	let setDropdownOpen = $state(false);
+	let setHighlight = $state(0);
+	let setInputEl: HTMLInputElement | null = $state(null);
+	let setWrapperEl: HTMLDivElement | null = $state(null);
+
+	let filteredSets = $derived.by(() => {
+		const q = setSearch.trim().toLowerCase();
+		if (!q) return data.sets;
+		return data.sets.filter(
+			(s) =>
+				s.set_name.toLowerCase().includes(q) ||
+				s.set_code.toLowerCase().includes(q)
+		);
+	});
+
+	function selectSet(code: string, name: string) {
+		setCode = code;
+		setSearch = name;
+		setDropdownOpen = false;
+		search();
+	}
+
+	function clearSet() {
+		setCode = '';
+		setSearch = '';
+		setDropdownOpen = false;
+	}
+
+	function onSetKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			setDropdownOpen = true;
+			setHighlight = Math.min(setHighlight + 1, filteredSets.length - 1);
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			setHighlight = Math.max(setHighlight - 1, 0);
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			const target = filteredSets[setHighlight];
+			if (target) selectSet(target.set_code, target.set_name);
+		} else if (e.key === 'Escape') {
+			setDropdownOpen = false;
+		}
+	}
+
+	function onDocClick(e: MouseEvent) {
+		if (setWrapperEl && !setWrapperEl.contains(e.target as Node)) {
+			setDropdownOpen = false;
+		}
+	}
+
+	$effect(() => {
+		document.addEventListener('mousedown', onDocClick);
+		return () => document.removeEventListener('mousedown', onDocClick);
+	});
+
 	let pageTitle = $derived.by(() => {
 		const parts = ['MTG Cards'];
 		if (data.filters.query) parts.push(`"${data.filters.query}"`);
@@ -37,6 +94,8 @@
 		cmcMin = data.filters.cmcMin || '';
 		cmcMax = data.filters.cmcMax || '';
 		legality = data.filters.legality;
+		const matched = data.sets.find((s) => s.set_code === data.filters.setCode);
+		setSearch = matched ? matched.set_name : '';
 	});
 	let showFilters = $state(false);
 
@@ -118,6 +177,7 @@
 		colorMode = 'include';
 		type = '';
 		setCode = '';
+		setSearch = '';
 		rarity = '';
 		cmcMin = '';
 		cmcMax = '';
@@ -208,14 +268,60 @@
 				</div>
 
 				<!-- Set -->
-				<div>
+				<div class="relative" bind:this={setWrapperEl}>
 					<label for="filter-set" class="block text-sm text-[var(--color-text-muted)] mb-1">Set</label>
-					<select id="filter-set" bind:value={setCode} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
-						<option value="">All Sets</option>
-						{#each data.sets as s}
-							<option value={s.set_code}>{s.set_name}</option>
-						{/each}
-					</select>
+					<div class="relative">
+						<input
+							id="filter-set"
+							type="text"
+							role="combobox"
+							aria-autocomplete="list"
+							aria-expanded={setDropdownOpen}
+							aria-controls="filter-set-listbox"
+							bind:this={setInputEl}
+							bind:value={setSearch}
+							oninput={() => { setDropdownOpen = true; setHighlight = 0; }}
+							onfocus={() => { setDropdownOpen = true; }}
+							onkeydown={onSetKeydown}
+							placeholder="All Sets"
+							autocomplete="off"
+							class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded pl-2 pr-7 py-1.5"
+						/>
+						{#if setSearch}
+							<button
+								type="button"
+								onclick={clearSet}
+								aria-label="Clear set filter"
+								class="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+							>
+								×
+							</button>
+						{/if}
+					</div>
+					{#if setDropdownOpen && filteredSets.length > 0}
+						<ul
+							id="filter-set-listbox"
+							role="listbox"
+							class="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded shadow-lg"
+						>
+							{#each filteredSets as s, i (s.set_code)}
+								<li
+									role="option"
+									aria-selected={i === setHighlight}
+									onmousedown={(e) => { e.preventDefault(); selectSet(s.set_code, s.set_name); }}
+									onmouseenter={() => (setHighlight = i)}
+									class="px-2 py-1.5 cursor-pointer text-sm flex items-center justify-between gap-2 {i === setHighlight ? 'bg-[var(--color-surface-hover)]' : ''}"
+								>
+									<span class="truncate">{s.set_name}</span>
+									<span class="text-xs uppercase text-[var(--color-text-muted)] shrink-0">{s.set_code}</span>
+								</li>
+							{/each}
+						</ul>
+					{:else if setDropdownOpen && filteredSets.length === 0}
+						<div class="absolute z-20 mt-1 w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded shadow-lg px-2 py-1.5 text-sm text-[var(--color-text-muted)]">
+							No sets match.
+						</div>
+					{/if}
 				</div>
 
 				<!-- Rarity -->
