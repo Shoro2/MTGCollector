@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import { formatPrice } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
+	import LiveScanner from '$lib/components/LiveScanner.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
@@ -40,10 +41,10 @@
 	let addedCards = $state<Array<{ id: string; name: string }>>([]);
 	let selectedCards = $state<Set<number>>(new Set());
 	let importing = $state(false);
-	// Two-mode selector replacing the old "expected card count" number input.
-	// 'single' assumes exactly one card in the photo; 'multiple' lets the
-	// detector return as many cards as it can find.
-	let scanMode = $state<'single' | 'multiple'>('single');
+	// Mode selector. 'single' assumes one card in the photo; 'multiple' lets
+	// the detector return as many cards as it can find; 'live' streams the
+	// device camera and auto-captures when the scene stabilizes (multi-card).
+	let scanMode = $state<'single' | 'multiple' | 'live'>('single');
 	const expectedCardCount = $derived<number | null>(scanMode === 'single' ? 1 : null);
 
 	// Manual search fallback per card
@@ -65,11 +66,23 @@
 			const stored = localStorage.getItem('mtg-scan-vision-retry');
 			if (stored !== null) visionRetryEnabled = stored === 'true';
 		} catch { /* localStorage unavailable */ }
+		try {
+			const storedMode = localStorage.getItem('mtg-scan-mode');
+			if (storedMode === 'single' || storedMode === 'multiple' || storedMode === 'live') {
+				scanMode = storedMode;
+			}
+		} catch { /* localStorage unavailable */ }
 	});
 
 	$effect(() => {
 		try {
 			localStorage.setItem('mtg-scan-vision-retry', String(visionRetryEnabled));
+		} catch { /* localStorage unavailable */ }
+	});
+
+	$effect(() => {
+		try {
+			localStorage.setItem('mtg-scan-mode', scanMode);
 		} catch { /* localStorage unavailable */ }
 	});
 
@@ -111,7 +124,17 @@
 		}
 	}
 
-	async function processImage(file: File) {
+	async function handleLiveCapture(canvas: HTMLCanvasElement) {
+		// Don't reset detectedCards — captures accumulate. Skip if a previous
+		// capture is still being identified (the LiveScanner's busy prop also
+		// gates the auto-capture loop, but a manual click can race past it).
+		if (scanning) return;
+		manualResults = [];
+		manualCardIndex = null;
+		await processImage(canvas);
+	}
+
+	async function processImage(source: File | HTMLCanvasElement) {
 		scanning = true;
 		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
@@ -123,13 +146,27 @@
 
 			scanProgress = 'Detecting cards...';
 
-			// Load image into canvas
-			const img = await loadImage(file);
-			const canvas = document.createElement('canvas');
-			canvas.width = img.width;
-			canvas.height = img.height;
-			const ctx = canvas.getContext('2d')!;
-			ctx.drawImage(img, 0, 0);
+			// Load image into canvas. The live-mode path passes the captured
+			// frame canvas directly; the upload path goes through loadImage.
+			let canvas: HTMLCanvasElement;
+			let imgW: number;
+			let imgH: number;
+			if (source instanceof HTMLCanvasElement) {
+				canvas = source;
+				imgW = source.width;
+				imgH = source.height;
+			} else {
+				const img = await loadImage(source);
+				canvas = document.createElement('canvas');
+				canvas.width = img.width;
+				canvas.height = img.height;
+				const ctx = canvas.getContext('2d')!;
+				ctx.drawImage(img, 0, 0);
+				imgW = img.width;
+				imgH = img.height;
+			}
+			// Bind the names the rest of this function expects.
+			const img = { width: imgW, height: imgH };
 
 			log(`Image loaded: ${img.width}x${img.height} (${(img.width * img.height).toLocaleString()}px)`);
 			log(`Mode: ${scanMode}, expectedCardCount: ${expectedCardCount ?? 'unlimited'}`);
@@ -705,7 +742,13 @@
 				pts.delete();
 			}
 
-			detectedCards = cards;
+			// Append the freshly-detected cards to whatever's already in the
+			// list (live mode pushes successive captures into the same UI).
+			// `firstIdx` is the index in `detectedCards` of the first newly
+			// added card; all subsequent loops iterate `firstIdx ... end`.
+			const firstIdx = detectedCards.length;
+			detectedCards = [...detectedCards, ...cards];
+			const newCount = cards.length;
 
 			// Cleanup OpenCV mats
 			src.delete(); gray.delete();
@@ -722,13 +765,13 @@
 				tessedit_pageseg_mode: '7' // single text line
 			});
 
-			const nameUrls = detectedCards.map((c) => c.nameUrl);
+			const nameUrls = detectedCards.slice(firstIdx).map((c) => c.nameUrl);
 			const nameTexts = await recognizeBatch(pool, nameUrls, (done, total) => {
 				scanProgress = `Reading names ${done}/${total}...`;
 			});
-			for (let i = 0; i < detectedCards.length; i++) {
-				detectedCards[i].nameText = nameTexts[i].replace(/[\r\n]+/g, ' ').trim();
-				log(`Card ${i + 1} name OCR: "${detectedCards[i].nameText}"`);
+			for (let i = 0; i < newCount; i++) {
+				detectedCards[firstIdx + i].nameText = nameTexts[i].replace(/[\r\n]+/g, ' ').trim();
+				log(`Card ${firstIdx + i + 1} name OCR: "${detectedCards[firstIdx + i].nameText}"`);
 			}
 			detectedCards = [...detectedCards];
 
@@ -738,14 +781,15 @@
 			log('Phase 2: Name search in DB (batched)');
 
 			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
-			for (let i = 0; i < detectedCards.length; i++) {
-				const card = detectedCards[i];
+			for (let i = 0; i < newCount; i++) {
+				const absIdx = firstIdx + i;
+				const card = detectedCards[absIdx];
 				if (!card.nameText || card.nameText.length < 2) {
-					log(`Card ${i + 1}: name too short or empty, skipping search`);
+					log(`Card ${absIdx + 1}: name too short or empty, skipping search`);
 					continue;
 				}
 				const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
-				namesToSearch.push({ cardIdx: i, cleanName });
+				namesToSearch.push({ cardIdx: absIdx, cleanName });
 			}
 
 			scanProgress = `Searching ${namesToSearch.length} name(s)...`;
@@ -994,25 +1038,28 @@
 			// Phase 3a: Batch Tesseract bottom OCR across the worker pool, then
 			// run the (fast, in-memory) matching pass sequentially afterwards.
 			log(`Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6, ${pool.length} workers)`);
-			const bottomUrls = detectedCards.map((c) => c.bottomUrl);
+			const newCards = detectedCards.slice(firstIdx);
+			const bottomUrls = newCards.map((c) => c.bottomUrl);
 			const bottomTexts = await recognizeBatch(pool, bottomUrls, (done, total) => {
 				scanProgress = `OCR bottom ${done}/${total}...`;
 			});
-			for (let i = 0; i < detectedCards.length; i++) {
-				detectedCards[i].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
-				log(`Card ${i + 1} bottom OCR: "${detectedCards[i].ocrText}"`);
+			for (let i = 0; i < newCount; i++) {
+				const absIdx = firstIdx + i;
+				detectedCards[absIdx].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+				log(`Card ${absIdx + 1} bottom OCR: "${detectedCards[absIdx].ocrText}"`);
 			}
-			await prefetchSetNumberLookups(detectedCards);
-			for (let i = 0; i < detectedCards.length; i++) {
-				scanProgress = `Matching card ${i + 1}/${detectedCards.length}...`;
-				await applyBottomMatch(detectedCards[i], i + 1, false);
+			await prefetchSetNumberLookups(detectedCards.slice(firstIdx));
+			for (let i = 0; i < newCount; i++) {
+				const absIdx = firstIdx + i;
+				scanProgress = `Matching card ${i + 1}/${newCount}...`;
+				await applyBottomMatch(detectedCards[absIdx], absIdx + 1, false);
 			}
 
 			// Pixel-based foil detection — only for single-card mode where the
 			// bottom strip is large enough to reliably sample the separator.
 			// Multi-card scans skip this (per-card resolution too low).
-			if (scanMode === 'single' && detectedCards.length === 1 && bottomCanvases[0]) {
-				const card = detectedCards[0];
+			if (scanMode === 'single' && newCount === 1 && bottomCanvases[0]) {
+				const card = detectedCards[firstIdx];
 				if (card.setCode) {
 					const detailed = await recognizeDetailed(pool, card.bottomUrl);
 					const langList = langs.split('|');
@@ -1039,7 +1086,7 @@
 			const userHasVisionKey = !!data.user?.hasVisionApiKey;
 			if (userHasVisionKey && visionRetryEnabled) {
 				const failed: Array<{ card: typeof detectedCards[number]; index: number }> = [];
-				for (let i = 0; i < detectedCards.length; i++) {
+				for (let i = firstIdx; i < detectedCards.length; i++) {
 					const c = detectedCards[i];
 					if (c.status === 'not_found' || c.results.length > 1) {
 						failed.push({ card: c, index: i });
@@ -1082,9 +1129,10 @@
 				log(`Phase 3b: Vision retry ${!userHasVisionKey ? 'no API key' : 'disabled by toggle'}`);
 			}
 
-			const identifiedCount = detectedCards.filter((c) => c.status === 'found').length;
-			log(`Scan complete: ${identifiedCount}/${detectedCards.length} identified`);
-			scanProgress = `Done! ${identifiedCount} of ${detectedCards.length} identified.`;
+			const newSlice = detectedCards.slice(firstIdx);
+			const identifiedCount = newSlice.filter((c) => c.status === 'found').length;
+			log(`Scan complete: ${identifiedCount}/${newSlice.length} identified`);
+			scanProgress = `Done! ${identifiedCount} of ${newSlice.length} identified.`;
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
 		} finally {
@@ -1255,8 +1303,27 @@
 		{/if}
 	</div>
 
-	<!-- Upload -->
-	{#if !imagePreview}
+	<!-- Upload / Live -->
+	{#if scanMode === 'live'}
+		<div class="flex items-center gap-2">
+			<span class="text-xs text-[var(--color-text-muted)]">Mode:</span>
+			<div class="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
+				<button type="button" onclick={() => (scanMode = 'single')}
+					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Single card</button>
+				<button type="button" onclick={() => (scanMode = 'multiple')}
+					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Multiple cards</button>
+				<button type="button" onclick={() => (scanMode = 'live')}
+					class="px-3 py-1 text-xs rounded-md transition-colors bg-[var(--color-primary)] text-white">Live camera</button>
+			</div>
+			{#if detectedCards.length > 0}
+				<button type="button" onclick={reset}
+					class="ml-auto text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
+					Clear captured ({detectedCards.length})
+				</button>
+			{/if}
+		</div>
+		<LiveScanner onCapture={handleLiveCapture} busy={scanning} log={(m) => log(`[live] ${m}`)} />
+	{:else if !imagePreview}
 		<label class="flex flex-col items-center justify-center h-48 border-2 border-dashed border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-primary)] transition-colors bg-[var(--color-surface)]">
 			<svg class="w-12 h-12 text-[var(--color-text-muted)] mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
@@ -1286,6 +1353,13 @@
 						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 				>
 					Multiple cards
+				</button>
+				<button
+					type="button"
+					onclick={() => (scanMode = 'live')}
+					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+				>
+					Live camera
 				</button>
 			</div>
 		</div>
