@@ -19,7 +19,7 @@ export async function POST({ locals }) {
 	// Run in background
 	runPriceUpdate()
 		.then((result) => {
-			console.log(`[api/prices] Update done: ${result.updated} prices updated, ${result.snapshotted} snapshots`);
+			console.log(`[api/prices] Update done: ${result.updated} prices updated, ${result.inserted} new cards inserted, ${result.snapshotted} snapshots`);
 		})
 		.catch((err) => {
 			console.error('[api/prices] Update failed:', err.message);
