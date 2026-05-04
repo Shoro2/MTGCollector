@@ -245,6 +245,10 @@ const MIGRATIONS: Migration[] = [
 			addColumnIfMissing(db, 'cards', 'cardmarket_id', 'INTEGER');
 			db.exec('CREATE INDEX IF NOT EXISTS idx_cards_cardmarket_id ON cards(cardmarket_id)');
 		}
+	},
+	{
+		id: '0016_collection_cards_language',
+		run: (db) => addColumnIfMissing(db, 'collection_cards', 'language', "TEXT DEFAULT 'en'")
 	}
 ];
 

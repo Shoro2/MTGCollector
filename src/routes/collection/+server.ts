@@ -1,16 +1,17 @@
 import { json, error } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { priceDataCache } from '$lib/server/cache';
+import { parseLanguageInput } from '$lib/utils';
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { cardId, quantity, condition, foil, purchasePrice } = await request.json();
+	const { cardId, quantity, condition, foil, language, purchasePrice } = await request.json();
 
 	sqlite
 		.prepare(
-			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, purchase_price, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
 		)
-		.run(locals.user.id, cardId, quantity || 1, condition || 'near_mint', foil ? 1 : 0, purchasePrice ?? null, new Date().toISOString());
+		.run(locals.user.id, cardId, quantity || 1, condition || 'near_mint', foil ? 1 : 0, parseLanguageInput(language), purchasePrice ?? null, new Date().toISOString());
 
 	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true });
@@ -18,13 +19,13 @@ export async function POST({ request, locals }) {
 
 export async function PUT({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { id, quantity, condition, foil, notes, purchasePrice } = await request.json();
+	const { id, quantity, condition, foil, language, notes, purchasePrice } = await request.json();
 
 	sqlite
 		.prepare(
-			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, notes = ?, purchase_price = ? WHERE id = ? AND user_id = ?'
+			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ? WHERE id = ? AND user_id = ?'
 		)
-		.run(quantity, condition, foil ? 1 : 0, notes || null, purchasePrice ?? null, id, locals.user.id);
+		.run(quantity, condition, foil ? 1 : 0, parseLanguageInput(language), notes || null, purchasePrice ?? null, id, locals.user.id);
 
 	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true });

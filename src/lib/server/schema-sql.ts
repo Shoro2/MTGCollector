@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS collection_cards (
 	quantity INTEGER NOT NULL DEFAULT 1,
 	condition TEXT DEFAULT 'near_mint',
 	foil INTEGER DEFAULT 0,
+	language TEXT DEFAULT 'en',
 	purchase_price REAL,
 	notes TEXT,
 	added_at TEXT

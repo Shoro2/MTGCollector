@@ -55,6 +55,50 @@ export function conditionLabel(condition: string): string {
 	return labels[condition] || condition;
 }
 
+// ISO/Scryfall language codes paired with human-readable labels. The order
+// matches the dropdown the UI renders.
+export const LANGUAGES: ReadonlyArray<{ code: string; label: string }> = [
+	{ code: 'en', label: 'English' },
+	{ code: 'es', label: 'Spanish' },
+	{ code: 'fr', label: 'French' },
+	{ code: 'de', label: 'German' },
+	{ code: 'it', label: 'Italian' },
+	{ code: 'pt', label: 'Portuguese' },
+	{ code: 'ja', label: 'Japanese' },
+	{ code: 'ko', label: 'Korean' },
+	{ code: 'ru', label: 'Russian' },
+	{ code: 'zhs', label: 'Simplified Chinese' },
+	{ code: 'zht', label: 'Traditional Chinese' },
+	{ code: 'he', label: 'Hebrew' },
+	{ code: 'la', label: 'Latin' },
+	{ code: 'grc', label: 'Ancient Greek' },
+	{ code: 'ar', label: 'Arabic' },
+	{ code: 'sa', label: 'Sanskrit' },
+	{ code: 'ph', label: 'Phyrexian' },
+	{ code: 'qya', label: 'Quenya' }
+];
+
+const LANG_BY_CODE: Map<string, string> = new Map(LANGUAGES.map((l) => [l.code, l.label]));
+const LANG_BY_LABEL: Map<string, string> = new Map(LANGUAGES.map((l) => [l.label.toLowerCase(), l.code]));
+
+export function languageLabel(code: string | null | undefined): string {
+	if (!code) return 'English';
+	return LANG_BY_CODE.get(code) ?? code;
+}
+
+// Tolerant parser for Moxfield's Language column, which exports the full
+// English name ("English", "German", ...). Falls back to the raw value when
+// it already looks like an ISO code, otherwise to 'en'.
+export function parseLanguageInput(input: string | null | undefined): string {
+	if (!input) return 'en';
+	const trimmed = input.trim();
+	if (!trimmed) return 'en';
+	const fromLabel = LANG_BY_LABEL.get(trimmed.toLowerCase());
+	if (fromLabel) return fromLabel;
+	if (LANG_BY_CODE.has(trimmed.toLowerCase())) return trimmed.toLowerCase();
+	return 'en';
+}
+
 /**
  * Build a Scryfall srcset from a single `image_uri`. Scryfall serves every
  * card at three usable sizes (small 146w, normal 488w, large 672w) on the
