@@ -77,6 +77,17 @@ CREATE TABLE IF NOT EXISTS collection_cards (
 	added_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS card_prices_lang (
+	card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+	language TEXT NOT NULL,
+	price_eur REAL,
+	price_eur_foil REAL,
+	price_usd REAL,
+	price_usd_foil REAL,
+	last_updated TEXT,
+	PRIMARY KEY (card_id, language)
+);
+
 CREATE TABLE IF NOT EXISTS tags (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id TEXT REFERENCES users(id) ON DELETE CASCADE,

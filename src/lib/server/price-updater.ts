@@ -115,6 +115,30 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 
 		const cardExists = sqlite.prepare('SELECT 1 FROM cards WHERE id = ?');
 
+		// Foreign-language price refresh: only touches rows that already exist in
+		// `card_prices_lang` (created lazily when a user adds a non-English card
+		// to their collection). Pre-load the lookup maps so the hot loop stays
+		// O(1) per foreign bulk row.
+		const printingToCardId = new Map<string, string>();
+		for (const row of sqlite
+			.prepare('SELECT id, set_code, collector_number FROM cards')
+			.iterate() as Iterable<{ id: string; set_code: string | null; collector_number: string | null }>) {
+			if (row.set_code && row.collector_number) {
+				printingToCardId.set(`${row.set_code}|${row.collector_number}`, row.id);
+			}
+		}
+		const foreignKeys = new Set<string>(
+			(sqlite.prepare('SELECT card_id, language FROM card_prices_lang').all() as Array<{
+				card_id: string;
+				language: string;
+			}>).map((r) => `${r.card_id}|${r.language}`)
+		);
+		const updateForeignPrice = sqlite.prepare(
+			`UPDATE card_prices_lang SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, last_updated = ?
+			 WHERE card_id = ? AND language = ?`
+		);
+		let foreignUpdated = 0;
+
 		const insertCard = sqlite.prepare(`
 			INSERT INTO cards (
 				id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
@@ -146,15 +170,35 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		const applyBatch = () => {
 			const batch = pendingBatch;
 			pendingBatch = [];
+			const now = new Date().toISOString();
 			const transaction = sqlite.transaction(() => {
 				for (const card of batch) {
-					if (card.lang !== 'en') continue;
-
 					const priceEur = card.prices?.eur ? parseFloat(card.prices.eur) : null;
 					const priceEurFoil = card.prices?.eur_foil ? parseFloat(card.prices.eur_foil) : null;
 					const priceUsd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
 					const priceUsdFoil = card.prices?.usd_foil ? parseFloat(card.prices.usd_foil) : null;
 					const cardmarketId = card.cardmarket_id ?? null;
+
+					// Foreign printing: refresh the per-language row (if any user
+					// owns this card in this language). The Scryfall foreign
+					// printing has its own UUID; we map back to the English
+					// printing's UUID via (set, collector_number).
+					if (card.lang !== 'en') {
+						const englishId = printingToCardId.get(`${card.set}|${card.collector_number}`);
+						if (englishId && foreignKeys.has(`${englishId}|${card.lang}`)) {
+							const r = updateForeignPrice.run(
+								priceEur,
+								priceEurFoil,
+								priceUsd,
+								priceUsdFoil,
+								now,
+								englishId,
+								card.lang
+							);
+							if (r.changes > 0) foreignUpdated++;
+						}
+						continue;
+					}
 
 					if (cardExists.get(card.id)) {
 						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId, card.id);
@@ -228,7 +272,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		}
 		if (pendingBatch.length > 0) applyBatch();
 
-		console.log(`[price-updater] Updated prices for ${updated} cards, inserted ${inserted} new cards`);
+		console.log(`[price-updater] Updated prices for ${updated} cards, inserted ${inserted} new cards, refreshed ${foreignUpdated} foreign-language prices`);
 
 		// Change-aware daily snapshot. Only inserts a new price_history row
 		// when the card's current price differs from its most recent snapshot

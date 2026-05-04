@@ -73,6 +73,16 @@ export const collectionCards = sqliteTable('collection_cards', {
 	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
 });
 
+export const cardPricesLang = sqliteTable('card_prices_lang', {
+	cardId: text('card_id').notNull().references(() => cards.id, { onDelete: 'cascade' }),
+	language: text('language').notNull(),
+	priceEur: real('price_eur'),
+	priceEurFoil: real('price_eur_foil'),
+	priceUsd: real('price_usd'),
+	priceUsdFoil: real('price_usd_foil'),
+	lastUpdated: text('last_updated')
+});
+
 export const wishlistCards = sqliteTable('wishlist_cards', {
 	id: integer('id').primaryKey({ autoIncrement: true }),
 	userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),

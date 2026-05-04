@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { priceDataCache } from '$lib/server/cache';
 import { parseLanguageInput } from '$lib/utils';
+import { ensureForeignPricesSequential } from '$lib/server/foreign-prices';
 
 interface MoxfieldRow {
 	Count: string;
@@ -261,6 +262,7 @@ export async function POST({ request, locals }) {
 	let skipped = 0;
 	let notFound = 0;
 	const notFoundCards: string[] = [];
+	const foreignPairs: Array<{ cardId: string; language: string }> = [];
 
 	const transaction = sqlite.transaction(() => {
 		// In sync mode, clear existing collection first
@@ -321,6 +323,10 @@ export async function POST({ request, locals }) {
 				new Date().toISOString()
 			);
 
+			if (row.language && row.language !== 'en') {
+				foreignPairs.push({ cardId: card.id, language: row.language });
+			}
+
 			imported++;
 		}
 	});
@@ -328,6 +334,13 @@ export async function POST({ request, locals }) {
 	transaction();
 
 	priceDataCache.invalidate(userId);
+
+	// Backfill foreign-language prices in the background. The transaction is
+	// already committed; failures here only mean the foreign price will retry
+	// the next time the user opens the card.
+	if (foreignPairs.length > 0) {
+		ensureForeignPricesSequential(foreignPairs).catch(() => {});
+	}
 
 	return json({
 		success: true,

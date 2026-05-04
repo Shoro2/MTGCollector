@@ -249,6 +249,23 @@ const MIGRATIONS: Migration[] = [
 	{
 		id: '0016_collection_cards_language',
 		run: (db) => addColumnIfMissing(db, 'collection_cards', 'language', "TEXT DEFAULT 'en'")
+	},
+	{
+		id: '0017_card_prices_lang_table',
+		run: (db) => {
+			db.exec(`
+				CREATE TABLE IF NOT EXISTS card_prices_lang (
+					card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+					language TEXT NOT NULL,
+					price_eur REAL,
+					price_eur_foil REAL,
+					price_usd REAL,
+					price_usd_foil REAL,
+					last_updated TEXT,
+					PRIMARY KEY (card_id, language)
+				)
+			`);
+		}
 	}
 ];
 
