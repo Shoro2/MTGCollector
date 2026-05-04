@@ -238,17 +238,15 @@ export async function POST({ request, locals }) {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	);
 
-	// SQLite's IS operator handles NULL equality correctly, so the same query works whether
-	// purchase_price/notes are NULL or set.
+	// Match on card identity (printing) + foil + condition. Quantity, purchase price
+	// and notes intentionally do not participate, so existing rows with different
+	// quantities or user-edited prices/notes still count as duplicates.
 	const findIdenticalRow = sqlite.prepare(
 		`SELECT id FROM collection_cards
 		 WHERE user_id = ?
 		   AND card_id = ?
-		   AND quantity = ?
 		   AND condition = ?
 		   AND foil = ?
-		   AND purchase_price IS ?
-		   AND notes IS ?
 		 LIMIT 1`
 	);
 
@@ -294,11 +292,8 @@ export async function POST({ request, locals }) {
 				const existing = findIdenticalRow.get(
 					userId,
 					card.id,
-					row.quantity,
 					row.condition,
-					row.foil,
-					row.purchasePrice,
-					notes
+					row.foil
 				);
 				if (existing) {
 					skipped++;

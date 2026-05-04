@@ -934,7 +934,7 @@
 							<input type="radio" bind:group={importMode} value="merge" class="mt-1" />
 							<div>
 								<p class="font-medium text-sm">Merge</p>
-								<p class="text-xs text-[var(--color-text-muted)]">Add only cards that aren't already in your collection. Identical entries are skipped.</p>
+								<p class="text-xs text-[var(--color-text-muted)]">Add only cards that aren't already in your collection. Same printing with the same foil state and condition is skipped.</p>
 							</div>
 						</label>
 						<label class="flex items-start gap-3 bg-[var(--color-bg)] rounded-lg p-3 border cursor-pointer flex-1 transition-colors {importMode === 'sync' ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}">
@@ -1035,7 +1035,7 @@
 								<p class="text-sm text-green-300/70 mt-1">Collection was replaced (sync mode).</p>
 							{:else if importResult.mode === 'merge'}
 								<p class="text-sm text-green-300/70 mt-1">
-									Cards were merged into your collection.{importResult.skipped ? ` ${importResult.skipped} identical entries skipped.` : ''}
+									Cards were merged into your collection.{importResult.skipped ? ` ${importResult.skipped} already in collection (same printing, foil, condition) — skipped.` : ''}
 								</p>
 							{:else}
 								<p class="text-sm text-green-300/70 mt-1">Cards were added to your collection (append mode).</p>
