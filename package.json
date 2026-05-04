@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"import-cards": "npx tsx src/lib/server/seed.ts",
+		"import-new-cards": "npx tsx src/lib/server/import-new-cards.ts",
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",

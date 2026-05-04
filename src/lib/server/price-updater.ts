@@ -17,6 +17,27 @@ let updateInProgress = false;
 
 interface ScryfallPriceCard {
 	id: string;
+	oracle_id?: string;
+	name: string;
+	mana_cost?: string;
+	cmc?: number;
+	type_line?: string;
+	oracle_text?: string;
+	colors?: string[];
+	color_identity?: string[];
+	keywords?: string[];
+	set: string;
+	set_name: string;
+	collector_number: string;
+	rarity: string;
+	power?: string;
+	toughness?: string;
+	loyalty?: string;
+	image_uris?: { normal?: string; small?: string; large?: string };
+	layout: string;
+	legalities?: Record<string, string>;
+	released_at?: string;
+	scryfall_uri?: string;
 	prices: {
 		eur?: string | null;
 		eur_foil?: string | null;
@@ -24,6 +45,16 @@ interface ScryfallPriceCard {
 		usd_foil?: string | null;
 	};
 	cardmarket_id?: number;
+	lang: string;
+	card_faces?: Array<{
+		name?: string;
+		mana_cost?: string;
+		type_line?: string;
+		oracle_text?: string;
+		image_uris?: { normal?: string };
+		power?: string;
+		toughness?: string;
+	}>;
 }
 
 function getLastBulkUpdate(): string | null {
@@ -48,7 +79,7 @@ export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress:
 	};
 }
 
-export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: number }> {
+export async function runPriceUpdate(): Promise<{ updated: number; inserted: number; snapshotted: number }> {
 	if (updateInProgress) {
 		throw new Error('Price update already in progress');
 	}
@@ -82,7 +113,33 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id) WHERE id = ?'
 		);
 
+		const cardExists = sqlite.prepare('SELECT 1 FROM cards WHERE id = ?');
+
+		const insertCard = sqlite.prepare(`
+			INSERT INTO cards (
+				id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
+				colors, color_identity, keywords, set_code, set_name,
+				collector_number, rarity, power, toughness, loyalty,
+				image_uri, layout, legalities, released_at, scryfall_uri,
+				price_eur, price_eur_foil, price_usd, price_usd_foil, cardmarket_id
+			) VALUES (
+				?, ?, ?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?,
+				?, ?, ?, ?, ?
+			)
+		`);
+
+		const insertFace = sqlite.prepare(`
+			INSERT INTO card_faces (
+				card_id, face_index, name, mana_cost, type_line, oracle_text,
+				image_uri, power, toughness
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`);
+
 		let updated = 0;
+		let inserted = 0;
 		let pendingBatch: ScryfallPriceCard[] = [];
 		const batchSize = 5000;
 
@@ -91,13 +148,72 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 			pendingBatch = [];
 			const transaction = sqlite.transaction(() => {
 				for (const card of batch) {
+					if (card.lang !== 'en') continue;
+
 					const priceEur = card.prices?.eur ? parseFloat(card.prices.eur) : null;
 					const priceEurFoil = card.prices?.eur_foil ? parseFloat(card.prices.eur_foil) : null;
 					const priceUsd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
 					const priceUsdFoil = card.prices?.usd_foil ? parseFloat(card.prices.usd_foil) : null;
 					const cardmarketId = card.cardmarket_id ?? null;
-					const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId, card.id);
-					if (result.changes > 0) updated++;
+
+					if (cardExists.get(card.id)) {
+						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId, card.id);
+						if (result.changes > 0) updated++;
+						continue;
+					}
+
+					const imageUri =
+						card.image_uris?.normal ||
+						card.card_faces?.[0]?.image_uris?.normal ||
+						null;
+
+					insertCard.run(
+						card.id,
+						card.oracle_id || null,
+						card.name,
+						card.mana_cost || null,
+						card.cmc ?? null,
+						card.type_line || null,
+						card.oracle_text || null,
+						card.colors ? JSON.stringify(card.colors) : null,
+						card.color_identity ? JSON.stringify(card.color_identity) : null,
+						card.keywords ? JSON.stringify(card.keywords) : null,
+						card.set,
+						card.set_name,
+						card.collector_number,
+						card.rarity,
+						card.power || null,
+						card.toughness || null,
+						card.loyalty || null,
+						imageUri,
+						card.layout,
+						card.legalities ? JSON.stringify(card.legalities) : null,
+						card.released_at || null,
+						card.scryfall_uri || null,
+						priceEur,
+						priceEurFoil,
+						priceUsd,
+						priceUsdFoil,
+						cardmarketId
+					);
+					inserted++;
+
+					if (card.card_faces && card.card_faces.length > 1) {
+						for (let fi = 0; fi < card.card_faces.length; fi++) {
+							const face = card.card_faces[fi];
+							insertFace.run(
+								card.id,
+								fi,
+								face.name || null,
+								face.mana_cost || null,
+								face.type_line || null,
+								face.oracle_text || null,
+								face.image_uris?.normal || null,
+								face.power || null,
+								face.toughness || null
+							);
+						}
+					}
 				}
 			});
 			transaction();
@@ -112,7 +228,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		}
 		if (pendingBatch.length > 0) applyBatch();
 
-		console.log(`[price-updater] Updated prices for ${updated} cards`);
+		console.log(`[price-updater] Updated prices for ${updated} cards, inserted ${inserted} new cards`);
 
 		// Change-aware daily snapshot. Only inserts a new price_history row
 		// when the card's current price differs from its most recent snapshot
@@ -169,7 +285,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; snapshotted: 
 		}
 
 		console.log('[price-updater] Price update complete!');
-		return { updated, snapshotted };
+		return { updated, inserted, snapshotted };
 	} finally {
 		updateInProgress = false;
 	}
