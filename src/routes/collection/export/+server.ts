@@ -1,5 +1,6 @@
 import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
+import { languageLabel } from '$lib/utils';
 
 const conditionMap: Record<string, string> = {
 	near_mint: 'Near Mint',
@@ -25,7 +26,7 @@ export async function GET({ locals, url }) {
 
 	const items = sqlite
 		.prepare(
-			`SELECT cc.quantity, cc.condition, cc.foil, cc.added_at, cc.purchase_price,
+			`SELECT cc.quantity, cc.condition, cc.foil, cc.language, cc.added_at, cc.purchase_price,
 				c.name, c.set_code, c.collector_number
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
@@ -59,6 +60,7 @@ export async function GET({ locals, url }) {
 		const set = (item.set_code as string).toLowerCase();
 		const condition = conditionMap[item.condition as string] || 'Near Mint';
 		const foil = item.foil ? 'foil' : '';
+		const language = languageLabel((item.language as string | null) ?? 'en');
 		const addedAt = (item.added_at as string).replace('T', ' ').replace('Z', '0000');
 		const collectorNum = item.collector_number as string;
 		const purchasePrice = item.purchase_price != null ? String(item.purchase_price) : '';
@@ -69,7 +71,7 @@ export async function GET({ locals, url }) {
 			csvField(name),
 			csvField(set),
 			csvField(condition),
-			csvField('English'),
+			csvField(language),
 			csvField(foil),
 			csvField(''),
 			csvField(addedAt),

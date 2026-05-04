@@ -65,9 +65,16 @@ export async function load({ url, locals, depends }) {
 	const items = sqlite
 		.prepare(
 			`SELECT cc.*, c.name, c.set_name, c.set_code, c.collector_number, c.image_uri, c.local_image_path,
-				c.mana_cost, c.type_line, c.rarity, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, cc.purchase_price
+				c.mana_cost, c.type_line, c.rarity,
+				COALESCE(cpl.price_eur, c.price_eur) AS price_eur,
+				COALESCE(cpl.price_eur_foil, c.price_eur_foil) AS price_eur_foil,
+				COALESCE(cpl.price_usd, c.price_usd) AS price_usd,
+				COALESCE(cpl.price_usd_foil, c.price_usd_foil) AS price_usd_foil,
+				cc.purchase_price
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
+			LEFT JOIN card_prices_lang cpl
+				ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 			${whereClause}
 			ORDER BY ${orderColumn} ${orderDir}
 			LIMIT ? OFFSET ?`
@@ -119,9 +126,16 @@ export async function load({ url, locals, depends }) {
 		const item = sqlite
 			.prepare(
 				`SELECT cc.*, c.name, c.set_name, c.set_code, c.collector_number, c.image_uri, c.local_image_path,
-					c.mana_cost, c.type_line, c.rarity, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, cc.purchase_price
+					c.mana_cost, c.type_line, c.rarity,
+					COALESCE(cpl.price_eur, c.price_eur) AS price_eur,
+					COALESCE(cpl.price_eur_foil, c.price_eur_foil) AS price_eur_foil,
+					COALESCE(cpl.price_usd, c.price_usd) AS price_usd,
+					COALESCE(cpl.price_usd_foil, c.price_usd_foil) AS price_usd_foil,
+					cc.purchase_price
 				FROM collection_cards cc
 				JOIN cards c ON cc.card_id = c.id
+				LEFT JOIN card_prices_lang cpl
+					ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 				WHERE cc.id = ? AND cc.user_id = ?`
 			)
 			.get(parseInt(editId), userId) as Record<string, unknown> | undefined;

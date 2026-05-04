@@ -3,7 +3,7 @@
 	import { goto, invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import { formatPrice, conditionLabel, priceDate, scryfallSrcset } from '$lib/utils';
+	import { formatPrice, conditionLabel, priceDate, scryfallSrcset, LANGUAGES, languageLabel } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
@@ -96,6 +96,7 @@
 	let editQuantity = $state(1);
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);
+	let editLanguage = $state('en');
 	let editNotes = $state('');
 	let editPurchasePrice = $state('');
 	let saving = $state(false);
@@ -105,6 +106,7 @@
 		editQuantity = item.quantity as number;
 		editCondition = item.condition as string;
 		editFoil = !!(item.foil as number);
+		editLanguage = (item.language as string) || 'en';
 		editNotes = (item.notes as string) || '';
 		editPurchasePrice = item.purchase_price != null ? String(item.purchase_price) : '';
 	}
@@ -124,6 +126,7 @@
 				quantity: editQuantity,
 				condition: editCondition,
 				foil: editFoil,
+				language: editLanguage,
 				notes: editNotes || null,
 				purchasePrice: editPurchasePrice ? parseFloat(editPurchasePrice) : null
 			})
@@ -558,6 +561,16 @@
 						</div>
 					</div>
 
+					<!-- Language -->
+					<div>
+						<label for="edit-language" class="block text-xs text-[var(--color-text-muted)] mb-1">Language</label>
+						<select id="edit-language" bind:value={editLanguage} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+							{#each LANGUAGES as lang}
+								<option value={lang.code}>{lang.label}</option>
+							{/each}
+						</select>
+					</div>
+
 					<!-- Purchase Price -->
 					<div>
 						<label for="edit-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price (EUR)</label>
@@ -814,6 +827,9 @@
 								<span>{conditionLabel(item.condition as string)}</span>
 								{#if item.foil}
 									<span class="text-[var(--color-accent)]">FOIL</span>
+								{/if}
+								{#if item.language && item.language !== 'en'}
+									<span class="uppercase tracking-wide text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">{languageLabel(item.language as string)}</span>
 								{/if}
 								<span class="break-words">{item.set_name}</span>
 							</div>

@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { priceDataCache } from '$lib/server/cache';
+import { parseLanguageInput } from '$lib/utils';
+import { ensureForeignPricesSequential } from '$lib/server/foreign-prices';
 
 interface MoxfieldRow {
 	Count: string;
@@ -20,6 +22,7 @@ interface ImportRow {
 	quantity: number;
 	condition: string;
 	foil: 0 | 1;
+	language: string;
 	purchasePrice: number | null;
 	tags: string;
 	originalName: string;
@@ -94,6 +97,7 @@ function moxfieldRowsToImportRows(rows: MoxfieldRow[]): ImportRow[] {
 			quantity: parseInt(row.Count) || 1,
 			condition: mapCondition(row.Condition),
 			foil: row.Foil === 'foil' || row.Foil === 'etched' ? 1 : 0,
+			language: parseLanguageInput(row.Language),
 			purchasePrice: isNaN(parsedPrice) ? null : parsedPrice,
 			tags: row.Tags || '',
 			originalName: row.Name
@@ -139,6 +143,7 @@ function parseTextDeckList(text: string): { rows: ImportRow[]; parseErrors: stri
 				quantity,
 				condition: 'near_mint',
 				foil,
+				language: 'en',
 				purchasePrice: null,
 				tags: '',
 				originalName: name
@@ -234,19 +239,22 @@ export async function POST({ request, locals }) {
 	);
 
 	const insertCollection = sqlite.prepare(
-		`INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, purchase_price, notes, added_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, notes, added_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	);
 
-	// Match on card identity (printing) + foil + condition. Quantity, purchase price
-	// and notes intentionally do not participate, so existing rows with different
-	// quantities or user-edited prices/notes still count as duplicates.
+	// Match on card identity (printing) + foil + condition + language. Quantity,
+	// purchase price and notes intentionally do not participate, so existing rows
+	// with different quantities or user-edited prices/notes still count as
+	// duplicates. Language is part of the key because a foreign-language copy is
+	// a meaningfully different card to most collectors.
 	const findIdenticalRow = sqlite.prepare(
 		`SELECT id FROM collection_cards
 		 WHERE user_id = ?
 		   AND card_id = ?
 		   AND condition = ?
 		   AND foil = ?
+		   AND COALESCE(language, 'en') = ?
 		 LIMIT 1`
 	);
 
@@ -254,6 +262,7 @@ export async function POST({ request, locals }) {
 	let skipped = 0;
 	let notFound = 0;
 	const notFoundCards: string[] = [];
+	const foreignPairs: Array<{ cardId: string; language: string }> = [];
 
 	const transaction = sqlite.transaction(() => {
 		// In sync mode, clear existing collection first
@@ -293,7 +302,8 @@ export async function POST({ request, locals }) {
 					userId,
 					card.id,
 					row.condition,
-					row.foil
+					row.foil,
+					row.language
 				);
 				if (existing) {
 					skipped++;
@@ -307,10 +317,15 @@ export async function POST({ request, locals }) {
 				row.quantity,
 				row.condition,
 				row.foil,
+				row.language,
 				row.purchasePrice,
 				notes,
 				new Date().toISOString()
 			);
+
+			if (row.language && row.language !== 'en') {
+				foreignPairs.push({ cardId: card.id, language: row.language });
+			}
 
 			imported++;
 		}
@@ -319,6 +334,13 @@ export async function POST({ request, locals }) {
 	transaction();
 
 	priceDataCache.invalidate(userId);
+
+	// Backfill foreign-language prices in the background. The transaction is
+	// already committed; failures here only mean the foreign price will retry
+	// the next time the user opens the card.
+	if (foreignPairs.length > 0) {
+		ensureForeignPricesSequential(foreignPairs).catch(() => {});
+	}
 
 	return json({
 		success: true,
