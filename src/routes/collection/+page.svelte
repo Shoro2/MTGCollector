@@ -232,6 +232,7 @@
 	type ImportResult = {
 		success: boolean;
 		imported?: number;
+		skipped?: number;
 		notFound?: number;
 		notFoundCards?: string[];
 		parseErrors?: string[];
@@ -246,7 +247,7 @@
 	let showExportModal = $state(false);
 	let importFormat = $state<'csv' | 'text'>('csv');
 	let exportFormat = $state<'csv' | 'text'>('csv');
-	let importMode = $state<'append' | 'sync'>('append');
+	let importMode = $state<'append' | 'merge' | 'sync'>('append');
 	let importText = $state('');
 	let importFile = $state<File | null>(null);
 	let importFileInput = $state<HTMLInputElement>(null!);
@@ -929,6 +930,13 @@
 								<p class="text-xs text-[var(--color-text-muted)]">Add cards to your existing collection.</p>
 							</div>
 						</label>
+						<label class="flex items-start gap-3 bg-[var(--color-bg)] rounded-lg p-3 border cursor-pointer flex-1 transition-colors {importMode === 'merge' ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}">
+							<input type="radio" bind:group={importMode} value="merge" class="mt-1" />
+							<div>
+								<p class="font-medium text-sm">Merge</p>
+								<p class="text-xs text-[var(--color-text-muted)]">Add only cards that aren't already in your collection. Identical entries are skipped.</p>
+							</div>
+						</label>
 						<label class="flex items-start gap-3 bg-[var(--color-bg)] rounded-lg p-3 border cursor-pointer flex-1 transition-colors {importMode === 'sync' ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'}">
 							<input type="radio" bind:group={importMode} value="sync" class="mt-1" />
 							<div>
@@ -1012,7 +1020,7 @@
 						disabled={importing || (importFormat === 'csv' ? !importFile : !importText.trim())}
 						class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50"
 					>
-						{importing ? 'Importing...' : `Import (${importMode === 'sync' ? 'Sync' : 'Append'})`}
+						{importing ? 'Importing...' : `Import (${importMode === 'sync' ? 'Sync' : importMode === 'merge' ? 'Merge' : 'Append'})`}
 					</button>
 				{/if}
 
@@ -1025,6 +1033,10 @@
 							</p>
 							{#if importResult.mode === 'sync'}
 								<p class="text-sm text-green-300/70 mt-1">Collection was replaced (sync mode).</p>
+							{:else if importResult.mode === 'merge'}
+								<p class="text-sm text-green-300/70 mt-1">
+									Cards were merged into your collection.{importResult.skipped ? ` ${importResult.skipped} identical entries skipped.` : ''}
+								</p>
 							{:else}
 								<p class="text-sm text-green-300/70 mt-1">Cards were added to your collection (append mode).</p>
 							{/if}

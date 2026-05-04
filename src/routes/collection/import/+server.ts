@@ -165,9 +165,9 @@ export async function POST({ request, locals }) {
 
 	const formData = await request.formData();
 	const format = (formData.get('format') as string) || 'csv';
-	const mode = formData.get('mode') as string; // 'sync' or 'append'
+	const mode = formData.get('mode') as string; // 'sync', 'append', or 'merge'
 
-	if (mode !== 'sync' && mode !== 'append') {
+	if (mode !== 'sync' && mode !== 'append' && mode !== 'merge') {
 		return json({ success: false, message: 'Invalid mode' }, { status: 400 });
 	}
 	if (format !== 'csv' && format !== 'text') {
@@ -238,7 +238,22 @@ export async function POST({ request, locals }) {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	);
 
+	// SQLite's IS operator handles NULL equality correctly, so the same query works whether
+	// purchase_price/notes are NULL or set.
+	const findIdenticalRow = sqlite.prepare(
+		`SELECT id FROM collection_cards
+		 WHERE user_id = ?
+		   AND card_id = ?
+		   AND quantity = ?
+		   AND condition = ?
+		   AND foil = ?
+		   AND purchase_price IS ?
+		   AND notes IS ?
+		 LIMIT 1`
+	);
+
 	let imported = 0;
+	let skipped = 0;
 	let notFound = 0;
 	const notFoundCards: string[] = [];
 
@@ -275,6 +290,22 @@ export async function POST({ request, locals }) {
 
 			const notes = row.tags ? `Moxfield tags: ${row.tags}` : null;
 
+			if (mode === 'merge') {
+				const existing = findIdenticalRow.get(
+					userId,
+					card.id,
+					row.quantity,
+					row.condition,
+					row.foil,
+					row.purchasePrice,
+					notes
+				);
+				if (existing) {
+					skipped++;
+					continue;
+				}
+			}
+
 			insertCollection.run(
 				userId,
 				card.id,
@@ -297,7 +328,7 @@ export async function POST({ request, locals }) {
 	return json({
 		success: true,
 		imported,
-		skipped: 0,
+		skipped,
 		notFound,
 		notFoundCards,
 		parseErrors,
