@@ -44,6 +44,12 @@ export function formatPrice(price: number | null, priceUsd?: number | null): str
 	return '—';
 }
 
+/** EUR value for a price-history row: prefer the EUR column, otherwise convert
+ *  the USD column at the given rate so USD-only cards still render on the chart. */
+export function histEur(eur: number | null, usd: number | null, usdToEur: number): number | null {
+	return eur ?? (usd != null ? usd * usdToEur : null);
+}
+
 export function conditionLabel(condition: string): string {
 	const labels: Record<string, string> = {
 		near_mint: 'Near Mint',

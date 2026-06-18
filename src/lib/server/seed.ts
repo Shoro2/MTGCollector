@@ -84,8 +84,16 @@ async function importCards(filePath: string) {
 
 	sqlite.exec(SCHEMA_SQL);
 
+	// Older databases created before the snapshot_date/language migrations won't
+	// get those columns from CREATE TABLE IF NOT EXISTS, so add them idempotently
+	// (mirrors migrations 0014/0018) before writing price_history rows below.
+	const phCols = (sqlite.prepare('PRAGMA table_info(price_history)').all() as Array<{ name: string }>).map((c) => c.name);
+	if (!phCols.includes('snapshot_date')) sqlite.exec('ALTER TABLE price_history ADD COLUMN snapshot_date TEXT');
+	if (!phCols.includes('language')) sqlite.exec("ALTER TABLE price_history ADD COLUMN language TEXT DEFAULT 'en' NOT NULL");
+	sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_snapshot_lang ON price_history(card_id, snapshot_date, language)');
+
 	const insertCard = sqlite.prepare(`
-		INSERT OR REPLACE INTO cards (
+		INSERT INTO cards (
 			id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
 			colors, color_identity, keywords, set_code, set_name,
 			collector_number, rarity, power, toughness, loyalty,
@@ -98,7 +106,18 @@ async function importCards(filePath: string) {
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?
 		)
-	`);
+	ON CONFLICT(id) DO UPDATE SET
+			oracle_id = excluded.oracle_id, name = excluded.name, mana_cost = excluded.mana_cost,
+			cmc = excluded.cmc, type_line = excluded.type_line, oracle_text = excluded.oracle_text,
+			colors = excluded.colors, color_identity = excluded.color_identity, keywords = excluded.keywords,
+			set_code = excluded.set_code, set_name = excluded.set_name, collector_number = excluded.collector_number,
+			rarity = excluded.rarity, power = excluded.power, toughness = excluded.toughness, loyalty = excluded.loyalty,
+			image_uri = excluded.image_uri, layout = excluded.layout, legalities = excluded.legalities,
+			released_at = excluded.released_at, scryfall_uri = excluded.scryfall_uri,
+			price_eur = excluded.price_eur, price_eur_foil = excluded.price_eur_foil,
+			price_usd = excluded.price_usd, price_usd_foil = excluded.price_usd_foil,
+			cardmarket_id = excluded.cardmarket_id
+		`);
 
 	const insertFace = sqlite.prepare(`
 		INSERT OR REPLACE INTO card_faces (
@@ -108,13 +127,18 @@ async function importCards(filePath: string) {
 	`);
 
 	const insertPrice = sqlite.prepare(`
-		INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`);
+			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at, snapshot_date, language)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 'en')
+			ON CONFLICT(card_id, snapshot_date, language) DO UPDATE SET
+				price_eur = excluded.price_eur, price_eur_foil = excluded.price_eur_foil,
+				price_usd = excluded.price_usd, price_usd_foil = excluded.price_usd_foil,
+				recorded_at = excluded.recorded_at
+		`);
 
 	sqlite.exec('DELETE FROM card_faces');
 
 	const now = new Date().toISOString();
+	const snapshotDate = now.slice(0, 10);
 	const batchSize = 5000;
 	let imported = 0;
 	let pendingBatch: ScryfallCard[] = [];
@@ -186,7 +210,7 @@ async function importCards(filePath: string) {
 				}
 
 				if (priceEur !== null || priceEurFoil !== null || priceUsd !== null || priceUsdFoil !== null) {
-					insertPrice.run(card.id, priceEur, priceEurFoil, priceUsd, priceUsdFoil, now);
+					insertPrice.run(card.id, priceEur, priceEurFoil, priceUsd, priceUsdFoil, now, snapshotDate);
 				}
 			}
 		});
@@ -212,18 +236,9 @@ async function importCards(filePath: string) {
 	// External-content FTS5: rebuild reads directly from cards by rowid.
 	sqlite.exec(`INSERT INTO cards_fts(cards_fts) VALUES('rebuild')`);
 
-	// Collapse same-day duplicates (initial seed writes one snapshot per card;
-	// re-seeding on an existing DB would otherwise create a second row).
-	sqlite.exec(`
-		DELETE FROM price_history
-		WHERE id NOT IN (
-			SELECT MAX(id) FROM price_history
-			GROUP BY card_id, DATE(recorded_at)
-		)
-	`);
-	sqlite.exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_day ON price_history(card_id, DATE(recorded_at))`
-	);
+		// Re-seed dedup is handled by the change-aware upsert above plus the
+		// (card_id, snapshot_date, language) unique index created by SCHEMA_SQL; the
+		// old idx_price_history_card_day expression index is intentionally not recreated.
 
 	const count = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };
 	console.log(`Done! ${count.count} cards in database.`);

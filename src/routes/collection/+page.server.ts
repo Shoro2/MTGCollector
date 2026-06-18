@@ -37,17 +37,17 @@ export async function load({ url, locals, depends }) {
 	const validSorts: Record<string, string> = {
 		name: 'c.name',
 		added_at: 'cc.added_at',
-		price: 'CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END',
+		price: 'CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END',
 		profit: `CASE WHEN cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
 			(COALESCE(
-				CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END,
-				CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END * ${usdToEur}
+				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
+				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
 			) - cc.purchase_price) / cc.purchase_price * 100
 			ELSE NULL END`,
 		profit_total: `CASE WHEN cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
 			(COALESCE(
-				CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END,
-				CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END * ${usdToEur}
+				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
+				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
 			) - cc.purchase_price) * cc.quantity
 			ELSE NULL END`,
 		quantity: 'cc.quantity',
@@ -61,6 +61,11 @@ export async function load({ url, locals, depends }) {
 			`SELECT COUNT(*) as count FROM collection_cards cc JOIN cards c ON cc.card_id = c.id ${whereClause}`
 		)
 		.get(...params) as { count: number };
+
+	const itemsQueryParams = [...params];
+	if (sortBy === 'profit' || sortBy === 'profit_total') {
+		itemsQueryParams.push(usdToEur);
+	}
 
 	const items = sqlite
 		.prepare(
@@ -79,7 +84,7 @@ export async function load({ url, locals, depends }) {
 			ORDER BY ${orderColumn} ${orderDir}
 			LIMIT ? OFFSET ?`
 		)
-		.all(...params, pageSize, offset) as Array<Record<string, unknown>>;
+		.all(...itemsQueryParams, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get tags for all collection cards in a single batch query (avoids N+1)
 	const itemIds = items.map((item) => item.id as number);
@@ -113,11 +118,18 @@ export async function load({ url, locals, depends }) {
 			`SELECT
 				COUNT(*) as uniqueCards,
 				COALESCE(SUM(cc.quantity), 0) as totalCards,
-				COALESCE(SUM(CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END * cc.quantity), 0) as totalValue
-			FROM collection_cards cc JOIN cards c ON cc.card_id = c.id
+				COALESCE(SUM(
+					COALESCE(
+						CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
+						CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
+					) * cc.quantity
+				), 0) as totalValue
+			FROM collection_cards cc
+			JOIN cards c ON cc.card_id = c.id
+			LEFT JOIN card_prices_lang cpl ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 			WHERE cc.user_id = ?`
 		)
-		.get(userId) as { uniqueCards: number; totalCards: number; totalValue: number };
+		.get(usdToEur, userId) as { uniqueCards: number; totalCards: number; totalValue: number };
 
 	// Load a specific card for edit modal (e.g. from prices page link)
 	const editId = url.searchParams.get('edit');

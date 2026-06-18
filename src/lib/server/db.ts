@@ -266,6 +266,16 @@ const MIGRATIONS: Migration[] = [
 				)
 			`);
 		}
+	},
+	{
+		id: '0018_price_history_language',
+		run: (db) => {
+			addColumnIfMissing(db, 'price_history', 'language', "TEXT DEFAULT 'en' NOT NULL");
+			db.exec('DROP INDEX IF EXISTS idx_price_history_card_snapshot_date');
+			db.exec(
+				'CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_snapshot_lang ON price_history(card_id, snapshot_date, language)'
+			);
+		}
 	}
 ];
 
