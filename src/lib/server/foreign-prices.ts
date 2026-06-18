@@ -13,24 +13,45 @@ interface ScryfallCard {
 	};
 }
 
-const findCardLookup = sqlite.prepare(
-	'SELECT set_code, collector_number FROM cards WHERE id = ?'
-);
+// Statements prepare on first call and are cached. Top-level prepare would
+// crash the SSR build because `card_prices_lang` doesn't exist yet — that
+// table only gets created after initDb() runs the migrations at server boot.
+function prepFindCardLookup() {
+	return sqlite.prepare<[string]>(
+		'SELECT set_code, collector_number FROM cards WHERE id = ?'
+	);
+}
+function prepHasForeignRow() {
+	return sqlite.prepare<[string, string]>(
+		'SELECT 1 FROM card_prices_lang WHERE card_id = ? AND language = ?'
+	);
+}
+function prepUpsertForeignRow() {
+	return sqlite.prepare<[string, string, number | null, number | null, number | null, number | null, string]>(
+		`INSERT INTO card_prices_lang (card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil, last_updated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(card_id, language) DO UPDATE SET
+			price_eur = excluded.price_eur,
+			price_eur_foil = excluded.price_eur_foil,
+			price_usd = excluded.price_usd,
+			price_usd_foil = excluded.price_usd_foil,
+			last_updated = excluded.last_updated`
+	);
+}
 
-const hasForeignRow = sqlite.prepare(
-	'SELECT 1 FROM card_prices_lang WHERE card_id = ? AND language = ?'
-);
+let _find: ReturnType<typeof prepFindCardLookup> | null = null;
+let _has: ReturnType<typeof prepHasForeignRow> | null = null;
+let _upsert: ReturnType<typeof prepUpsertForeignRow> | null = null;
 
-const upsertForeignRow = sqlite.prepare(
-	`INSERT INTO card_prices_lang (card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil, last_updated)
-	 VALUES (?, ?, ?, ?, ?, ?, ?)
-	 ON CONFLICT(card_id, language) DO UPDATE SET
-		price_eur = excluded.price_eur,
-		price_eur_foil = excluded.price_eur_foil,
-		price_usd = excluded.price_usd,
-		price_usd_foil = excluded.price_usd_foil,
-		last_updated = excluded.last_updated`
-);
+function findCardLookup() {
+	return (_find ??= prepFindCardLookup());
+}
+function hasForeignRow() {
+	return (_has ??= prepHasForeignRow());
+}
+function upsertForeignRow() {
+	return (_upsert ??= prepUpsertForeignRow());
+}
 
 function parsePrice(v: string | null | undefined): number | null {
 	if (!v) return null;
@@ -45,9 +66,9 @@ function parsePrice(v: string | null | undefined): number | null {
 // is saved either way; the price just stays unknown until the next try.
 export async function ensureForeignPrice(cardId: string, language: string): Promise<void> {
 	if (!language || language === 'en') return;
-	if (hasForeignRow.get(cardId, language)) return;
+	if (hasForeignRow().get(cardId, language)) return;
 
-	const card = findCardLookup.get(cardId) as
+	const card = findCardLookup().get(cardId) as
 		| { set_code: string | null; collector_number: string | null }
 		| undefined;
 	if (!card?.set_code || !card.collector_number) return;
@@ -65,7 +86,7 @@ export async function ensureForeignPrice(cardId: string, language: string): Prom
 	}
 
 	const prices = foreign?.prices;
-	upsertForeignRow.run(
+	upsertForeignRow().run(
 		cardId,
 		language,
 		parsePrice(prices?.eur),
@@ -82,12 +103,13 @@ export async function ensureForeignPricesSequential(
 	pairs: Array<{ cardId: string; language: string }>
 ): Promise<void> {
 	const seen = new Set<string>();
+	const stmt = hasForeignRow();
 	for (const { cardId, language } of pairs) {
 		if (!language || language === 'en') continue;
 		const key = `${cardId}|${language}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
-		if (hasForeignRow.get(cardId, language)) continue;
+		if (stmt.get(cardId, language)) continue;
 
 		await ensureForeignPrice(cardId, language);
 		await new Promise((r) => setTimeout(r, 200));
