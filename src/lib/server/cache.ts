@@ -128,24 +128,25 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 	const topCards = sqlite
 		.prepare(
 			`SELECT c.id, c.name, c.set_name, c.image_uri, c.local_image_path,
-				CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END as price,
-				CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END as price_usd,
-				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price,
+				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END as price,
+				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END as price_usd,
+				cc.id as collection_id, cc.quantity, cc.foil, cc.purchase_price, cc.language,
 				CASE WHEN cc.foil = 1 THEN prev.price_eur_foil ELSE prev.price_eur END as prev_price,
 				CASE WHEN cc.foil = 1 THEN prev.price_usd_foil ELSE prev.price_usd END as prev_price_usd
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
+			LEFT JOIN card_prices_lang cpl ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 			LEFT JOIN (
-				SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil
+				SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil
 				FROM (
-					SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil,
-						ROW_NUMBER() OVER (PARTITION BY card_id ORDER BY recorded_at DESC) as rn
+					SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil,
+						ROW_NUMBER() OVER (PARTITION BY card_id, language ORDER BY recorded_at DESC) as rn
 					FROM price_history
 					WHERE DATE(recorded_at) < DATE('now')
 				) WHERE rn = 1
-			) prev ON prev.card_id = c.id
-			WHERE (CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END IS NOT NULL
-				OR CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END IS NOT NULL)
+			) prev ON prev.card_id = cc.card_id AND prev.language = cc.language
+			WHERE (CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END IS NOT NULL
+				OR CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END IS NOT NULL)
 				AND cc.user_id = ?`
 		)
 		.all(userId);
@@ -156,8 +157,8 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 			`SELECT
 				COALESCE(SUM(
 					COALESCE(
-						CASE WHEN cc.foil = 1 THEN c.price_eur_foil ELSE c.price_eur END,
-						CASE WHEN cc.foil = 1 THEN c.price_usd_foil ELSE c.price_usd END * ?
+						CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
+						CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
 					) * cc.quantity
 				), 0) as totalValue,
 				COALESCE(SUM(cc.purchase_price * cc.quantity), 0) as totalPurchaseValue,
@@ -165,6 +166,7 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 				COALESCE(SUM(cc.quantity), 0) as totalCards
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
+			LEFT JOIN card_prices_lang cpl ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 			WHERE cc.user_id = ?`
 		)
 		.get(usdToEur, userId) as { totalValue: number; totalPurchaseValue: number; uniqueCards: number; totalCards: number };
@@ -174,28 +176,27 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 		.prepare('SELECT COUNT(*) as count FROM collection_cards WHERE user_id = ? AND purchase_price IS NULL')
 		.get(userId) as { count: number };
 
-	// Profit history. For each day that has any snapshot at all, and for every
-	// collection card, carry forward the latest price_history row with
-	// effective_date <= that day. The change-aware snapshot in price-updater.ts
-	// only writes rows for cards whose price changed that day, so a naive
-	// INNER JOIN per day would miss unchanged cards and produce a partial sum.
+	// Profit history for the profit/loss chart. Values the collection over time,
+	// counting each card only from the day it was added (cc.added_at) so the series
+	// reflects holdings actually owned on each day instead of back-projecting today's
+	// collection onto dates before purchase. For an owned day we carry forward the
+	// latest same-language snapshot with effective_date <= that day; if none exists
+	// yet (card owned just before its first snapshot) we backfill its earliest known
+	// price so a newly-added card does not read as a one-day total loss. The purchase
+	// baseline is summed per day over the same owned-by-then set, so it grows as the
+	// collection grew. NOTE: O(days x cards) correlated subqueries; a windowed
+	// rewrite is a tracked follow-up.
 	const profitHistory = sqlite
 		.prepare(
 			`WITH series_days AS (
 				SELECT DISTINCT DATE(
 					recorded_at,
-					CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10
-					     THEN '-1 day' ELSE '0 days' END
+					CASE WHEN CAST(strftime('%H', recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END
 				) AS day
 				FROM price_history
 			),
 			user_cards AS (
-				SELECT card_id, foil, quantity
-				FROM collection_cards
-				WHERE user_id = ? AND purchase_price IS NOT NULL
-			),
-			purchase_total AS (
-				SELECT COALESCE(SUM(purchase_price * quantity), 0) AS total
+				SELECT card_id, language, foil, quantity, purchase_price, DATE(added_at) AS owned_from
 				FROM collection_cards
 				WHERE user_id = ? AND purchase_price IS NOT NULL
 			),
@@ -204,32 +205,37 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 					sd.day,
 					uc.foil,
 					uc.quantity,
-					(SELECT ph.price_eur FROM price_history ph
-						WHERE ph.card_id = uc.card_id
-						  AND DATE(ph.recorded_at,
-						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
-						           THEN '-1 day' ELSE '0 days' END) <= sd.day
-						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_eur,
-					(SELECT ph.price_eur_foil FROM price_history ph
-						WHERE ph.card_id = uc.card_id
-						  AND DATE(ph.recorded_at,
-						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
-						           THEN '-1 day' ELSE '0 days' END) <= sd.day
-						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_eur_foil,
-					(SELECT ph.price_usd FROM price_history ph
-						WHERE ph.card_id = uc.card_id
-						  AND DATE(ph.recorded_at,
-						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
-						           THEN '-1 day' ELSE '0 days' END) <= sd.day
-						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_usd,
-					(SELECT ph.price_usd_foil FROM price_history ph
-						WHERE ph.card_id = uc.card_id
-						  AND DATE(ph.recorded_at,
-						      CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10
-						           THEN '-1 day' ELSE '0 days' END) <= sd.day
-						ORDER BY ph.recorded_at DESC LIMIT 1) AS price_usd_foil
+					uc.purchase_price,
+					COALESCE(
+						(SELECT ph.price_eur FROM price_history ph
+							WHERE ph.card_id = uc.card_id AND ph.language = uc.language
+							  AND DATE(ph.recorded_at, CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) <= sd.day
+							ORDER BY ph.recorded_at DESC LIMIT 1),
+						(SELECT ph.price_eur FROM price_history ph WHERE ph.card_id = uc.card_id AND ph.language = uc.language ORDER BY ph.recorded_at ASC LIMIT 1)
+					) AS price_eur,
+					COALESCE(
+						(SELECT ph.price_eur_foil FROM price_history ph
+							WHERE ph.card_id = uc.card_id AND ph.language = uc.language
+							  AND DATE(ph.recorded_at, CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) <= sd.day
+							ORDER BY ph.recorded_at DESC LIMIT 1),
+						(SELECT ph.price_eur_foil FROM price_history ph WHERE ph.card_id = uc.card_id AND ph.language = uc.language ORDER BY ph.recorded_at ASC LIMIT 1)
+					) AS price_eur_foil,
+					COALESCE(
+						(SELECT ph.price_usd FROM price_history ph
+							WHERE ph.card_id = uc.card_id AND ph.language = uc.language
+							  AND DATE(ph.recorded_at, CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) <= sd.day
+							ORDER BY ph.recorded_at DESC LIMIT 1),
+						(SELECT ph.price_usd FROM price_history ph WHERE ph.card_id = uc.card_id AND ph.language = uc.language ORDER BY ph.recorded_at ASC LIMIT 1)
+					) AS price_usd,
+					COALESCE(
+						(SELECT ph.price_usd_foil FROM price_history ph
+							WHERE ph.card_id = uc.card_id AND ph.language = uc.language
+							  AND DATE(ph.recorded_at, CASE WHEN CAST(strftime('%H', ph.recorded_at) AS INTEGER) < 10 THEN '-1 day' ELSE '0 days' END) <= sd.day
+							ORDER BY ph.recorded_at DESC LIMIT 1),
+						(SELECT ph.price_usd_foil FROM price_history ph WHERE ph.card_id = uc.card_id AND ph.language = uc.language ORDER BY ph.recorded_at ASC LIMIT 1)
+					) AS price_usd_foil
 				FROM series_days sd
-				CROSS JOIN user_cards uc
+				JOIN user_cards uc ON sd.day >= uc.owned_from
 			)
 			SELECT
 				cdp.day AS recorded_at,
@@ -237,13 +243,12 @@ export const priceDataCache = createUserCache<PriceData>(async (userId: string) 
 					CASE WHEN cdp.foil = 1 THEN cdp.price_eur_foil ELSE cdp.price_eur END,
 					CASE WHEN cdp.foil = 1 THEN cdp.price_usd_foil ELSE cdp.price_usd END * ?
 				) * cdp.quantity) AS total_value,
-				pt.total AS total_purchase
+				SUM(cdp.purchase_price * cdp.quantity) AS total_purchase
 			FROM card_day_price cdp
-			CROSS JOIN purchase_total pt
-			GROUP BY cdp.day, pt.total
+			GROUP BY cdp.day
 			ORDER BY cdp.day ASC`
 		)
-		.all(userId, userId, usdToEur);
+		.all(userId, usdToEur);
 
 	return {
 		topCards,

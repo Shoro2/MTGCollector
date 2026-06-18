@@ -3,7 +3,7 @@
 	import { goto, invalidate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import { formatPrice, conditionLabel, priceDate, scryfallSrcset, LANGUAGES, languageLabel } from '$lib/utils';
+	import { formatPrice, conditionLabel, priceDate, scryfallSrcset, LANGUAGES, languageLabel, histEur } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
@@ -17,12 +17,12 @@
 	let modalChart: Chart | null = null;
 	let modalLoading = $state(false);
 
-	async function openCardChart(cardId: string) {
+	async function openCardChart(cardId: string, lang: string = 'en') {
 		modalLoading = true;
 		modalOpen = true;
 		modalCard = null;
 		const [res, ChartCtor] = await Promise.all([
-			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`),
+			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}&lang=${encodeURIComponent(lang)}`),
 			loadChart()
 		]);
 		const result = await res.json();
@@ -39,13 +39,13 @@
 					datasets: [
 						{
 							label: 'Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => h.price_eur as number),
+							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur as number | null, h.price_usd as number | null, data.usdToEur)),
 							borderColor: '#3b82f6',
 							tension: 0.3
 						},
 						{
 							label: 'Foil Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => h.price_eur_foil as number),
+							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur_foil as number | null, h.price_usd_foil as number | null, data.usdToEur)),
 							borderColor: '#f59e0b',
 							tension: 0.3
 						}
@@ -859,12 +859,12 @@
 									</p>
 								{:else if (item.quantity as number) > 1}
 									<p class="text-xs text-[var(--color-text-muted)]">
-										{formatPrice(((item.foil ? item.price_eur_foil : item.price_eur) as number ?? 0) * (item.quantity as number), ((item.foil ? item.price_usd_foil : item.price_usd) as number ?? 0) * (item.quantity as number))} total
+										{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) != null ? ((item.foil ? item.price_eur_foil : item.price_eur) as number) * (item.quantity as number) : null, (item.foil ? item.price_usd_foil : item.price_usd) != null ? ((item.foil ? item.price_usd_foil : item.price_usd) as number) * (item.quantity as number) : null)} total
 									</p>
 								{/if}
 							</div>
 							<button
-								onclick={(e) => { e.stopPropagation(); openCardChart(item.card_id as string); }}
+								onclick={(e) => { e.stopPropagation(); openCardChart(item.card_id as string, item.language as string); }}
 								class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
 								title="Price history"
 							>

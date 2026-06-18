@@ -120,12 +120,20 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		// to their collection). Pre-load the lookup maps so the hot loop stays
 		// O(1) per foreign bulk row.
 		const printingToCardId = new Map<string, string>();
+		let printingCollisions = 0;
 		for (const row of sqlite
 			.prepare('SELECT id, set_code, collector_number FROM cards')
 			.iterate() as Iterable<{ id: string; set_code: string | null; collector_number: string | null }>) {
 			if (row.set_code && row.collector_number) {
-				printingToCardId.set(`${row.set_code}|${row.collector_number}`, row.id);
+				const key = `${row.set_code}|${row.collector_number}`;
+				if (printingToCardId.has(key)) printingCollisions++;
+				printingToCardId.set(key, row.id);
 			}
+		}
+		if (printingCollisions > 0) {
+			// Should be ~0 for English printings; if not, foreign-price mapping
+			// falls back to last-wins for the colliding (set|collector_number) keys.
+			console.warn(`[price-updater] ${printingCollisions} duplicate (set_code|collector_number) keys in cards; foreign-price mapping is last-wins for those`);
 		}
 		const foreignKeys = new Set<string>(
 			(sqlite.prepare('SELECT card_id, language FROM card_prices_lang').all() as Array<{
@@ -276,33 +284,42 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 
 		// Change-aware daily snapshot. Only inserts a new price_history row
 		// when the card's current price differs from its most recent snapshot
-		// (or there's no snapshot yet). The UNIQUE(card_id, snapshot_date)
-		// upsert guarantees at most one row per card per day even if this job
-		// runs multiple times (e.g. after a restart or manual trigger).
+		// (or there's no snapshot yet). The UNIQUE(card_id, snapshot_date, language)
+		// upsert guarantees at most one row per card per day per language even
+		// if this job runs multiple times.
 		const now = new Date().toISOString();
 		const snapshotDate = now.slice(0, 10);
 		const snapshotResult = sqlite.prepare(`
 			WITH last_snap AS (
-				SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil
+				SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil
 				FROM (
-					SELECT card_id, price_eur, price_eur_foil, price_usd, price_usd_foil,
-						ROW_NUMBER() OVER (PARTITION BY card_id ORDER BY recorded_at DESC, id DESC) AS rn
+					SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil,
+						ROW_NUMBER() OVER (PARTITION BY card_id, language ORDER BY recorded_at DESC, id DESC) AS rn
 					FROM price_history
 				) WHERE rn = 1
+			),
+			source_prices AS (
+				-- English prices from main cards table
+				SELECT id as card_id, 'en' as language, price_eur, price_eur_foil, price_usd, price_usd_foil
+				FROM cards
+				UNION ALL
+				-- Foreign prices from card_prices_lang
+				SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil
+				FROM card_prices_lang
 			)
-			INSERT INTO price_history (card_id, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at, snapshot_date)
-			SELECT c.id, c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil, ?, ?
-			FROM cards c
-			LEFT JOIN last_snap l ON l.card_id = c.id
-			WHERE (c.price_eur IS NOT NULL OR c.price_eur_foil IS NOT NULL OR c.price_usd IS NOT NULL OR c.price_usd_foil IS NOT NULL)
+			INSERT INTO price_history (card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil, recorded_at, snapshot_date)
+			SELECT s.card_id, s.language, s.price_eur, s.price_eur_foil, s.price_usd, s.price_usd_foil, ?, ?
+			FROM source_prices s
+			LEFT JOIN last_snap l ON l.card_id = s.card_id AND l.language = s.language
+			WHERE (s.price_eur IS NOT NULL OR s.price_eur_foil IS NOT NULL OR s.price_usd IS NOT NULL OR s.price_usd_foil IS NOT NULL)
 			  AND (
 			    l.card_id IS NULL
-			    OR c.price_eur IS NOT l.price_eur
-			    OR c.price_eur_foil IS NOT l.price_eur_foil
-			    OR c.price_usd IS NOT l.price_usd
-			    OR c.price_usd_foil IS NOT l.price_usd_foil
+			    OR s.price_eur IS NOT l.price_eur
+			    OR s.price_eur_foil IS NOT l.price_eur_foil
+			    OR s.price_usd IS NOT l.price_usd
+			    OR s.price_usd_foil IS NOT l.price_usd_foil
 			  )
-			ON CONFLICT(card_id, snapshot_date) DO UPDATE SET
+			ON CONFLICT(card_id, snapshot_date, language) DO UPDATE SET
 				price_eur = excluded.price_eur,
 				price_eur_foil = excluded.price_eur_foil,
 				price_usd = excluded.price_usd,

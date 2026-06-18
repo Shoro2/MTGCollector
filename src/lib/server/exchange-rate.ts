@@ -12,14 +12,24 @@ const cachePath = join(dataDir, 'exchange-rate.json');
 
 type CachedRate = { rate: number; fetchedAt: number };
 
+// The rate is external data (Frankfurter API + a JSON cache file on disk), so it
+// must be validated like any untrusted input before it reaches price math. A
+// plain `typeof x === 'number'` check accepts NaN, Infinity, 0, and negatives —
+// any of which would silently zero or poison every USD->EUR conversion (and the
+// profit/loss numbers built on top). USD/EUR realistically sits well below 2;
+// allow generous headroom but reject non-finite, non-positive, and absurd values.
+function isValidRate(rate: unknown): rate is number {
+	return typeof rate === 'number' && Number.isFinite(rate) && rate > 0 && rate < 100;
+}
+
 let cachedRate: CachedRate | null = loadFromDisk();
 
 function loadFromDisk(): CachedRate | null {
 	try {
 		if (!existsSync(cachePath)) return null;
 		const parsed = JSON.parse(readFileSync(cachePath, 'utf-8'));
-		if (typeof parsed?.rate === 'number' && typeof parsed?.fetchedAt === 'number') {
-			return parsed;
+		if (isValidRate(parsed?.rate) && typeof parsed?.fetchedAt === 'number' && Number.isFinite(parsed.fetchedAt)) {
+			return { rate: parsed.rate, fetchedAt: parsed.fetchedAt };
 		}
 	} catch { /* corrupt file — refetch */ }
 	return null;
@@ -39,16 +49,19 @@ export async function getUsdToEurRate(): Promise<number> {
 
 	try {
 		const res = await nativeFetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR');
-		const data = await res.json();
-		const rate = data.rates?.EUR;
-		if (typeof rate === 'number') {
-			cachedRate = { rate, fetchedAt: Date.now() };
-			saveToDisk(cachedRate);
-			return rate;
+		if (res.ok) {
+			const data = await res.json();
+			const rate = data?.rates?.EUR;
+			if (isValidRate(rate)) {
+				cachedRate = { rate, fetchedAt: Date.now() };
+				saveToDisk(cachedRate);
+				return rate;
+			}
 		}
 	} catch {
 		// fall through to cached/fallback
 	}
 
+	// cachedRate is only ever set to a validated value, so this is always safe.
 	return cachedRate?.rate ?? FALLBACK_RATE;
 }

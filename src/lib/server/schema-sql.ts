@@ -119,7 +119,8 @@ CREATE TABLE IF NOT EXISTS price_history (
 	price_usd REAL,
 	price_usd_foil REAL,
 	recorded_at TEXT,
-	snapshot_date TEXT
+	snapshot_date TEXT,
+	language TEXT DEFAULT 'en' NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_name ON cards(name);
@@ -137,6 +138,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_id ON price_history(card_id);
 CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_price_history_card_recorded ON price_history(card_id, recorded_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_snapshot_lang ON price_history(card_id, snapshot_date, language);
 -- Indexes referencing user_id on collection_cards/wishlist_cards/tags live in
 -- migrations.ts (0002, 0012, 0013). They must run AFTER the ALTER TABLE steps
 -- that add the user_id column on upgraded databases. The same applies to

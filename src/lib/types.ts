@@ -24,6 +24,8 @@ export interface Card {
 	scryfallUri: string | null;
 	priceEur: number | null;
 	priceEurFoil: number | null;
+	priceUsd: number | null;
+	priceUsdFoil: number | null;
 }
 
 export interface CardFace {
@@ -45,6 +47,8 @@ export interface CollectionCard {
 	quantity: number;
 	condition: string;
 	foil: boolean;
+	language?: string;
+	purchasePrice?: number | null;
 	notes: string | null;
 	addedAt: string;
 	card?: Card;
@@ -62,7 +66,11 @@ export interface PriceHistoryEntry {
 	cardId: string;
 	priceEur: number | null;
 	priceEurFoil: number | null;
+	priceUsd: number | null;
+	priceUsdFoil: number | null;
 	recordedAt: string;
+	snapshotDate: string | null;
+	language: string;
 }
 
 export interface SearchFilters {

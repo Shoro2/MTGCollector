@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatPrice, priceDate } from '$lib/utils';
+	import { formatPrice, priceDate, histEur } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
@@ -48,12 +48,12 @@
 		}
 	}
 
-	async function openCardChart(cardId: string) {
+	async function openCardChart(cardId: string, lang: string = 'en') {
 		modalLoading = true;
 		modalOpen = true;
 		modalCard = null;
 		const [res, ChartCtor] = await Promise.all([
-			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}`),
+			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}&lang=${encodeURIComponent(lang)}`),
 			loadChart()
 		]);
 		const result = await res.json();
@@ -70,13 +70,13 @@
 					datasets: [
 						{
 							label: 'Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => h.price_eur as number),
+							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur as number | null, h.price_usd as number | null, usdToEur)),
 							borderColor: '#3b82f6',
 							tension: 0.3
 						},
 						{
 							label: 'Foil Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => h.price_eur_foil as number),
+							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur_foil as number | null, h.price_usd_foil as number | null, usdToEur)),
 							borderColor: '#f59e0b',
 							tension: 0.3
 						}
@@ -429,7 +429,7 @@
 								</div>
 							</a>
 							<button
-								onclick={() => openCardChart(card.id as string)}
+								onclick={() => openCardChart(card.id as string, card.language as string)}
 								class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
 								title="Price history"
 							>
