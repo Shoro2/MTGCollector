@@ -66,6 +66,12 @@ describe('parseCollectorInfo — set code + number', () => {
 		const r = parse('277 EN MOM EN');
 		expect(r.setCode).toBe('mom');
 	});
+
+	it('preserves a variant suffix on the collector number', () => {
+		const r = parse('0291a R MOM • EN');
+		expect(r.setCode).toBe('mom');
+		expect(r.collectorNumber).toBe('291a');
+	});
 });
 
 describe('parseCollectorInfo — foil hint', () => {

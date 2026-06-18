@@ -3,10 +3,30 @@
  * Pure functions over strings — no DOM dependency.
  */
 
-/** Normalized similarity score (0-1) based on Levenshtein distance. */
+/**
+ * Normalize a card name for fuzzy matching: strip diacritics (AEther, Lim-Dul,
+ * Jotun), fold case, and reduce punctuation/whitespace to single spaces. This
+ * lets OCR that drops accents or mangles apostrophes/commas/hyphens still match
+ * the database spelling (e.g. "Jace the Mind Sculptor" vs "Jace, the Mind
+ * Sculptor", or "Lim-Dul's Vault" vs the accented original).
+ */
+export function normalizeName(s: string): string {
+	return s
+		.normalize('NFD') // split accented chars into base char + combining mark
+		.replace(/[̀-ͯ]/g, '') // drop the combining marks so accents fold to ASCII
+		.toLowerCase()
+		.replace(/æ/g, 'ae') // ligatures NFD doesn't decompose
+		.replace(/œ/g, 'oe')
+		.replace(/ø/g, 'o')
+		.replace(/[^a-z0-9]+/g, ' ') // punctuation -> space
+		.trim()
+		.replace(/\s+/g, ' ');
+}
+
+/** Normalized similarity score (0-1): Levenshtein distance over normalized names. */
 export function similarity(a: string, b: string): number {
-	const al = a.toLowerCase();
-	const bl = b.toLowerCase();
+	const al = normalizeName(a);
+	const bl = normalizeName(b);
 	if (al === bl) return 1;
 	const maxLen = Math.max(al.length, bl.length);
 	if (maxLen === 0) return 1;

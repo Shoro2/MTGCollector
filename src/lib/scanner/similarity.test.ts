@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { similarity, bestNameMatch } from './similarity';
+import { similarity, bestNameMatch, normalizeName } from './similarity';
 
 describe('similarity', () => {
 	it('returns 1 for identical strings', () => {
@@ -38,5 +38,30 @@ describe('bestNameMatch', () => {
 
 	it('returns an empty match for an empty result set', () => {
 		expect(bestNameMatch([], 'anything')).toEqual({ name: '', score: 0 });
+	});
+});
+
+describe('normalizeName', () => {
+	it('strips diacritics so accented names fold to ASCII', () => {
+		expect(normalizeName('Lim-Dûl')).toBe('lim dul');
+		expect(normalizeName('Jötun Grunt')).toBe('jotun grunt');
+		expect(normalizeName('Séance')).toBe('seance');
+	});
+
+	it('folds ligatures that NFD does not decompose', () => {
+		expect(normalizeName('Æther Vial')).toBe('aether vial');
+	});
+
+	it('reduces punctuation and runs of whitespace to single spaces', () => {
+		expect(normalizeName('Jace, the Mind Sculptor')).toBe('jace the mind sculptor');
+		expect(normalizeName("Urza's  Tower")).toBe('urza s tower');
+	});
+});
+
+describe('similarity with normalization', () => {
+	it('scores accent/punctuation-only differences as a perfect match', () => {
+		expect(similarity('Jace, the Mind Sculptor', 'Jace the Mind Sculptor')).toBe(1);
+		expect(similarity("Lim-Dûl's Vault", "Lim-Dul's Vault")).toBe(1);
+		expect(similarity('Æther Vial', 'Aether Vial')).toBe(1);
 	});
 });
