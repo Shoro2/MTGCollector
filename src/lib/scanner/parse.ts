@@ -107,6 +107,15 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 				}
 			}
 		}
+		// Preserve a trailing variant letter (e.g. "291a") when the parsed digits
+		// are immediately followed by a single lowercase letter in the before-text.
+		if (result.collectorNumber && /^\d+$/.test(result.collectorNumber)) {
+			const suf = before.match(new RegExp(`\\b0*${result.collectorNumber}([a-z])\\b`));
+			if (suf) {
+				result.collectorNumber += suf[1];
+				dbg?.(`variant suffix appended -> "${result.collectorNumber}"`);
+			}
+		}
 	} else {
 		dbg?.('no anchor match (SET+LANG pattern not found)');
 	}

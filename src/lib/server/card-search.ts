@@ -85,5 +85,11 @@ export function searchBySetNumber(setCode: string, collectorNumber: string): Sea
 		const padded = collectorNumber.padStart(3, '0');
 		if (padded !== collectorNumber) results = setNumStmt().all(lc, padded) as CardRow[];
 	}
+	if (results.length === 0 && /[a-z]$/i.test(collectorNumber)) {
+		// Variant suffix (e.g. "291a") that the set may not actually use — retry
+		// the bare number so suffixed and plain printings both resolve.
+		const noSuffix = collectorNumber.replace(/[a-z]$/i, '');
+		if (noSuffix) results = setNumStmt().all(lc, noSuffix) as CardRow[];
+	}
 	return { results, matchType: results.length > 0 ? 'exact' : 'none' };
 }
