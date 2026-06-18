@@ -17,6 +17,11 @@
 	// State
 	let imagePreview = $state('');
 	let scanning = $state(false);
+	// Monotonic scan token: each processImage() run claims the next value. An
+	// older run whose token no longer matches bails at the next checkpoint
+	// instead of clobbering the UI for a newer scan (e.g. the user picking a new
+	// file mid-scan).
+	let scanToken = 0;
 	let scanProgress = $state('');
 	let detectedCards = $state<Array<{
 		index: number;
@@ -91,6 +96,7 @@
 	// the tab closes even after a single scan.
 	onDestroy(() => {
 		terminatePool().catch(() => { /* already gone */ });
+		if (imagePreview) URL.revokeObjectURL(imagePreview);
 	});
 
 	function log(msg: string) {
@@ -113,6 +119,7 @@
 		const input = e.target as HTMLInputElement;
 		if (input.files?.[0]) {
 			const file = input.files[0];
+			if (imagePreview) URL.revokeObjectURL(imagePreview);
 			imagePreview = URL.createObjectURL(file);
 			detectedCards = [];
 			debugCanvasUrl = '';
@@ -135,6 +142,8 @@
 	}
 
 	async function processImage(source: File | HTMLCanvasElement) {
+		const myToken = ++scanToken;
+		const superseded = () => myToken !== scanToken;
 		scanning = true;
 		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
@@ -143,6 +152,7 @@
 			await loadOpenCV();
 			const cv = (window as any).cv;
 			log('OpenCV loaded');
+			if (superseded()) return;
 
 			scanProgress = 'Detecting cards...';
 
@@ -746,6 +756,7 @@
 			// list (live mode pushes successive captures into the same UI).
 			// `firstIdx` is the index in `detectedCards` of the first newly
 			// added card; all subsequent loops iterate `firstIdx ... end`.
+			if (superseded()) return;
 			const firstIdx = detectedCards.length;
 			detectedCards = [...detectedCards, ...cards];
 			const newCount = cards.length;
@@ -778,6 +789,7 @@
 			// Phase 2: Batch-search all names server-side in a single round trip.
 			// Previously this was 1+ fetch per card (and a second fetch per word
 			// fallback), which dominated wall-clock time at low network latency.
+			if (superseded()) return;
 			log('Phase 2: Name search in DB (batched)');
 
 			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
@@ -1051,6 +1063,7 @@
 				detectedCards[absIdx].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 				log(`Card ${absIdx + 1} bottom OCR: "${detectedCards[absIdx].ocrText}"`);
 			}
+			if (superseded()) return;
 			await prefetchSetNumberLookups(detectedCards.slice(firstIdx));
 			for (let i = 0; i < newCount; i++) {
 				const absIdx = firstIdx + i;
@@ -1086,6 +1099,7 @@
 			// cards that Tesseract could not identify (status === 'not_found') or
 			// could not narrow down to a single reprint (results.length > 1), then
 			// re-run the matching logic with the higher-quality Vision text.
+			if (superseded()) return;
 			const userHasVisionKey = !!data.user?.hasVisionApiKey;
 			if (userHasVisionKey && visionRetryEnabled) {
 				const failed: Array<{ card: typeof detectedCards[number]; index: number }> = [];
@@ -1139,7 +1153,9 @@
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
 		} finally {
-			scanning = false;
+			// Don't clear the busy flag if a newer scan superseded us — that scan
+			// owns `scanning` now.
+			if (!superseded()) scanning = false;
 		}
 	}
 
@@ -1227,6 +1243,8 @@
 	}
 
 	function reset() {
+		scanToken++; // invalidate any in-flight scan
+		if (imagePreview) URL.revokeObjectURL(imagePreview);
 		imagePreview = '';
 		detectedCards = [];
 		debugCanvasUrl = '';
