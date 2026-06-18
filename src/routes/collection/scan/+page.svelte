@@ -5,11 +5,13 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, terminatePool } from '$lib/scanner/tesseract';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
+	import { parseCollectorInfo } from '$lib/scanner/parse';
 
 	// Terminate Tesseract workers when leaving the page (see /routes/scan
 	// for the rationale — each worker holds ~50 MB of runtime).
 	onDestroy(() => {
 		terminatePool().catch(() => { /* already gone */ });
+		if (imagePreview) URL.revokeObjectURL(imagePreview);
 	});
 
 	// State
@@ -47,6 +49,7 @@
 		const input = e.target as HTMLInputElement;
 		if (input.files?.[0]) {
 			const file = input.files[0];
+			if (imagePreview) URL.revokeObjectURL(imagePreview);
 			imagePreview = URL.createObjectURL(file);
 			detectedCards = [];
 			debugCanvasUrl = '';
@@ -99,7 +102,7 @@
 			for (let i = 0; i < contours.size(); i++) {
 				const contour = contours.get(i);
 				const area = cv.contourArea(contour);
-				if (area < minArea) continue;
+				if (area < minArea) { contour.delete(); continue; }
 
 				const perimeter = cv.arcLength(contour, true);
 				const approx = new cv.Mat();
@@ -114,6 +117,7 @@
 					}
 				}
 				approx.delete();
+				contour.delete();
 			}
 
 			// Sort by area (largest first)
@@ -237,10 +241,10 @@
 				const card = detectedCards[i];
 				try {
 					const text = card.ocrText;
-					const numMatch = text.match(/\b0*(\d{1,4})\b/);
-					const setMatch = text.match(/\b([A-Z]{3})\b/);
-					if (numMatch) card.collectorNumber = numMatch[1];
-					if (setMatch) card.setCode = setMatch[1].toLowerCase();
+					// Shared parser (handles alphanumeric set codes like M21, 2X2, 40K).
+					const parsed = parseCollectorInfo(text, 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO');
+					card.setCode = parsed.setCode;
+					card.collectorNumber = parsed.collectorNumber;
 
 					if (card.setCode && card.collectorNumber) {
 						const res = await fetch('/collection/scan', {
