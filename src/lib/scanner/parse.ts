@@ -36,9 +36,19 @@ export interface CollectorInfo {
 export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: string) => void): CollectorInfo {
 	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false };
 
-	// Step 1: Find anchor — <SET 3-letter> followed by <LANG 2-letter> within a few chars
-	const anchor = new RegExp(`\\b([A-Z]{3})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'i');
-	const anchorMatch = text.match(anchor);
+	// Step 1: Find anchor — <SET code, 3-4 alphanumeric> followed by <LANG 2-letter> within a few chars
+	const anchor = new RegExp(`\\b([A-Z0-9]{3,4})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'gi');
+	let anchorMatch: RegExpMatchArray | null = null;
+	for (const m of text.matchAll(anchor)) {
+		// Set codes are not always 3 letters: many are alphanumeric (M21, 2X2,
+		// 40K, MH2, 10E). Require at least one letter so a pure-number candidate
+		// (e.g. a collector total sitting before a language code) is skipped and
+		// we keep scanning for the real lettered set code.
+		if (/[A-Z]/i.test(m[1])) {
+			anchorMatch = m;
+			break;
+		}
+	}
 
 	if (anchorMatch) {
 		result.setCode = anchorMatch[1].toLowerCase();
@@ -101,10 +111,17 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		dbg?.('no anchor match (SET+LANG pattern not found)');
 	}
 
-	// Fallback: any 3-letter uppercase + any number
+	// Fallback: any uppercase 3-4 char set-like token + any number.
 	if (!result.setCode) {
-		const setMatch = text.match(/\b([A-Z]{3})\b/);
-		if (setMatch) result.setCode = setMatch[1].toLowerCase();
+		// Stay case-sensitive (uppercase) here: set codes are uppercase on cards,
+		// while an 'i' flag would also match lowercase flavor/artist words. Allow
+		// digits but require an uppercase letter, skipping pure-number tokens.
+		for (const m of text.matchAll(/\b([A-Z0-9]{3,4})\b/g)) {
+			if (/[A-Z]/.test(m[1])) {
+				result.setCode = m[1].toLowerCase();
+				break;
+			}
+		}
 		const fractionMatch = text.match(/(\d{1,4})\/\d{1,4}/);
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fractionMatch[1]);

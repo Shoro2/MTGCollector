@@ -16,11 +16,26 @@ let _setNum: Statement | undefined;
 
 const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? ORDER BY released_at DESC LIMIT 10`));
 const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`));
+// cards_fts is a standalone fts5(card_id, name, type_line, oracle_text) table,
+// so its rowid does NOT line up with cards.rowid — the old
+// `rowid IN (SELECT rowid FROM cards_fts ...)` join matched nothing and every
+// name search silently fell through to the slow LIKE scan. Join on the explicit
+// card_id <-> cards.id instead. Results are ranked by bm25 relevance first and
+// only then by release date, so the closest textual match wins rather than just
+// the newest printing. bm25() needs the fts table in scope (hence the JOIN), and
+// the selected columns are qualified to cards.* because cards_fts also exposes a
+// `name` column.
+const ftsSelectFields = selectFields
+	.split(',')
+	.map((f) => `cards.${f.trim()}`)
+	.join(', ');
 const ftsStmt = () => (_fts ??= sqlite.prepare(
-	`SELECT ${selectFields}
-	FROM cards
-	WHERE rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)
-	ORDER BY released_at DESC LIMIT 20`
+	`SELECT ${ftsSelectFields}
+	FROM cards_fts
+	JOIN cards ON cards.id = cards_fts.card_id
+	WHERE cards_fts MATCH ?
+	ORDER BY bm25(cards_fts), cards.released_at DESC
+	LIMIT 20`
 ));
 const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ?`));
 

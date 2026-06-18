@@ -892,7 +892,7 @@
 				const seen = new Set<string>();
 				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
 				for (const card of cards) {
-					if (card.nameText || card.results.length > 0) continue;
+					if (card.results.length > 0) continue; // also prefetch cards whose name OCR was garbage (no match)
 					const parsed = parseCollectorInfo(card.ocrText, langs);
 					if (!parsed.setCode || !parsed.collectorNumber) continue;
 					const key = setNumKey(parsed.setCode, parsed.collectorNumber);
@@ -1003,12 +1003,15 @@
 						log(`Card ${cardIdx}: could not disambiguate reprints, showing all ${card.results.length}`);
 					}
 					card.status = 'found';
-				} else if (card.setCode && card.collectorNumber && !card.nameText) {
-					// Name OCR completely failed — try set+number directly (old fallback).
+				} else if (card.setCode && card.collectorNumber) {
+					// Name search found no usable match (empty OCR or non-matching garbage)
+					// — fall back to a direct set+number lookup. This used to also require
+					// !card.nameText, which dropped cards with garbage name OCR but a
+					// readable collector line straight to not_found.
 					// Common case: the batch pre-pass populated setNumCache, so this
 					// short-circuits without a network hit. Vision-retry path falls
 					// through to a per-card fetch since it's rare and post-batch.
-					log(`Card ${cardIdx}: no name, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
+					log(`Card ${cardIdx}: name unresolved, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
 					const cached = setNumCache.get(setNumKey(card.setCode, card.collectorNumber));
 					if (cached) {
 						card.results = cached.results;

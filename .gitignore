@@ -10,3 +10,4 @@ static/card-images/
 .env.*
 !.env.example
 vite.config.ts.timestamp-*
+llm-council/
