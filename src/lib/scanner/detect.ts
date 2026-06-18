@@ -94,7 +94,7 @@ export async function detectCardsQuick(
 			for (let i = 0; i < contours.size(); i++) {
 				const contour = contours.get(i);
 				const area = cv.contourArea(contour);
-				if (area < minArea || area > maxArea) continue;
+				if (area < minArea || area > maxArea) { contour.delete(); continue; }
 
 				const perimeter = cv.arcLength(contour, true);
 				let approx = new cv.Mat();
@@ -150,6 +150,7 @@ export async function detectCardsQuick(
 					});
 				} finally {
 					approx.delete();
+					contour.delete();
 				}
 			}
 		} finally {
