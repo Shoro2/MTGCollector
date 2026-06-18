@@ -8,6 +8,7 @@
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { bestNameMatch } from '$lib/scanner/similarity';
+	import { disambiguateReprints } from '$lib/scanner/pipeline';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 
@@ -17,6 +18,11 @@
 	// State
 	let imagePreview = $state('');
 	let scanning = $state(false);
+	// Monotonic scan token: each processImage() run claims the next value. An
+	// older run whose token no longer matches bails at the next checkpoint
+	// instead of clobbering the UI for a newer scan (e.g. the user picking a new
+	// file mid-scan).
+	let scanToken = 0;
 	let scanProgress = $state('');
 	let detectedCards = $state<Array<{
 		index: number;
@@ -91,6 +97,7 @@
 	// the tab closes even after a single scan.
 	onDestroy(() => {
 		terminatePool().catch(() => { /* already gone */ });
+		if (imagePreview) URL.revokeObjectURL(imagePreview);
 	});
 
 	function log(msg: string) {
@@ -113,6 +120,7 @@
 		const input = e.target as HTMLInputElement;
 		if (input.files?.[0]) {
 			const file = input.files[0];
+			if (imagePreview) URL.revokeObjectURL(imagePreview);
 			imagePreview = URL.createObjectURL(file);
 			detectedCards = [];
 			debugCanvasUrl = '';
@@ -135,6 +143,8 @@
 	}
 
 	async function processImage(source: File | HTMLCanvasElement) {
+		const myToken = ++scanToken;
+		const superseded = () => myToken !== scanToken;
 		scanning = true;
 		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
@@ -143,6 +153,7 @@
 			await loadOpenCV();
 			const cv = (window as any).cv;
 			log('OpenCV loaded');
+			if (superseded()) return;
 
 			scanProgress = 'Detecting cards...';
 
@@ -746,6 +757,7 @@
 			// list (live mode pushes successive captures into the same UI).
 			// `firstIdx` is the index in `detectedCards` of the first newly
 			// added card; all subsequent loops iterate `firstIdx ... end`.
+			if (superseded()) return;
 			const firstIdx = detectedCards.length;
 			detectedCards = [...detectedCards, ...cards];
 			const newCount = cards.length;
@@ -778,6 +790,7 @@
 			// Phase 2: Batch-search all names server-side in a single round trip.
 			// Previously this was 1+ fetch per card (and a second fetch per word
 			// fallback), which dominated wall-clock time at low network latency.
+			if (superseded()) return;
 			log('Phase 2: Name search in DB (batched)');
 
 			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
@@ -892,7 +905,7 @@
 				const seen = new Set<string>();
 				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
 				for (const card of cards) {
-					if (card.nameText || card.results.length > 0) continue;
+					if (card.results.length > 0) continue; // also prefetch cards whose name OCR was garbage (no match)
 					const parsed = parseCollectorInfo(card.ocrText, langs);
 					if (!parsed.setCode || !parsed.collectorNumber) continue;
 					const key = setNumKey(parsed.setCode, parsed.collectorNumber);
@@ -951,49 +964,16 @@
 					log(`Card ${cardIdx}: unique name match -> found`);
 					card.status = 'found';
 				} else if (card.results.length > 1) {
-					// Multiple reprints — match known collector numbers/set codes against bottom text
-					let match: Record<string, unknown> | undefined;
-					const bottomText = card.ocrText;
-
-					// Extract all digit sequences from bottom text for matching
-					const digitSeqs = [...bottomText.matchAll(/\d+/g)].map(m => m[0]);
-					log(`Card ${cardIdx}: ${card.results.length} reprints to disambiguate, digit sequences: [${digitSeqs.join(', ')}]`);
-
-					// 1. Try matching known collector numbers in bottom text
-					const numMatches = card.results.filter(r => {
-						const cn = String(r.collector_number);
-						const cnPadded = cn.padStart(3, '0');
-						// Check exact match or if collector number is contained in a digit sequence
-						// e.g. "8202" contains "202", "0188" contains "188"
-						return digitSeqs.some(d =>
-							d === cn || d === cnPadded ||
-							d.replace(/^0+/, '') === cn ||
-							d === cn.padStart(4, '0') ||
-							d.includes(cn) || d.includes(cnPadded)
-						);
-					});
-					log(`Card ${cardIdx}: collector number matching -> ${numMatches.length} matches`);
-					if (numMatches.length === 1) {
-						match = numMatches[0];
-						log(`Card ${cardIdx}: unique number match: ${match.set_code}#${match.collector_number}`);
-					}
-
-					// 2. Try set code + collector number from generic parser
-					if (!match && card.setCode && card.collectorNumber) {
-						match = card.results.find(r =>
-							(r.set_code as string).toLowerCase() === card.setCode.toLowerCase() &&
-							(String(r.collector_number) === card.collectorNumber ||
-							 String(r.collector_number) === card.collectorNumber.replace(/^0+/, ''))
-						);
-						log(`Card ${cardIdx}: set+number match (${card.setCode}#${card.collectorNumber}) -> ${match ? 'found' : 'none'}`);
-					}
-
-					// 3. Try just set code from generic parser
-					if (!match && card.setCode) {
-						const setMatches = card.results.filter(r => (r.set_code as string).toLowerCase() === card.setCode.toLowerCase());
-						if (setMatches.length === 1) match = setMatches[0];
-						log(`Card ${cardIdx}: set-only match (${card.setCode}) -> ${setMatches.length} matches`);
-					}
+					// Reprint disambiguation lives in the shared pipeline so both
+					// scanners resolve the same way (Phase 2). It returns the matched
+					// row plus per-step debug lines we prefix and log here.
+					const { match, log: reprintLog } = disambiguateReprints(
+						card.results,
+						card.ocrText,
+						card.setCode,
+						card.collectorNumber
+					);
+					for (const m of reprintLog) log(`Card ${cardIdx}: ${m}`);
 
 					if (match) {
 						card.results = [match];
@@ -1003,12 +983,15 @@
 						log(`Card ${cardIdx}: could not disambiguate reprints, showing all ${card.results.length}`);
 					}
 					card.status = 'found';
-				} else if (card.setCode && card.collectorNumber && !card.nameText) {
-					// Name OCR completely failed — try set+number directly (old fallback).
+				} else if (card.setCode && card.collectorNumber) {
+					// Name search found no usable match (empty OCR or non-matching garbage)
+					// — fall back to a direct set+number lookup. This used to also require
+					// !card.nameText, which dropped cards with garbage name OCR but a
+					// readable collector line straight to not_found.
 					// Common case: the batch pre-pass populated setNumCache, so this
 					// short-circuits without a network hit. Vision-retry path falls
 					// through to a per-card fetch since it's rare and post-batch.
-					log(`Card ${cardIdx}: no name, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
+					log(`Card ${cardIdx}: name unresolved, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
 					const cached = setNumCache.get(setNumKey(card.setCode, card.collectorNumber));
 					if (cached) {
 						card.results = cached.results;
@@ -1048,6 +1031,7 @@
 				detectedCards[absIdx].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 				log(`Card ${absIdx + 1} bottom OCR: "${detectedCards[absIdx].ocrText}"`);
 			}
+			if (superseded()) return;
 			await prefetchSetNumberLookups(detectedCards.slice(firstIdx));
 			for (let i = 0; i < newCount; i++) {
 				const absIdx = firstIdx + i;
@@ -1083,6 +1067,7 @@
 			// cards that Tesseract could not identify (status === 'not_found') or
 			// could not narrow down to a single reprint (results.length > 1), then
 			// re-run the matching logic with the higher-quality Vision text.
+			if (superseded()) return;
 			const userHasVisionKey = !!data.user?.hasVisionApiKey;
 			if (userHasVisionKey && visionRetryEnabled) {
 				const failed: Array<{ card: typeof detectedCards[number]; index: number }> = [];
@@ -1136,7 +1121,9 @@
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
 		} finally {
-			scanning = false;
+			// Don't clear the busy flag if a newer scan superseded us — that scan
+			// owns `scanning` now.
+			if (!superseded()) scanning = false;
 		}
 	}
 
@@ -1224,6 +1211,8 @@
 	}
 
 	function reset() {
+		scanToken++; // invalidate any in-flight scan
+		if (imagePreview) URL.revokeObjectURL(imagePreview);
 		imagePreview = '';
 		detectedCards = [];
 		debugCanvasUrl = '';

@@ -2,14 +2,21 @@ import { json } from '@sveltejs/kit';
 import { searchByName, searchBySetNumber } from '$lib/server/card-search';
 
 export async function POST({ request }) {
-	const body = await request.json();
+	let body: Record<string, unknown>;
+	try {
+		const parsed = await request.json();
+		body = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+	} catch {
+		// Malformed JSON — return an empty result with 400 rather than a 500.
+		return json({ results: [] }, { status: 400 });
+	}
 	const { query, setCode, collectorNumber } = body;
 
-	if (setCode && collectorNumber) {
-		return json(searchBySetNumber(String(setCode), String(collectorNumber)));
+	if (typeof setCode === 'string' && typeof collectorNumber === 'string') {
+		return json(searchBySetNumber(setCode, collectorNumber));
 	}
 
-	if (!query || typeof query !== 'string' || query.trim().length < 2) {
+	if (typeof query !== 'string' || query.trim().length < 2) {
 		return json({ results: [] });
 	}
 

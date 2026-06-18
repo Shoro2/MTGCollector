@@ -2,9 +2,19 @@
 export function loadImage(file: File): Promise<HTMLImageElement> {
 	return new Promise((resolve, reject) => {
 		const img = new Image();
-		img.onload = () => resolve(img);
-		img.onerror = reject;
-		img.src = URL.createObjectURL(file);
+		// Revoke the object URL once the bitmap is decoded (or on error). The
+		// loaded <img> stays drawable to a canvas afterwards, and not revoking
+		// leaks the blob for the lifetime of the page — one leak per scanned image.
+		const url = URL.createObjectURL(file);
+		img.onload = () => {
+			URL.revokeObjectURL(url);
+			resolve(img);
+		};
+		img.onerror = (e) => {
+			URL.revokeObjectURL(url);
+			reject(e);
+		};
+		img.src = url;
 	});
 }
 
@@ -85,4 +95,3 @@ export function orderCornersForCard(pts: Array<[number, number]>): Array<[number
 export function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
 	return orderCornersForCard(pts);
 }
-

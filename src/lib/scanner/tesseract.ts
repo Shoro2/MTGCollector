@@ -43,6 +43,12 @@ export async function getTesseractPool(): Promise<TesseractWorker[]> {
 		);
 		return pool;
 	})();
+	// If pool creation fails (CDN import or worker spawn), clear the cached
+	// promise so a later call retries instead of returning the cached rejection
+	// forever.
+	poolPromise.catch(() => {
+		poolPromise = null;
+	});
 	return poolPromise;
 }
 
