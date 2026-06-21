@@ -276,6 +276,14 @@ const MIGRATIONS: Migration[] = [
 				'CREATE UNIQUE INDEX IF NOT EXISTS idx_price_history_card_snapshot_lang ON price_history(card_id, snapshot_date, language)'
 			);
 		}
+	},
+	{
+		id: '0019_price_history_card_language_snapshot_lookup',
+		run: (db) => {
+			db.exec(
+				'CREATE INDEX IF NOT EXISTS idx_price_history_card_lang_snapshot_recorded ON price_history(card_id, language, snapshot_date DESC, recorded_at DESC)'
+			);
+		}
 	}
 ];
 
