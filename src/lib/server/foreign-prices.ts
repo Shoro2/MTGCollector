@@ -82,7 +82,7 @@ export async function ensureForeignPrice(cardId: string, language: string): Prom
 		} else if (res.status === 404) {
 			// Card doesn't exist in this language — store an empty row so we
 			// don't retry daily.
-			upsertForeignRow.run(cardId, language, null, null, null, null, new Date().toISOString());
+			upsertForeignRow().run(cardId, language, null, null, null, null, new Date().toISOString());
 			return;
 		} else {
 			// Other error (rate limit, server error) — retry next time.

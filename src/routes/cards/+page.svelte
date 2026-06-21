@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
-	import { formatManaCost, formatPrice, getRarityColor, scryfallSrcset } from '$lib/utils';
+	import { page } from '$app/state';
+	import { formatPrice, scryfallSrcset } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -83,6 +83,7 @@
 	let cmcMin = $state('');
 	let cmcMax = $state('');
 	let legality = $state('');
+	let showFilters = $state(false);
 
 	$effect(() => {
 		query = data.filters.query;
@@ -97,19 +98,28 @@
 		const matched = data.sets.find((s) => s.set_code === data.filters.setCode);
 		setSearch = matched ? matched.set_name : '';
 	});
-	let showFilters = $state(false);
 
 	const colors = [
-		{ code: 'W', name: 'White', bg: 'bg-yellow-100', text: 'text-yellow-800' },
-		{ code: 'U', name: 'Blue', bg: 'bg-blue-400', text: 'text-blue-900' },
-		{ code: 'B', name: 'Black', bg: 'bg-gray-700', text: 'text-gray-100' },
-		{ code: 'R', name: 'Red', bg: 'bg-red-500', text: 'text-red-100' },
-		{ code: 'G', name: 'Green', bg: 'bg-green-500', text: 'text-green-100' }
+		{ code: 'W', name: 'White' },
+		{ code: 'U', name: 'Blue' },
+		{ code: 'B', name: 'Black' },
+		{ code: 'R', name: 'Red' },
+		{ code: 'G', name: 'Green' }
 	];
 
 	const rarities = ['common', 'uncommon', 'rare', 'mythic'];
 	const legalities = ['standard', 'modern', 'legacy', 'vintage', 'commander', 'pioneer', 'pauper'];
 	const types = ['Creature', 'Instant', 'Sorcery', 'Enchantment', 'Artifact', 'Planeswalker', 'Land'];
+	const sortOptions = [
+		['name', 'Name'],
+		['price', 'Price'],
+		['cmc', 'CMC'],
+		['power', 'Power'],
+		['toughness', 'Toughness'],
+		['rarity', 'Rarity'],
+		['set', 'Set'],
+		['released', 'Released']
+	];
 
 	function toggleColor(code: string) {
 		if (selectedColors.includes(code)) {
@@ -135,13 +145,13 @@
 	}
 
 	function goToPage(p: number) {
-		const params = new URLSearchParams($page.url.searchParams);
+		const params = new URLSearchParams(page.url.searchParams);
 		params.set('page', p.toString());
 		goto(`/cards?${params.toString()}`);
 	}
 
 	function setSort(sort: string) {
-		const params = new URLSearchParams($page.url.searchParams);
+		const params = new URLSearchParams(page.url.searchParams);
 		if (data.filters.sortBy === sort) {
 			params.set('dir', data.filters.sortDir === 'asc' ? 'desc' : 'asc');
 		} else {
@@ -153,7 +163,7 @@
 	}
 
 	function toggleUnique() {
-		const params = new URLSearchParams($page.url.searchParams);
+		const params = new URLSearchParams(page.url.searchParams);
 		if (data.filters.unique) {
 			params.delete('unique');
 		} else {
@@ -164,7 +174,7 @@
 	}
 
 	function setPageSize(size: string) {
-		const params = new URLSearchParams($page.url.searchParams);
+		const params = new URLSearchParams(page.url.searchParams);
 		if (size === '40') params.delete('pageSize');
 		else params.set('pageSize', size);
 		params.delete('page');
@@ -201,65 +211,58 @@
 	<meta property="og:url" content="https://mtg-collector.com/cards" />
 </svelte:head>
 
-<div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Browse Cards</h1>
-		<span class="text-[var(--color-text-muted)]">{data.totalCards.toLocaleString()} results</span>
+<div class="space-y-5">
+	<div class="page-heading">
+		<div>
+			<p class="eyebrow">Card database</p>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Browse Cards</h1>
+			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">
+				{data.totalCards.toLocaleString()} cards - page {data.page} of {data.totalPages}
+			</p>
+		</div>
+		<span class="chip">{data.cards.length.toLocaleString()} shown</span>
 	</div>
 
-	<!-- Search Bar -->
-	<form onsubmit={(e) => { e.preventDefault(); search(); }} class="flex flex-wrap gap-2">
-		<input
-			type="text"
-			bind:value={query}
-			placeholder="Search cards by name or text..."
-			class="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)]"
-		/>
-		<button
-			type="submit"
-			class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2 rounded-lg font-medium transition-colors"
-		>
-			Search
-		</button>
-		<button
-			type="button"
-			onclick={() => showFilters = !showFilters}
-			class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg border border-[var(--color-border)] transition-colors"
-		>
-			Filters {showFilters ? '▲' : '▼'}
+	<form onsubmit={(e) => { e.preventDefault(); search(); }} class="toolbar">
+		<div class="relative flex min-w-[240px] flex-1 items-center">
+			<svg class="pointer-events-none absolute left-3 h-4 w-4 text-[var(--color-text-faint)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="11" cy="11" r="8"></circle>
+				<path d="m21 21-4.3-4.3"></path>
+			</svg>
+			<input
+				type="text"
+				bind:value={query}
+				placeholder="Search cards by name, type, or text..."
+				class="control h-[38px] w-full pl-9 pr-3 text-sm placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-primary)]"
+			/>
+		</div>
+		<div class="flex items-center gap-1">
+			{#each colors as color}
+				<button
+					type="button"
+					onclick={() => toggleColor(color.code)}
+					aria-label={color.name}
+					class="color-pip pip-{color.code.toLowerCase()} h-[30px] w-[30px] transition-all {selectedColors.includes(color.code) ? 'scale-105 bg-white/10 opacity-100' : selectedColors.length ? 'opacity-45' : 'opacity-100'}"
+				>
+					{color.code}
+				</button>
+			{/each}
+		</div>
+		<button type="submit" class="btn btn-primary">Search</button>
+		<button type="button" onclick={() => (showFilters = !showFilters)} class="btn">
+			Filters
+			<svg class="h-3.5 w-3.5 transition-transform {showFilters ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="m6 9 6 6 6-6"></path>
+			</svg>
 		</button>
 	</form>
 
-	<!-- Filters Panel -->
 	{#if showFilters}
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] space-y-4">
-			<!-- Colors -->
-			<div>
-				<span class="block text-sm text-[var(--color-text-muted)] mb-2">Colors</span>
-				<div class="flex gap-2 items-center">
-					{#each colors as color}
-						<button
-							onclick={() => toggleColor(color.code)}
-							class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg transition-all {color.bg} {color.text} {selectedColors.includes(color.code) ? 'ring-2 ring-white scale-110' : 'opacity-50'}"
-						>
-							{color.code}
-						</button>
-					{/each}
-					{#if selectedColors.length > 0}
-						<select aria-label="Color filter mode" bind:value={colorMode} class="ml-4 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm">
-							<option value="include">Include these</option>
-							<option value="exact">Exactly these</option>
-							<option value="at_most">At most these</option>
-						</select>
-					{/if}
-				</div>
-			</div>
-
-			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-				<!-- Type -->
+		<section class="panel p-4">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 				<div>
-					<label for="filter-type" class="block text-sm text-[var(--color-text-muted)] mb-1">Type</label>
-					<select id="filter-type" bind:value={type} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-type" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Type</label>
+					<select id="filter-type" bind:value={type} class="control w-full px-3 text-sm">
 						<option value="">All Types</option>
 						{#each types as t}
 							<option value={t}>{t}</option>
@@ -267,9 +270,8 @@
 					</select>
 				</div>
 
-				<!-- Set -->
 				<div class="relative" bind:this={setWrapperEl}>
-					<label for="filter-set" class="block text-sm text-[var(--color-text-muted)] mb-1">Set</label>
+					<label for="filter-set" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Set</label>
 					<div class="relative">
 						<input
 							id="filter-set"
@@ -285,16 +287,16 @@
 							onkeydown={onSetKeydown}
 							placeholder="All Sets"
 							autocomplete="off"
-							class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded pl-2 pr-7 py-1.5"
+							class="control w-full px-3 pr-8 text-sm"
 						/>
 						{#if setSearch}
 							<button
 								type="button"
 								onclick={clearSet}
 								aria-label="Clear set filter"
-								class="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+								class="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]"
 							>
-								×
+								x
 							</button>
 						{/if}
 					</div>
@@ -302,7 +304,7 @@
 						<ul
 							id="filter-set-listbox"
 							role="listbox"
-							class="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded shadow-lg"
+							class="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-overlay)] shadow-[var(--shadow-overlay)]"
 						>
 							{#each filteredSets as s, i (s.set_code)}
 								<li
@@ -310,24 +312,23 @@
 									aria-selected={i === setHighlight}
 									onmousedown={(e) => { e.preventDefault(); selectSet(s.set_code, s.set_name); }}
 									onmouseenter={() => (setHighlight = i)}
-									class="px-2 py-1.5 cursor-pointer text-sm flex items-center justify-between gap-2 {i === setHighlight ? 'bg-[var(--color-surface-hover)]' : ''}"
+									class="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm {i === setHighlight ? 'bg-white/5' : ''}"
 								>
 									<span class="truncate">{s.set_name}</span>
-									<span class="text-xs uppercase text-[var(--color-text-muted)] shrink-0">{s.set_code}</span>
+									<span class="set-code text-[var(--color-text-muted)]">{s.set_code}</span>
 								</li>
 							{/each}
 						</ul>
 					{:else if setDropdownOpen && filteredSets.length === 0}
-						<div class="absolute z-20 mt-1 w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded shadow-lg px-2 py-1.5 text-sm text-[var(--color-text-muted)]">
+						<div class="absolute z-20 mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-overlay)] px-3 py-2 text-sm text-[var(--color-text-muted)] shadow-[var(--shadow-overlay)]">
 							No sets match.
 						</div>
 					{/if}
 				</div>
 
-				<!-- Rarity -->
 				<div>
-					<label for="filter-rarity" class="block text-sm text-[var(--color-text-muted)] mb-1">Rarity</label>
-					<select id="filter-rarity" bind:value={rarity} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-rarity" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Rarity</label>
+					<select id="filter-rarity" bind:value={rarity} class="control w-full px-3 text-sm">
 						<option value="">All Rarities</option>
 						{#each rarities as r}
 							<option value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
@@ -335,10 +336,9 @@
 					</select>
 				</div>
 
-				<!-- Legality -->
 				<div>
-					<label for="filter-legality" class="block text-sm text-[var(--color-text-muted)] mb-1">Legal in</label>
-					<select id="filter-legality" bind:value={legality} class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5">
+					<label for="filter-legality" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Legal in</label>
+					<select id="filter-legality" bind:value={legality} class="control w-full px-3 text-sm">
 						<option value="">Any Format</option>
 						{#each legalities as l}
 							<option value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
@@ -347,152 +347,130 @@
 				</div>
 			</div>
 
-			<!-- CMC Range -->
-			<div class="flex flex-wrap gap-2 sm:gap-4 items-center">
-				<span class="text-sm text-[var(--color-text-muted)]">CMC</span>
-				<input
-					type="number"
-					bind:value={cmcMin}
-					placeholder="Min"
-					min="0"
-					class="w-20 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1"
-				/>
-				<span class="text-[var(--color-text-muted)]">to</span>
-				<input
-					type="number"
-					bind:value={cmcMax}
-					placeholder="Max"
-					min="0"
-					class="w-20 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1"
-				/>
+			<div class="mt-3 flex flex-wrap items-center gap-3">
+				{#if selectedColors.length > 0}
+					<select aria-label="Color filter mode" bind:value={colorMode} class="control px-3 text-sm">
+						<option value="include">Include selected colors</option>
+						<option value="exact">Exactly selected colors</option>
+						<option value="at_most">At most selected colors</option>
+					</select>
+				{/if}
+				<label class="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
+					<span>CMC</span>
+					<input type="number" bind:value={cmcMin} placeholder="Min" min="0" class="control h-8 w-20 px-2 text-sm" />
+					<span>to</span>
+					<input type="number" bind:value={cmcMax} placeholder="Max" min="0" class="control h-8 w-20 px-2 text-sm" />
+				</label>
+				<button type="button" onclick={search} class="btn btn-primary min-h-8">Apply</button>
+				<button type="button" onclick={clearFilters} class="btn min-h-8">Clear All</button>
 			</div>
-
-			<div class="flex gap-2">
-				<button onclick={search} class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
-					Apply Filters
-				</button>
-				<button onclick={clearFilters} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2 text-sm transition-colors">
-					Clear All
-				</button>
-			</div>
-		</div>
+		</section>
 	{/if}
 
-	<!-- Sort Bar -->
-	<div class="flex items-center gap-2 text-sm flex-wrap">
-		<span class="text-[var(--color-text-muted)]">Sort by:</span>
-		{#each [['name', 'Name'], ['price', 'Price'], ['cmc', 'CMC'], ['power', 'Power'], ['toughness', 'Toughness'], ['rarity', 'Rarity'], ['set', 'Set'], ['released', 'Released']] as [key, label]}
+	<div class="flex flex-wrap items-center gap-2">
+		<span class="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Sort</span>
+		<div class="flex flex-wrap gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1">
+			{#each sortOptions as [key, label]}
+				<button
+					type="button"
+					onclick={() => setSort(key)}
+					class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'}"
+				>
+					{label}
+					{#if data.filters.sortBy === key}
+						{data.filters.sortDir === 'asc' ? 'up' : 'down'}
+					{/if}
+				</button>
+			{/each}
 			<button
-				onclick={() => setSort(key)}
-				class="px-3 py-1 rounded-lg border transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
+				type="button"
+				onclick={toggleUnique}
+				class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors {data.filters.unique ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'}"
 			>
-				{label}
-				{#if data.filters.sortBy === key}
-					{data.filters.sortDir === 'asc' ? '▲' : '▼'}
-				{/if}
+				Unique only
 			</button>
-		{/each}
-		<span class="mx-2 text-[var(--color-border)]">|</span>
-		<button
-			onclick={toggleUnique}
-			class="px-3 py-1 rounded-lg border transition-colors {data.filters.unique ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]'}"
-		>
-			Unique only
-		</button>
-	</div>
-
-	<!-- Card Grid -->
-	<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-		{#each data.cards as card, i (card.id)}
-			{@const imgSrc = getImageSrc(card)}
-			{@const srcset = card.local_image_path ? null : scryfallSrcset(card.image_uri as string | null)}
-			{@const inCollection = collectedSet.has(card.id as string)}
-			{@const onWishlist = wishlistSet.has(card.id as string)}
-			<a
-				href="/cards/{card.id}"
-				class="group bg-[var(--color-surface)] rounded-lg overflow-hidden border transition-all hover:scale-[1.02] {inCollection ? 'border-green-500/50' : 'border-[var(--color-border)] hover:border-[var(--color-primary)]'}"
-			>
-				<div class="relative">
-					{#if imgSrc}
-						<CardPreview src={imgSrc} alt={"Magic: The Gathering - " + (card.name as string)} scale={2}>
-							<img
-								src={imgSrc}
-								srcset={srcset ?? undefined}
-								sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, 20vw"
-								alt="Magic: The Gathering - {card.name}"
-								width="488"
-								height="680"
-								class="w-full aspect-[488/680] object-cover"
-								loading={i < 10 ? "eager" : "lazy"}
-								fetchpriority={i < 2 ? "high" : "auto"}
-							/>
-						</CardPreview>
-					{:else}
-						<div class="w-full aspect-[488/680] bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-text-muted)] text-sm p-4 text-center">
-							{card.name}
-						</div>
-					{/if}
-					{#if inCollection}
-						<div class="absolute top-1.5 right-1.5 bg-green-500 rounded-full w-6 h-6 flex items-center justify-center shadow-lg">
-							<svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-							</svg>
-						</div>
-					{:else if onWishlist}
-						<div class="absolute top-1.5 right-1.5 bg-yellow-500 rounded-full w-6 h-6 flex items-center justify-center shadow-lg text-white text-sm font-bold">
-							★
-						</div>
-					{/if}
-				</div>
-				<div class="p-2">
-					<p class="text-sm font-medium truncate">{card.name}</p>
-					<div class="flex items-center justify-between mt-1">
-						<span class="text-xs text-[var(--color-text-muted)]">{card.set_name}</span>
-						{#if card.price_eur || card.price_usd}
-							<span class="text-xs text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null, card.price_usd as number | null)}</span>
-						{/if}
-					</div>
-				</div>
-			</a>
-		{/each}
+		</div>
 	</div>
 
 	{#if data.cards.length === 0}
-		<div class="text-center py-12 text-[var(--color-text-muted)]">
-			<p class="text-lg">No cards found.</p>
-			<p class="text-sm mt-2">Try adjusting your search or filters.</p>
+		<div class="panel p-10 text-center text-[var(--color-text-muted)]">
+			<p class="text-lg font-semibold text-[var(--color-text)]">No cards found.</p>
+			<p class="mt-2 text-sm">Try adjusting your search or filters.</p>
+		</div>
+	{:else}
+		<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+			{#each data.cards as card, i (card.id)}
+				{@const imgSrc = getImageSrc(card)}
+				{@const srcset = card.local_image_path ? null : scryfallSrcset(card.image_uri as string | null)}
+				{@const inCollection = collectedSet.has(card.id as string)}
+				{@const onWishlist = wishlistSet.has(card.id as string)}
+				<a href="/cards/{card.id}" class="card-shell group no-underline {inCollection ? 'card-shell-owned' : ''}">
+					<div class="relative">
+						{#if imgSrc}
+							<CardPreview src={imgSrc} alt={"Magic: The Gathering - " + (card.name as string)} scale={2}>
+								<img
+									src={imgSrc}
+									srcset={srcset ?? undefined}
+									sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, 16vw"
+									alt="Magic: The Gathering - {card.name}"
+									width="488"
+									height="680"
+									class="aspect-[488/680] w-full object-cover"
+									loading={i < 10 ? "eager" : "lazy"}
+									fetchpriority={i < 2 ? "high" : "auto"}
+								/>
+							</CardPreview>
+						{:else}
+							<div class="card-placeholder p-4 text-sm">
+								<span>{card.name}</span>
+							</div>
+						{/if}
+						{#if inCollection}
+							<span class="status-badge status-badge-owned">
+								Owned
+							</span>
+						{:else if onWishlist}
+							<span class="status-badge status-badge-wish">
+								Wish
+							</span>
+						{/if}
+					</div>
+					<div class="border-t border-[var(--color-border-subtle)] p-2.5">
+						<p class="truncate text-sm font-semibold text-[var(--color-text)]">{card.name}</p>
+						<div class="mt-1 flex items-center justify-between gap-2">
+							<span class="set-code truncate text-[var(--color-text-muted)]">{card.set_name}</span>
+							{#if card.price_eur || card.price_usd}
+								<span class="price text-xs font-semibold text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null, card.price_usd as number | null)}</span>
+							{/if}
+						</div>
+					</div>
+				</a>
+			{/each}
 		</div>
 	{/if}
 
-	<!-- Pagination -->
 	{#if data.totalPages > 1}
-		<div class="flex items-center justify-center gap-2">
-			<button
-				onclick={() => goToPage(data.page - 1)}
-				disabled={data.page <= 1}
-				class="px-3 py-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] disabled:opacity-30 hover:bg-[var(--color-surface-hover)] transition-colors"
-			>
-				Prev
-			</button>
-			<span class="text-[var(--color-text-muted)] px-4">
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<span class="tabular text-xs text-[var(--color-text-muted)]">
 				Page {data.page} of {data.totalPages}
 			</span>
-			<button
-				onclick={() => goToPage(data.page + 1)}
-				disabled={data.page >= data.totalPages}
-				class="px-3 py-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] disabled:opacity-30 hover:bg-[var(--color-surface-hover)] transition-colors"
-			>
-				Next
-			</button>
-			<select
-				aria-label="Results per page"
-				onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
-				class="ml-4 px-2 py-1.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-sm"
-			>
-				{#each [40, 75, 100, 200] as size}
-					<option value={size} selected={data.filters.pageSize === size}>{size} per page</option>
-				{/each}
-			</select>
+			<div class="flex items-center gap-2">
+				<button onclick={() => goToPage(data.page - 1)} disabled={data.page <= 1} class="btn min-h-8 disabled:cursor-not-allowed disabled:opacity-35">
+					Prev
+				</button>
+				<button onclick={() => goToPage(data.page + 1)} disabled={data.page >= data.totalPages} class="btn min-h-8 disabled:cursor-not-allowed disabled:opacity-35">
+					Next
+				</button>
+				<select
+					aria-label="Results per page"
+					onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
+					class="control h-8 px-2 text-sm"
+				>
+					{#each [40, 75, 100, 200] as size}
+						<option value={size} selected={data.filters.pageSize === size}>{size} / page</option>
+					{/each}
+				</select>
+			</div>
 		</div>
 	{/if}
 </div>

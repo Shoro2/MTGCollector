@@ -42,11 +42,16 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<div class="max-w-2xl mx-auto space-y-6">
-	<h1 class="text-2xl font-bold">Settings</h1>
+<div class="mx-auto max-w-2xl space-y-5">
+	<div class="page-heading">
+		<div>
+			<p class="eyebrow">Account</p>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Settings</h1>
+		</div>
+	</div>
 
 	<!-- Account Info -->
-	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-6">
+	<div class="panel p-6">
 		<h2 class="text-lg font-semibold mb-4">Account Information</h2>
 		<div class="flex items-center gap-4 mb-4">
 			{#if data.user?.avatarUrl}
@@ -65,7 +70,7 @@
 	</div>
 
 	<!-- Collection Stats -->
-	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-6">
+	<div class="panel p-6">
 		<h2 class="text-lg font-semibold mb-4">Collection Statistics</h2>
 		<div class="grid grid-cols-3 gap-3 sm:gap-4">
 			<div class="text-center min-w-0">
@@ -84,7 +89,7 @@
 	</div>
 
 	<!-- Card Scanner OCR -->
-	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-6">
+	<div class="panel p-6">
 		<h2 class="text-lg font-semibold mb-2">Card Scanner OCR</h2>
 		<p class="text-sm text-[var(--color-text-muted)] mb-4">
 			The card scanner uses local OCR (Tesseract.js) by default — no data leaves your browser.

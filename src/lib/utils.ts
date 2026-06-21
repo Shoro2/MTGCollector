@@ -1,51 +1,52 @@
-const manaSymbolMap: Record<string, string> = {
-	W: '☀', U: '💧', B: '💀', R: '🔥', G: '🌲',
-	C: '◇', X: 'X', T: '⟳'
-};
-
 export function formatManaCost(manaCost: string | null): string {
 	if (!manaCost) return '';
-	return manaCost.replace(/\{([^}]+)\}/g, (_, symbol) => {
-		return manaSymbolMap[symbol] || symbol;
-	});
+	return manaCost.replace(/\{([^}]+)\}/g, (_, symbol) => symbol).trim();
 }
 
 export function getColorName(color: string): string {
 	const names: Record<string, string> = {
-		W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green'
+		W: 'White',
+		U: 'Blue',
+		B: 'Black',
+		R: 'Red',
+		G: 'Green',
+		C: 'Colorless'
 	};
 	return names[color] || color;
 }
 
 export function getColorClass(color: string): string {
 	const classes: Record<string, string> = {
-		W: 'bg-yellow-100 text-yellow-800',
-		U: 'bg-blue-400 text-blue-900',
-		B: 'bg-gray-700 text-gray-100',
-		R: 'bg-red-500 text-red-100',
-		G: 'bg-green-500 text-green-100'
+		W: 'color-pip pip-w',
+		U: 'color-pip pip-u',
+		B: 'color-pip pip-b',
+		R: 'color-pip pip-r',
+		G: 'color-pip pip-g',
+		C: 'color-pip pip-c'
 	};
-	return classes[color] || 'bg-gray-500 text-gray-100';
+	return classes[color] || 'color-pip pip-c';
 }
 
 export function getRarityColor(rarity: string): string {
 	const colors: Record<string, string> = {
-		common: '#1a1a1a',
-		uncommon: '#708090',
-		rare: '#ffd700',
-		mythic: '#ff6b35'
+		common: 'var(--rarity-common)',
+		uncommon: 'var(--rarity-uncommon)',
+		rare: 'var(--rarity-rare)',
+		mythic: 'var(--rarity-mythic)'
 	};
-	return colors[rarity] || '#666';
+	return colors[rarity] || 'var(--rarity-common)';
 }
 
 export function formatPrice(price: number | null, priceUsd?: number | null): string {
-	if (price !== null && price !== undefined) return `€${price.toFixed(2)}`;
+	if (price !== null && price !== undefined) return `\u20ac${price.toFixed(2)}`;
 	if (priceUsd !== null && priceUsd !== undefined) return `$${priceUsd.toFixed(2)}`;
-	return '—';
+	return '-';
 }
 
-/** EUR value for a price-history row: prefer the EUR column, otherwise convert
- *  the USD column at the given rate so USD-only cards still render on the chart. */
+/**
+ * EUR value for a price-history row: prefer the EUR column, otherwise convert
+ * the USD column at the given rate so USD-only cards still render on the chart.
+ */
 export function histEur(eur: number | null, usd: number | null, usdToEur: number): number | null {
 	return eur ?? (usd != null ? usd * usdToEur : null);
 }
@@ -108,7 +109,7 @@ export function parseLanguageInput(input: string | null | undefined): string {
 /**
  * Build a Scryfall srcset from a single `image_uri`. Scryfall serves every
  * card at three usable sizes (small 146w, normal 488w, large 672w) on the
- * same URL structure — swapping the size segment yields the variant. Returns
+ * same URL structure. Swapping the size segment yields the variant. Returns
  * `null` for non-Scryfall URLs and for local cached paths, which only exist
  * at a single size on disk.
  */
@@ -121,14 +122,16 @@ export function scryfallSrcset(imageUri: string | null | undefined): string | nu
 	return `${make('small')} 146w, ${make('normal')} 488w, ${make('large')} 672w`;
 }
 
-/** Format a price history date for chart labels.
- *  Accepts both effective date strings ("2026-04-03") and full ISO timestamps. */
+/**
+ * Format a price history date for chart labels. Accepts both effective date
+ * strings ("2026-04-03") and full ISO timestamps.
+ */
 export function priceDate(dateString: string): string {
-	// If it's a plain date (YYYY-MM-DD), parse as noon UTC to avoid timezone shifts
+	// If it's a plain date (YYYY-MM-DD), parse as noon UTC to avoid timezone shifts.
 	if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
 		return new Date(dateString + 'T12:00:00Z').toLocaleDateString();
 	}
-	// Full ISO timestamp: shift back if before 10:00 UTC
+	// Full ISO timestamp: shift back if before 10:00 UTC.
 	const d = new Date(dateString);
 	if (d.getUTCHours() < 10) {
 		d.setUTCDate(d.getUTCDate() - 1);

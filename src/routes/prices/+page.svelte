@@ -242,10 +242,13 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<div class="space-y-8">
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-		<h1 class="text-2xl font-bold">Price Tracking</h1>
-		<span class="text-sm text-[var(--color-text-muted)]">
+<div class="space-y-5">
+	<div class="page-heading">
+		<div>
+			<p class="eyebrow">Portfolio analytics</p>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Price Tracking</h1>
+		</div>
+		<span class="chip">
 			Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
 		</span>
 	</div>
@@ -259,11 +262,11 @@
 
 	{#if loading}
 		<!-- Loading skeleton -->
-		<div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4">
+		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
 			{#each Array(4) as _}
-				<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)] animate-pulse">
-					<div class="h-4 bg-[var(--color-bg)] rounded w-24 mb-2"></div>
-					<div class="h-8 bg-[var(--color-bg)] rounded w-20"></div>
+				<div class="kpi-card">
+					<div class="skeleton mb-2 h-4 w-24 rounded"></div>
+					<div class="skeleton h-8 w-20 rounded"></div>
 				</div>
 			{/each}
 		</div>
@@ -291,27 +294,27 @@
 		</div>
 	{:else}
 		<!-- Stats -->
-		<div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4">
-			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Collection Value</p>
-				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{formatPrice(stats.totalValue)}</p>
+		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+			<div class="kpi-card">
+				<p class="kpi-label">Collection Value</p>
+				<p class="kpi-value text-[var(--color-accent)]">{formatPrice(stats.totalValue)}</p>
 			</div>
-			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Purchase Price</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{formatPrice(stats.totalPurchaseValue)}</p>
+			<div class="kpi-card">
+				<p class="kpi-label">Cost Basis</p>
+				<p class="kpi-value">{formatPrice(stats.totalPurchaseValue)}</p>
 				{#if totalChange !== null}
 					<p class="text-sm mt-1 {totalChange > 0 ? 'text-green-400' : totalChange < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]'}">
 						{totalChange > 0 ? '▲' : totalChange < 0 ? '▼' : '—'} {Math.abs(totalChange).toFixed(1)}%
 					</p>
 				{/if}
 			</div>
-			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Unique Cards</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{stats.uniqueCards}</p>
+			<div class="kpi-card">
+				<p class="kpi-label">Unique Cards</p>
+				<p class="kpi-value">{stats.uniqueCards}</p>
 			</div>
-			<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-				<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Cards</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{stats.totalCards}</p>
+			<div class="kpi-card">
+				<p class="kpi-label">Total Cards</p>
+				<p class="kpi-value">{stats.totalCards}</p>
 			</div>
 		</div>
 

@@ -9,11 +9,18 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<div class="min-h-[70vh] flex items-center justify-center">
-	<div class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-8 w-full max-w-sm text-center space-y-6">
+<div class="flex min-h-[70vh] items-center justify-center">
+	<div class="panel-raised w-full max-w-sm space-y-6 p-8 text-center">
 		<div>
-			<h1 class="text-3xl font-bold text-[var(--color-accent)] mb-2">MTG Collector</h1>
-			<p class="text-[var(--color-text-muted)] text-sm">Track your Magic: The Gathering collection</p>
+			<div class="brand-mark mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-[10px]">
+				<span class="flex gap-1">
+					<span class="h-1.5 w-1.5 rounded-full bg-[var(--pip-w)]"></span>
+					<span class="h-1.5 w-1.5 rounded-full bg-[var(--pip-u)]"></span>
+					<span class="h-1.5 w-1.5 rounded-full bg-[var(--pip-r)]"></span>
+				</span>
+			</div>
+			<h1 class="mb-2 text-2xl font-semibold text-[var(--color-text-strong)]">MTG Collector</h1>
+			<p class="text-sm text-[var(--color-text-muted)]">Track your Magic: The Gathering collection</p>
 		</div>
 
 		{#if error}

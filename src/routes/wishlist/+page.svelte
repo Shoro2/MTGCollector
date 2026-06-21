@@ -1,8 +1,9 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { goto, invalidate } from '$app/navigation';
-	import { formatPrice, formatManaCost, scryfallSrcset } from '$lib/utils';
+	import { formatPrice, scryfallSrcset } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
+	import ManaCost from '$lib/components/ManaCost.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -86,36 +87,39 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Wishlist</h1>
-		<span class="text-[var(--color-text-muted)] text-sm">{data.items.length} cards</span>
+<div class="space-y-5">
+	<div class="page-heading">
+		<div>
+			<p class="eyebrow">Planning</p>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Wishlist</h1>
+		</div>
+		<span class="chip tabular">{data.items.length} cards</span>
 	</div>
 
 	<!-- Search & Sort -->
-	<div class="flex flex-col sm:flex-row gap-2">
+	<div class="toolbar">
 		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex-1 flex gap-2">
 			<input
 				type="text"
 				bind:value={search}
 				placeholder="Search wishlist..."
-				class="flex-1 min-w-0 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-[var(--color-primary)]"
+				class="control flex-1 min-w-0 px-3 text-sm focus:outline-none focus:border-[var(--color-primary)]"
 			/>
-			<button type="submit" class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors">
+			<button type="submit" class="btn btn-primary">
 				Search
 			</button>
 		</form>
 		<div class="flex flex-wrap gap-2">
-			<button onclick={() => sort('name')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'name' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+			<button onclick={() => sort('name')} class="btn min-h-8 {data.filters.sortBy === 'name' ? 'btn-primary' : ''}">
 				Name{sortIndicator('name')}
 			</button>
-			<button onclick={() => sort('added_at')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'added_at' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+			<button onclick={() => sort('added_at')} class="btn min-h-8 {data.filters.sortBy === 'added_at' ? 'btn-primary' : ''}">
 				Date{sortIndicator('added_at')}
 			</button>
-			<button onclick={() => sort('price')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'price' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+			<button onclick={() => sort('price')} class="btn min-h-8 {data.filters.sortBy === 'price' ? 'btn-primary' : ''}">
 				Price{sortIndicator('price')}
 			</button>
-			<button onclick={() => sort('priority')} class="px-3 py-2 rounded-lg text-sm border transition-colors {data.filters.sortBy === 'priority' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}">
+			<button onclick={() => sort('priority')} class="btn min-h-8 {data.filters.sortBy === 'priority' ? 'btn-primary' : ''}">
 				Priority{sortIndicator('priority')}
 			</button>
 		</div>
@@ -123,7 +127,7 @@
 
 	<!-- Cards -->
 	{#if data.items.length === 0}
-		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-8 text-center">
+		<div class="panel p-8 text-center">
 			<p class="text-[var(--color-text-muted)]">Your wishlist is empty.</p>
 			<a href="/cards" class="text-[var(--color-primary)] hover:underline text-sm mt-2 inline-block">Browse cards to add some</a>
 		</div>
@@ -133,7 +137,7 @@
 				{@const imgSrc = getImageSrc(item)}
 				{@const srcset = item.local_image_path ? null : scryfallSrcset(item.image_uri as string | null)}
 				{@const inCollection = collectedSet.has(item.card_id as string)}
-				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 flex items-start sm:items-center gap-3 sm:gap-4 hover:bg-[var(--color-surface-hover)] transition-colors">
+				<div class="panel flex items-start gap-3 p-3 transition-colors hover:bg-[var(--color-surface-hover)] sm:items-center sm:gap-4">
 					<!-- Card Image -->
 					{#if imgSrc}
 						<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
@@ -160,7 +164,7 @@
 							<p class="text-sm text-[var(--color-text-muted)] truncate">
 								{item.set_name}
 								{#if item.mana_cost}
-									<span class="ml-2">{formatManaCost(item.mana_cost as string)}</span>
+									<span class="ml-2 inline-flex align-middle"><ManaCost cost={item.mana_cost as string} /></span>
 								{/if}
 							</p>
 							{#if item.notes}

@@ -1282,9 +1282,12 @@
 	<meta property="og:url" content="https://mtg-collector.com/scan" />
 </svelte:head>
 
-<div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Card Scanner</h1>
+<div class="space-y-5">
+	<div class="page-heading">
+		<div>
+			<p class="eyebrow">Scanner</p>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Card Scanner</h1>
+		</div>
 		{#if !loggedIn}
 			<p class="text-sm text-[var(--color-text-muted)]">
 				<a href="/login" class="text-[var(--color-primary)] hover:underline">Sign in</a> to add scanned cards to your collection
@@ -1313,7 +1316,7 @@
 		</div>
 		<LiveScanner onCapture={handleLiveCapture} busy={scanning} log={(m) => log(`[live] ${m}`)} />
 	{:else if !imagePreview}
-		<label class="flex flex-col items-center justify-center h-48 border-2 border-dashed border-[var(--color-border)] rounded-lg cursor-pointer hover:border-[var(--color-primary)] transition-colors bg-[var(--color-surface)]">
+		<label class="panel flex h-48 cursor-pointer flex-col items-center justify-center border-dashed transition-colors hover:border-[var(--color-primary)]">
 			<svg class="w-12 h-12 text-[var(--color-text-muted)] mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
 				<path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />

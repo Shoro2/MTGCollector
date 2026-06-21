@@ -1,10 +1,12 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatManaCost, formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
+	import { formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
 	import { invalidate } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
+	import ManaCost from '$lib/components/ManaCost.svelte';
+	import ColorPips from '$lib/components/ColorPips.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -185,8 +187,8 @@
 	})}</script>`}
 </svelte:head>
 
-<article class="space-y-6">
-	<a href="/cards" class="text-[var(--color-primary)] hover:underline text-sm">&larr; Back to cards</a>
+<article class="space-y-5">
+	<a href="/cards" class="text-sm text-[var(--color-primary)] hover:underline">&larr; Back to cards</a>
 
 	<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-8">
 		<!-- Card Image -->
@@ -212,20 +214,22 @@
 		</div>
 
 		<!-- Card Details -->
-		<section class="space-y-6">
+		<section class="space-y-5">
 			<div>
-				<h1 class="text-3xl font-bold">{card.name}</h1>
+				<p class="eyebrow">{(card.set_code as string).toUpperCase()} #{card.collector_number}</p>
+				<h1 class="mt-1 text-3xl font-semibold text-[var(--color-text-strong)]">{card.name}</h1>
 				<div class="flex items-center gap-3 mt-2">
 					{#if card.mana_cost}
-						<span class="text-lg">{formatManaCost(card.mana_cost as string)}</span>
+						<ManaCost cost={card.mana_cost as string} />
 					{/if}
-					<span class="px-2 py-0.5 rounded text-xs font-semibold" style="background: {getRarityColor(card.rarity as string)}; color: white;">
+					<span class="chip">
+						<span class="rarity-dot" style="background: {getRarityColor(card.rarity as string)}"></span>
 						{(card.rarity as string).toUpperCase()}
 					</span>
 				</div>
 			</div>
 
-			<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)] space-y-3">
+			<div class="panel p-4 space-y-3">
 				{#if card.type_line}
 					<p class="font-medium">{card.type_line}</p>
 				{/if}
@@ -243,10 +247,10 @@
 			<!-- Multi-face details -->
 			{#if data.faces.length > 1}
 				{#each data.faces as face, i}
-					<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+					<div class="panel p-4">
 						<h3 class="font-semibold mb-2">Face {i + 1}: {face.name}</h3>
 						{#if face.mana_cost}
-							<p class="text-sm">{formatManaCost(face.mana_cost as string)}</p>
+							<ManaCost cost={face.mana_cost as string} />
 						{/if}
 						{#if face.type_line}
 							<p class="text-sm font-medium mt-1">{face.type_line}</p>
@@ -304,16 +308,9 @@
 
 			<!-- Colors -->
 			{#if colors.length > 0}
-				<div class="flex gap-2">
-					{#each colors as color}
-						<span class="px-3 py-1 rounded-full text-sm font-medium
-							{color === 'W' ? 'bg-yellow-100 text-yellow-800' : ''}
-							{color === 'U' ? 'bg-blue-400 text-blue-900' : ''}
-							{color === 'B' ? 'bg-gray-700 text-gray-100' : ''}
-							{color === 'R' ? 'bg-red-500 text-red-100' : ''}
-							{color === 'G' ? 'bg-green-500 text-green-100' : ''}
-						">{color}</span>
-					{/each}
+				<div class="flex items-center gap-2">
+					<span class="text-sm text-[var(--color-text-muted)]">Color identity</span>
+					<ColorPips {colors} />
 				</div>
 			{/if}
 

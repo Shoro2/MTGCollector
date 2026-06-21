@@ -673,9 +673,13 @@
 	</div>
 {/if}
 
-<div class="space-y-6">
-	<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-		<h1 class="text-2xl font-bold">My Collection</h1>
+<div class="space-y-5">
+	<div class="page-heading">
+		<div>
+			<p class="eyebrow">Portfolio</p>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">My Collection</h1>
+			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">{data.stats.uniqueCards} unique - {data.stats.totalCards} total cards</p>
+		</div>
 		<div class="flex flex-wrap gap-2">
 			<button
 				onclick={fillPurchasePrices}
@@ -712,18 +716,18 @@
 	</div>
 
 	<!-- Stats -->
-	<div class="grid grid-cols-3 gap-2 sm:gap-4">
-		<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-			<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Unique Cards</p>
-			<p class="text-xl sm:text-2xl font-bold break-words">{data.stats.uniqueCards}</p>
+	<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+		<div class="kpi-card">
+			<p class="kpi-label">Unique Cards</p>
+			<p class="kpi-value">{data.stats.uniqueCards}</p>
 		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-			<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Cards</p>
-			<p class="text-xl sm:text-2xl font-bold break-words">{data.stats.totalCards}</p>
+		<div class="kpi-card">
+			<p class="kpi-label">Total Cards</p>
+			<p class="kpi-value">{data.stats.totalCards}</p>
 		</div>
-		<div class="bg-[var(--color-surface)] rounded-lg p-3 sm:p-4 border border-[var(--color-border)] min-w-0">
-			<p class="text-xs sm:text-sm text-[var(--color-text-muted)]">Total Value</p>
-			<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{formatPrice(data.stats.totalValue)}</p>
+		<div class="kpi-card">
+			<p class="kpi-label">Total Value</p>
+			<p class="kpi-value text-[var(--color-accent)]">{formatPrice(data.stats.totalValue)}</p>
 		</div>
 	</div>
 
@@ -766,7 +770,7 @@
 	{/if}
 
 	<!-- Search & Sort -->
-	<div class="flex flex-col sm:flex-row gap-2">
+	<div class="toolbar">
 		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex-1 flex gap-2">
 			<input
 				type="text"
