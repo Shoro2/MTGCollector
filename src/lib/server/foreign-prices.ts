@@ -1,4 +1,5 @@
 import { sqlite } from './db';
+import { scryfallFetch } from './scryfall';
 
 // Scryfall returns foreign-language prints under the same set+collector_number
 // but with a different UUID. We don't import those rows; we only want their
@@ -76,7 +77,7 @@ export async function ensureForeignPrice(cardId: string, language: string): Prom
 	const url = `https://api.scryfall.com/cards/${encodeURIComponent(card.set_code)}/${encodeURIComponent(card.collector_number)}/${encodeURIComponent(language)}`;
 	let foreign: ScryfallCard | null = null;
 	try {
-		const res = await fetch(url);
+		const res = await scryfallFetch(url);
 		if (res.ok) {
 			foreign = (await res.json()) as ScryfallCard;
 		} else if (res.status === 404) {

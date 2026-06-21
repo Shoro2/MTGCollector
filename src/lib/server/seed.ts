@@ -4,6 +4,7 @@ import { mkdirSync, createWriteStream, existsSync, unlinkSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { SCHEMA_SQL } from './schema-sql.js';
 import { parseScryfallBulkStream } from './bulk-stream.js';
+import { scryfallFetch } from './scryfall.js';
 
 const dataDir = join(process.cwd(), 'data');
 mkdirSync(dataDir, { recursive: true });
@@ -50,7 +51,8 @@ interface ScryfallCard {
 
 async function downloadBulkData(): Promise<string> {
 	console.log('Fetching Scryfall bulk data catalog...');
-	const response = await fetch('https://api.scryfall.com/bulk-data');
+	const response = await scryfallFetch('https://api.scryfall.com/bulk-data');
+	if (!response.ok) throw new Error(`Bulk data API failed: ${response.status}`);
 	const data = await response.json();
 
 	const defaultCards = data.data.find((d: { type: string }) => d.type === 'default_cards');
@@ -60,7 +62,7 @@ async function downloadBulkData(): Promise<string> {
 	console.log(`Downloading bulk data from ${downloadUri}...`);
 	console.log(`Expected size: ~${Math.round(defaultCards.size / 1024 / 1024)}MB`);
 
-	const downloadResponse = await fetch(downloadUri);
+	const downloadResponse = await scryfallFetch(downloadUri);
 	if (!downloadResponse.ok || !downloadResponse.body) {
 		throw new Error(`Download failed: ${downloadResponse.status}`);
 	}

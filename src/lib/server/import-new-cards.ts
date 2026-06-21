@@ -4,6 +4,7 @@ import { mkdirSync, createWriteStream, existsSync, unlinkSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { SCHEMA_SQL } from './schema-sql.js';
 import { parseScryfallBulkStream } from './bulk-stream.js';
+import { scryfallFetch } from './scryfall.js';
 
 // One-shot backfill: inserts only cards missing from the DB. Does not touch
 // prices on existing cards and does not write any price_history rows, so
@@ -52,13 +53,14 @@ interface ScryfallCard {
 
 async function downloadBulkData(): Promise<string> {
 	console.log('Fetching Scryfall bulk data catalog...');
-	const response = await fetch('https://api.scryfall.com/bulk-data');
+	const response = await scryfallFetch('https://api.scryfall.com/bulk-data');
+	if (!response.ok) throw new Error(`Bulk data API failed: ${response.status}`);
 	const data = await response.json();
 	const defaultCards = data.data.find((d: { type: string }) => d.type === 'default_cards');
 	if (!defaultCards) throw new Error('Could not find default_cards bulk data');
 
 	console.log(`Downloading bulk data (~${Math.round(defaultCards.size / 1024 / 1024)} MB)...`);
-	const dl = await fetch(defaultCards.download_uri);
+	const dl = await scryfallFetch(defaultCards.download_uri);
 	if (!dl.ok || !dl.body) throw new Error(`Download failed: ${dl.status}`);
 
 	mkdirSync(dataDir, { recursive: true });
