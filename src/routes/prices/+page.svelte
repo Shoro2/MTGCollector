@@ -16,6 +16,10 @@
 	let profitHistory = $state<Array<{ recorded_at: string; total_value: number; total_purchase: number }>>([]);
 	let usdToEur = $state(0.92);
 
+	// One-time repair after a collection re-sync reset every card's added_at.
+	let restoring = $state(false);
+	let restoreMessage = $state<string | null>(null);
+
 	let profitChartCanvas = $state<HTMLCanvasElement>(null!);
 	let profitChart: Chart | null = null;
 
@@ -26,11 +30,14 @@
 	let modalChart: Chart | null = null;
 	let modalLoading = $state(false);
 
-	async function loadPricesData() {
+	async function loadPricesData(bustCache = false) {
 		loading = true;
 		loadError = null;
 		try {
-			const res = await fetch('/api/prices/data');
+			// After a restore the server cache is invalidated, but the endpoint
+			// still sends a private max-age, so force a fresh fetch to bypass the
+			// browser's HTTP cache and reflect the change immediately.
+			const res = await fetch('/api/prices/data', bustCache ? { cache: 'no-store' } : undefined);
 			if (!res.ok) {
 				loadError = `Failed to load price data (HTTP ${res.status}).`;
 				return;
@@ -45,6 +52,40 @@
 			loadError = err instanceof Error ? err.message : 'Failed to load price data.';
 		} finally {
 			loading = false;
+		}
+	}
+
+	// Backdate the collection's added_at to the earliest available price snapshot
+	// per card, so the value/profit chart fills back in after a collection
+	// re-sync reset every card to "added today". Only moves dates earlier.
+	async function restoreHistory() {
+		if (
+			!confirm(
+				'Re-sync fix: backdate every card in your collection to the earliest date price data exists for it, so the chart below fills back in. This only changes the "added" date (cards already dated earlier stay untouched) — quantities, purchase prices and tags are not affected. Continue?'
+			)
+		) {
+			return;
+		}
+		restoring = true;
+		restoreMessage = null;
+		loadError = null;
+		try {
+			const res = await fetch('/api/collection/restore-history', { method: 'POST' });
+			if (!res.ok) {
+				loadError = `Failed to restore history (HTTP ${res.status}).`;
+				return;
+			}
+			const result = await res.json();
+			restoreMessage =
+				result.updated > 0
+					? `Backdated ${result.updated} card${result.updated === 1 ? '' : 's'}. History refreshed below.`
+					: 'Nothing to restore — your cards are already dated as early as the available price data.';
+			await loadPricesData(true);
+			setTimeout(() => buildProfitChart(), 0);
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : 'Failed to restore history.';
+		} finally {
+			restoring = false;
 		}
 	}
 
@@ -293,6 +334,21 @@
 			</div>
 		</div>
 	{:else}
+		{#snippet restoreControl()}
+			<button
+				onclick={restoreHistory}
+				disabled={restoring}
+				class="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 flex-shrink-0"
+				title="Backdate collection cards to the earliest date price data exists for them — restores a chart that a collection re-sync truncated to today"
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h5M20 20v-5h-5" />
+					<path stroke-linecap="round" stroke-linejoin="round" d="M20 9a8 8 0 00-14.9-3M4 15a8 8 0 0014.9 3" />
+				</svg>
+				{restoring ? 'Restoring…' : 'Restore history after re-sync'}
+			</button>
+		{/snippet}
+
 		<!-- Stats -->
 		<div class="grid grid-cols-2 gap-3 md:grid-cols-4">
 			<div class="kpi-card">
@@ -321,7 +377,14 @@
 		<!-- Profit / Loss Chart -->
 		{#if profitHistory.length > 0}
 			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-				<h2 class="text-lg font-semibold mb-4">Profit / Loss</h2>
+				<div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+					<h2 class="text-lg font-semibold">Profit / Loss</h2>
+					{@render restoreControl()}
+				</div>
+
+				{#if restoreMessage}
+					<p class="text-xs text-green-400 mb-3">{restoreMessage}</p>
+				{/if}
 
 				{#if missingPriceCount > 0}
 					<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 mb-4 text-sm text-yellow-400 flex items-center gap-2">
@@ -341,6 +404,13 @@
 			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
 				<p>No price history yet.</p>
 				<p class="text-sm mt-1">Prices update automatically once per day, or click "Update Prices" above.</p>
+				<p class="text-sm mt-3">Re-synced your collection? Its history dates were reset — restore them:</p>
+				<div class="mt-3 flex flex-col items-center gap-2">
+					{@render restoreControl()}
+					{#if restoreMessage}
+						<p class="text-xs text-green-400">{restoreMessage}</p>
+					{/if}
+				</div>
 			</div>
 		{/if}
 
