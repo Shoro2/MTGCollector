@@ -1,32 +1,61 @@
 import { sqlite, initDb } from '$lib/server/db';
-import { checkAndUpdatePrices, isMissingYesterdaySnapshot } from '$lib/server/price-updater';
+import {
+	checkAndUpdatePrices,
+	isMissingTodaySnapshot,
+	isMissingYesterdaySnapshot
+} from '$lib/server/price-updater';
 import { validateSession } from '$lib/server/auth';
 import { error, redirect, type Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 
 initDb();
 
+const PRICE_UPDATE_HOUR = 18;
+const WATCHDOG_INTERVAL_MS = 60 * 60 * 1000;
+
 function scheduleDailyPriceUpdate() {
-	const now = new Date();
-	const next = new Date(now);
-	next.setHours(18, 0, 0, 0);
-	if (now >= next) {
-		next.setDate(next.getDate() + 1);
-	}
-	const msUntilNext = next.getTime() - now.getTime();
-	console.log(`[price-updater] Next price update scheduled at ${next.toISOString()} (in ${Math.round(msUntilNext / 1000 / 60)} minutes)`);
-	setTimeout(() => {
-		checkAndUpdatePrices();
-		setInterval(() => checkAndUpdatePrices(), 24 * 60 * 60 * 1000);
-	}, msUntilNext);
+	// Re-arm against the wall clock after every run instead of chaining a fixed
+	// 24h setInterval: the interval drifts away from the 18:00 slot and, more
+	// importantly, a single missed tick used to mean no further updates at all.
+	const armNextSlot = () => {
+		const now = new Date();
+		const next = new Date(now);
+		next.setHours(PRICE_UPDATE_HOUR, 0, 0, 0);
+		if (now >= next) {
+			next.setDate(next.getDate() + 1);
+		}
+		const msUntilNext = next.getTime() - now.getTime();
+		console.log(`[price-updater] Next price update scheduled at ${next.toISOString()} (in ${Math.round(msUntilNext / 1000 / 60)} minutes)`);
+		setTimeout(() => {
+			checkAndUpdatePrices();
+			armNextSlot();
+		}, msUntilNext);
+	};
+	armNextSlot();
+
+	// Hourly watchdog. The daily timer, the update lock and the retry chain are
+	// all in-process state, so any one of them can be lost while the process
+	// keeps serving traffic — which is how price_history ended up with
+	// multi-week gaps that only a restart cleared. This check is the backstop:
+	// once the 18:00 slot has passed and today still has no snapshot, run.
+	setInterval(() => {
+		try {
+			if (new Date().getHours() < PRICE_UPDATE_HOUR) return;
+			if (!isMissingTodaySnapshot()) return;
+			console.log('[price-updater] Watchdog: no snapshot for today after the scheduled slot — running update');
+			checkAndUpdatePrices();
+		} catch (err) {
+			console.error('[price-updater] Watchdog check failed:', err);
+		}
+	}, WATCHDOG_INTERVAL_MS);
 
 	// Catch-up: only trigger if the server was offline over yesterday's 18:00
 	// slot so the daily history still has no entry for yesterday. Restarting
 	// mid-morning on a normal day must NOT preempt today's scheduled 18:00 run
 	// — otherwise the change-aware insert captures only the tiny overnight
 	// diff and produces misleading "6 cards at 10am" days. Idempotent against
-	// the main schedule via `updateInProgress` and the
-	// UNIQUE(card_id, snapshot_date) upsert in runPriceUpdate.
+	// the main schedule via the run lock and the
+	// UNIQUE(card_id, snapshot_date, language) upsert in runPriceUpdate.
 	setTimeout(() => {
 		try {
 			if (isMissingYesterdaySnapshot()) {

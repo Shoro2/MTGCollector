@@ -1,17 +1,45 @@
 import { sqlite } from './db.js';
 import { priceDataCache, setsCache } from './cache.js';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { parseScryfallBulkStream } from './bulk-stream.js';
 import { scryfallFetch } from './scryfall.js';
 
 const dataDir = join(process.cwd(), 'data');
-const priceDataPath = join(dataDir, 'scryfall-prices-temp.json');
+const tempFilePrefix = 'scryfall-prices-temp';
 const lastBulkUpdatePath = join(dataDir, 'last-bulk-update.txt');
 
-let updateInProgress = false;
+/** Scryfall's `/bulk-data` metadata call — small JSON, must answer quickly. */
+const METADATA_TIMEOUT_MS = 60_000;
+/** Hard cap for the ~600 MB bulk download, however fast the connection is. */
+const DOWNLOAD_MAX_MS = 45 * 60_000;
+/** Abort the download when no byte arrives for this long (silently dead socket). */
+const DOWNLOAD_STALL_MS = 2 * 60_000;
+/**
+ * After this long, a run is presumed dead and a new one may take over its lock.
+ * Without a stale-lock takeover, a single hung run blocks every future update
+ * until the process restarts — which is exactly how multi-week gaps appeared in
+ * `price_history`.
+ */
+const STALE_LOCK_MS = 2 * 60 * 60_000;
+/** Backoff for same-day retries after a failed run, instead of waiting 24h. */
+const RETRY_DELAYS_MS = [15 * 60_000, 60 * 60_000, 3 * 60 * 60_000];
+
+interface ActiveRun {
+	id: number;
+	startedAt: number;
+	controller: AbortController;
+}
+
+let activeRun: ActiveRun | null = null;
+let runCounter = 0;
+/** Timer of the single in-flight retry chain, if any. */
+let pendingRetry: NodeJS.Timeout | null = null;
+/** `snapshot_date` (UTC) of the last run that completed successfully. */
+let lastSuccessfulSnapshotDate: string | null = null;
 
 interface ScryfallPriceCard {
 	id: string;
@@ -65,28 +93,129 @@ function getLastBulkUpdate(): string | null {
 }
 
 
-export function getPriceUpdateStatus(): { lastUpdate: string | null; inProgress: boolean; lastBulkUpdate: string | null } {
+export function getPriceUpdateStatus(): {
+	lastUpdate: string | null;
+	inProgress: boolean;
+	lastBulkUpdate: string | null;
+	runningSinceMs: number | null;
+} {
 	const lastSnapshot = sqlite
 		.prepare('SELECT recorded_at FROM price_history ORDER BY recorded_at DESC LIMIT 1')
 		.get() as { recorded_at: string } | undefined;
 
 	return {
 		lastUpdate: lastSnapshot?.recorded_at ?? null,
-		inProgress: updateInProgress,
-		lastBulkUpdate: getLastBulkUpdate()
+		inProgress: activeRun !== null,
+		lastBulkUpdate: getLastBulkUpdate(),
+		runningSinceMs: activeRun ? Date.now() - activeRun.startedAt : null
 	};
 }
 
-export async function runPriceUpdate(): Promise<{ updated: number; inserted: number; snapshotted: number }> {
-	if (updateInProgress) {
-		throw new Error('Price update already in progress');
+/**
+ * Claim the update lock. A run older than STALE_LOCK_MS is presumed hung: it is
+ * aborted (which unblocks its network wait) and superseded, so a single stuck
+ * run can no longer disable price updates until the next process restart.
+ */
+function beginRun(): ActiveRun {
+	if (activeRun) {
+		const ageMs = Date.now() - activeRun.startedAt;
+		if (ageMs < STALE_LOCK_MS) {
+			throw new Error(`Price update already in progress (started ${Math.round(ageMs / 1000)}s ago)`);
+		}
+		console.warn(
+			`[price-updater] Run #${activeRun.id} has been stuck for ${Math.round(ageMs / 60_000)} min — aborting it and starting a new run`
+		);
+		activeRun.controller.abort(new Error('Superseded by a newer price update'));
 	}
 
-	updateInProgress = true;
-	console.log('[price-updater] Starting price update...');
+	const run: ActiveRun = { id: ++runCounter, startedAt: Date.now(), controller: new AbortController() };
+	activeRun = run;
+	return run;
+}
+
+function endRun(run: ActiveRun): void {
+	if (activeRun?.id === run.id) activeRun = null;
+}
+
+/** Remove bulk-download leftovers from runs that were killed mid-download. */
+function sweepTempFiles(keep: string): void {
+	try {
+		for (const name of readdirSync(dataDir)) {
+			if (!name.startsWith(tempFilePrefix)) continue;
+			const full = join(dataDir, name);
+			if (full === keep) continue;
+			unlink(full).catch(() => { /* best effort */ });
+		}
+	} catch { /* data dir may not exist yet */ }
+}
+
+/**
+ * Download the bulk file with both a stall watchdog (no bytes for
+ * DOWNLOAD_STALL_MS) and a hard overall cap. Node's `fetch` can leave a body
+ * stream pending indefinitely, and an unbounded wait here never settles the
+ * promise, so the `finally` that releases the lock never runs.
+ */
+async function downloadBulkFile(url: string, target: string, runSignal: AbortSignal): Promise<void> {
+	const controller = new AbortController();
+	const abort = (reason: Error) => controller.abort(reason);
+	const onRunAbort = () => abort(new Error('Price update aborted'));
+	runSignal.addEventListener('abort', onRunAbort, { once: true });
+
+	let stallTimer: NodeJS.Timeout | undefined;
+	const armStall = () => {
+		clearTimeout(stallTimer);
+		stallTimer = setTimeout(
+			() => abort(new Error(`Bulk download stalled — no data for ${DOWNLOAD_STALL_MS / 1000}s`)),
+			DOWNLOAD_STALL_MS
+		);
+	};
+	const hardTimer = setTimeout(
+		() => abort(new Error(`Bulk download exceeded ${DOWNLOAD_MAX_MS / 60_000} min`)),
+		DOWNLOAD_MAX_MS
+	);
 
 	try {
-		const bulkResponse = await scryfallFetch('https://api.scryfall.com/bulk-data');
+		armStall();
+		const response = await scryfallFetch(url, { signal: controller.signal });
+		if (!response.ok || !response.body) {
+			throw new Error(`Download failed: ${response.status}`);
+		}
+
+		let bytes = 0;
+		const watchdog = new Transform({
+			transform(chunk, _enc, cb) {
+				bytes += chunk.length;
+				armStall();
+				cb(null, chunk);
+			}
+		});
+
+		mkdirSync(dataDir, { recursive: true });
+		await pipeline(
+			Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+			watchdog,
+			createWriteStream(target),
+			{ signal: controller.signal }
+		);
+		console.log(`[price-updater] Download complete (${Math.round(bytes / 1024 / 1024)} MB), parsing prices...`);
+	} finally {
+		clearTimeout(stallTimer);
+		clearTimeout(hardTimer);
+		runSignal.removeEventListener('abort', onRunAbort);
+	}
+}
+
+export async function runPriceUpdate(): Promise<{ updated: number; inserted: number; snapshotted: number }> {
+	const run = beginRun();
+	const priceDataPath = join(dataDir, `${tempFilePrefix}-${run.id}.json`);
+	console.log(`[price-updater] Starting price update (run #${run.id})...`);
+
+	try {
+		sweepTempFiles(priceDataPath);
+
+		const bulkResponse = await scryfallFetch('https://api.scryfall.com/bulk-data', {
+			signal: AbortSignal.timeout(METADATA_TIMEOUT_MS)
+		});
 		if (!bulkResponse.ok) throw new Error(`Bulk data API failed: ${bulkResponse.status}`);
 
 		const bulkData = await bulkResponse.json();
@@ -94,16 +223,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		if (!defaultCards) throw new Error('Could not find default_cards bulk data');
 
 		console.log(`[price-updater] Downloading bulk data (${defaultCards.updated_at})...`);
-		const downloadResponse = await scryfallFetch(defaultCards.download_uri);
-		if (!downloadResponse.ok || !downloadResponse.body) {
-			throw new Error(`Download failed: ${downloadResponse.status}`);
-		}
-
-		mkdirSync(dataDir, { recursive: true });
-		const fileStream = createWriteStream(priceDataPath);
-		// @ts-expect-error Node.js ReadableStream compatibility
-		await pipeline(downloadResponse.body, fileStream);
-		console.log('[price-updater] Download complete, parsing prices...');
+		await downloadBulkFile(defaultCards.download_uri, priceDataPath, run.controller.signal);
 
 		// Stream-parse the bulk file so memory doesn't spike to ~1.2 GB on
 		// the 600 MB payload. We apply price updates in batched transactions.
@@ -288,13 +408,26 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		const now = new Date().toISOString();
 		const snapshotDate = now.slice(0, 10);
 		const snapshotResult = sqlite.prepare(`
-			WITH last_snap AS (
-				SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil
-				FROM (
-					SELECT card_id, language, price_eur, price_eur_foil, price_usd, price_usd_foil,
-						ROW_NUMBER() OVER (PARTITION BY card_id, language ORDER BY recorded_at DESC, id DESC) AS rn
-					FROM price_history
-				) WHERE rn = 1
+			WITH latest_dates AS (
+				-- Served straight from idx_price_history_card_lang_snapshot_recorded,
+				-- so this is an index scan rather than a full sort of the whole
+				-- table. The previous ROW_NUMBER() window had to materialise and
+				-- sort every price_history row in a temp b-tree — under
+				-- temp_store = MEMORY that grows into the gigabytes as the
+				-- history builds up, and eventually gets the process OOM-killed.
+				SELECT card_id, language, MAX(snapshot_date) AS snapshot_date
+				FROM price_history
+				GROUP BY card_id, language
+			),
+			last_snap AS (
+				-- UNIQUE(card_id, snapshot_date, language) makes this exactly one
+				-- row per group, so no tie-breaking on recorded_at is needed.
+				SELECT ph.card_id, ph.language, ph.price_eur, ph.price_eur_foil, ph.price_usd, ph.price_usd_foil
+				FROM latest_dates d
+				JOIN price_history ph
+					ON ph.card_id = d.card_id
+					AND ph.language = d.language
+					AND ph.snapshot_date = d.snapshot_date
 			),
 			source_prices AS (
 				-- English prices from main cards table
@@ -329,10 +462,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards (change-only)`);
 
 		writeFileSync(lastBulkUpdatePath, defaultCards.updated_at, 'utf-8');
-
-		if (existsSync(priceDataPath)) {
-			await unlink(priceDataPath);
-		}
+		lastSuccessfulSnapshotDate = snapshotDate;
 
 		priceDataCache.invalidateAll();
 		setsCache.invalidate();
@@ -343,15 +473,33 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 			console.warn('[price-updater] PRAGMA optimize failed:', err);
 		}
 
-		console.log('[price-updater] Price update complete!');
+		console.log(`[price-updater] Price update complete (run #${run.id})!`);
 		return { updated, inserted, snapshotted };
 	} finally {
-		updateInProgress = false;
+		// Always drop the 600 MB temp file, not just on the success path.
+		if (existsSync(priceDataPath)) {
+			await unlink(priceDataPath).catch(() => { /* best effort */ });
+		}
+		endRun(run);
 	}
 }
 
 
-export function checkAndUpdatePrices(): void {
+/**
+ * Fire a background price update. On failure it retries a few times with
+ * backoff instead of silently waiting a full day for the next slot — a single
+ * transient network or Scryfall error used to cost 24h of price history.
+ */
+export function checkAndUpdatePrices(attempt = 0): void {
+	// Keep at most one retry chain alive. The daily slot, the boot catch-up and
+	// the hourly watchdog can all fire while a chain is mid-backoff; without
+	// this they would each start their own.
+	if (attempt === 0 && pendingRetry !== null) {
+		console.log('[price-updater] A retry is already scheduled — skipping duplicate trigger');
+		return;
+	}
+	pendingRetry = null;
+
 	const cardCount = sqlite.prepare('SELECT COUNT(*) as count FROM cards').get() as { count: number };
 	if (cardCount.count === 0) {
 		console.log('[price-updater] No cards in database, skipping price update');
@@ -359,8 +507,44 @@ export function checkAndUpdatePrices(): void {
 	}
 
 	runPriceUpdate().catch((err) => {
-		console.error('[price-updater] Background price update failed:', err.message);
+		console.error(`[price-updater] Background price update failed (attempt ${attempt + 1}):`, err.message);
+
+		const delay = RETRY_DELAYS_MS[attempt];
+		if (delay === undefined) {
+			console.error('[price-updater] Retries exhausted — waiting for the next scheduled slot');
+			return;
+		}
+		console.log(`[price-updater] Retrying in ${Math.round(delay / 60_000)} min`);
+		pendingRetry = setTimeout(() => checkAndUpdatePrices(attempt + 1), delay);
 	});
+}
+
+/**
+ * Safety net for the hourly watchdog: is today's snapshot still missing after
+ * the scheduled slot has passed? Covers a missed timer, a failed run whose
+ * retries were exhausted, and a lock that was stuck across the slot.
+ */
+export function isMissingTodaySnapshot(): boolean {
+	// A *young* run is doing the work — leave it alone. A run past the stale
+	// threshold must NOT suppress the watchdog, otherwise the stuck lock would
+	// silence the very mechanism meant to break it.
+	if (activeRun && Date.now() - activeRun.startedAt < STALE_LOCK_MS) return false;
+
+	const today = new Date().toISOString().slice(0, 10);
+	if (lastSuccessfulSnapshotDate === today) return false;
+
+	const hasPriceableCard = sqlite.prepare(
+		`SELECT 1 FROM cards
+		 WHERE price_eur IS NOT NULL OR price_eur_foil IS NOT NULL
+		    OR price_usd IS NOT NULL OR price_usd_foil IS NOT NULL
+		 LIMIT 1`
+	).get();
+	if (!hasPriceableCard) return false;
+
+	const todayRow = sqlite.prepare(
+		`SELECT 1 FROM price_history WHERE snapshot_date = DATE('now') LIMIT 1`
+	).get();
+	return !todayRow;
 }
 
 /**

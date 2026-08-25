@@ -284,6 +284,17 @@ const MIGRATIONS: Migration[] = [
 				'CREATE INDEX IF NOT EXISTS idx_price_history_card_lang_snapshot_recorded ON price_history(card_id, language, snapshot_date DESC, recorded_at DESC)'
 			);
 		}
+	},
+	{
+		// getPriceUpdateStatus() runs `ORDER BY recorded_at DESC LIMIT 1` on
+		// every /prices and /admin page load. Without this index that is a full
+		// scan plus sort over millions of rows.
+		id: '0020_price_history_recorded_at',
+		run: (db) => {
+			db.exec(
+				'CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at DESC)'
+			);
+		}
 	}
 ];
 
