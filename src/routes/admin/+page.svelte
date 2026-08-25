@@ -91,7 +91,11 @@
 		</div>
 		<p class="text-xs text-[var(--color-text-muted)] mt-3">
 			Last price update: {data.priceStatus.lastUpdate ? formatDate(data.priceStatus.lastUpdate) : 'Never'}
-			{#if data.priceStatus.inProgress} — <span class="text-yellow-400">Update in progress</span>{/if}
+			{#if data.priceStatus.inProgress}
+				— <span class="text-yellow-400">
+					Update in progress{#if data.priceStatus.runningSinceMs !== null} (running for {Math.round(data.priceStatus.runningSinceMs / 60000)} min){/if}
+				</span>
+			{/if}
 		</p>
 	</div>
 
