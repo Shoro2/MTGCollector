@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { parseScryfallBulkStream } from './bulk-stream.js';
-import { scryfallFetch } from './scryfall.js';
+import { fetchDefaultCardsBulkMeta, scryfallFetch } from './scryfall.js';
 
 const dataDir = join(process.cwd(), 'data');
 const tempFilePrefix = 'scryfall-prices-temp';
@@ -14,7 +14,7 @@ const lastBulkUpdatePath = join(dataDir, 'last-bulk-update.txt');
 
 /** Scryfall's `/bulk-data` metadata call — small JSON, must answer quickly. */
 const METADATA_TIMEOUT_MS = 60_000;
-/** Hard cap for the ~600 MB bulk download, however fast the connection is. */
+/** Hard cap for the bulk download, however fast the connection is. */
 const DOWNLOAD_MAX_MS = 45 * 60_000;
 /** Abort the download when no byte arrives for this long (silently dead socket). */
 const DOWNLOAD_STALL_MS = 2 * 60_000;
@@ -207,26 +207,23 @@ async function downloadBulkFile(url: string, target: string, runSignal: AbortSig
 
 export async function runPriceUpdate(): Promise<{ updated: number; inserted: number; snapshotted: number }> {
 	const run = beginRun();
-	const priceDataPath = join(dataDir, `${tempFilePrefix}-${run.id}.json`);
+	const priceDataPath = join(dataDir, `${tempFilePrefix}-${run.id}.jsonl.gz`);
 	console.log(`[price-updater] Starting price update (run #${run.id})...`);
 
 	try {
 		sweepTempFiles(priceDataPath);
 
-		const bulkResponse = await scryfallFetch('https://api.scryfall.com/bulk-data', {
+		const bulk = await fetchDefaultCardsBulkMeta({
 			signal: AbortSignal.timeout(METADATA_TIMEOUT_MS)
 		});
-		if (!bulkResponse.ok) throw new Error(`Bulk data API failed: ${bulkResponse.status}`);
 
-		const bulkData = await bulkResponse.json();
-		const defaultCards = bulkData.data.find((d: { type: string }) => d.type === 'default_cards');
-		if (!defaultCards) throw new Error('Could not find default_cards bulk data');
+		const sizeNote = bulk.downloadSize ? `, ~${Math.round(bulk.downloadSize / 1024 / 1024)} MB` : '';
+		console.log(`[price-updater] Downloading bulk data (${bulk.updatedAt}${sizeNote})...`);
+		await downloadBulkFile(bulk.downloadUri, priceDataPath, run.controller.signal);
 
-		console.log(`[price-updater] Downloading bulk data (${defaultCards.updated_at})...`);
-		await downloadBulkFile(defaultCards.download_uri, priceDataPath, run.controller.signal);
-
-		// Stream-parse the bulk file so memory doesn't spike to ~1.2 GB on
-		// the 600 MB payload. We apply price updates in batched transactions.
+		// Stream-parse the gzipped JSONL payload so memory stays flat instead of
+		// spiking on the decompressed document. Price updates are applied in
+		// batched transactions.
 		const updatePrice = sqlite.prepare(
 			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id) WHERE id = ?'
 		);
@@ -461,7 +458,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		const snapshotted = snapshotResult.changes;
 		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards (change-only)`);
 
-		writeFileSync(lastBulkUpdatePath, defaultCards.updated_at, 'utf-8');
+		writeFileSync(lastBulkUpdatePath, bulk.updatedAt, 'utf-8');
 		lastSuccessfulSnapshotDate = snapshotDate;
 
 		priceDataCache.invalidateAll();
@@ -476,7 +473,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		console.log(`[price-updater] Price update complete (run #${run.id})!`);
 		return { updated, inserted, snapshotted };
 	} finally {
-		// Always drop the 600 MB temp file, not just on the success path.
+		// Always drop the downloaded bulk file, not just on the success path.
 		if (existsSync(priceDataPath)) {
 			await unlink(priceDataPath).catch(() => { /* best effort */ });
 		}

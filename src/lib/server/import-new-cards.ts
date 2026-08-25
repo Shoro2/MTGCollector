@@ -1,10 +1,11 @@
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
 import { mkdirSync, createWriteStream, existsSync, unlinkSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { SCHEMA_SQL } from './schema-sql.js';
 import { parseScryfallBulkStream } from './bulk-stream.js';
-import { scryfallFetch } from './scryfall.js';
+import { fetchDefaultCardsBulkMeta, scryfallFetch } from './scryfall.js';
 
 // One-shot backfill: inserts only cards missing from the DB. Does not touch
 // prices on existing cards and does not write any price_history rows, so
@@ -12,7 +13,11 @@ import { scryfallFetch } from './scryfall.js';
 
 const dataDir = join(process.cwd(), 'data');
 const dbPath = join(dataDir, 'mtg.db');
-const bulkDataPath = join(dataDir, 'scryfall-default-cards.json');
+const bulkDataPath = join(dataDir, 'scryfall-default-cards.jsonl.gz');
+// Downloads before 2026-08 were a plain JSON array under this name. The stream
+// parser handles both shapes, so an existing legacy file stays usable with
+// --skip-download.
+const legacyBulkDataPath = join(dataDir, 'scryfall-default-cards.json');
 
 interface ScryfallCard {
 	id: string;
@@ -53,20 +58,16 @@ interface ScryfallCard {
 
 async function downloadBulkData(): Promise<string> {
 	console.log('Fetching Scryfall bulk data catalog...');
-	const response = await scryfallFetch('https://api.scryfall.com/bulk-data');
-	if (!response.ok) throw new Error(`Bulk data API failed: ${response.status}`);
-	const data = await response.json();
-	const defaultCards = data.data.find((d: { type: string }) => d.type === 'default_cards');
-	if (!defaultCards) throw new Error('Could not find default_cards bulk data');
+	const bulk = await fetchDefaultCardsBulkMeta();
 
-	console.log(`Downloading bulk data (~${Math.round(defaultCards.size / 1024 / 1024)} MB)...`);
-	const dl = await scryfallFetch(defaultCards.download_uri);
+	const sizeNote = bulk.downloadSize ? ` (~${Math.round(bulk.downloadSize / 1024 / 1024)} MB)` : '';
+	console.log(`Downloading bulk data${sizeNote}...`);
+	const dl = await scryfallFetch(bulk.downloadUri);
 	if (!dl.ok || !dl.body) throw new Error(`Download failed: ${dl.status}`);
 
 	mkdirSync(dataDir, { recursive: true });
 	const fileStream = createWriteStream(bulkDataPath);
-	// @ts-expect-error Node.js ReadableStream compatibility
-	await pipeline(dl.body, fileStream);
+	await pipeline(Readable.fromWeb(dl.body as Parameters<typeof Readable.fromWeb>[0]), fileStream);
 	console.log('Download complete.');
 	return bulkDataPath;
 }
@@ -201,16 +202,22 @@ async function main() {
 	const args = process.argv.slice(2);
 	const skipDownload = args.includes('--skip-download');
 
-	if (!skipDownload || !existsSync(bulkDataPath)) {
-		await downloadBulkData();
-	} else {
-		console.log('Using existing bulk data file.');
+	let filePath = bulkDataPath;
+	if (skipDownload && !existsSync(bulkDataPath) && existsSync(legacyBulkDataPath)) {
+		filePath = legacyBulkDataPath;
 	}
 
-	await importNewCards(bulkDataPath);
+	if (!skipDownload || !existsSync(filePath)) {
+		await downloadBulkData();
+		filePath = bulkDataPath;
+	} else {
+		console.log(`Using existing bulk data file: ${filePath}`);
+	}
 
-	if (args.includes('--cleanup') && existsSync(bulkDataPath)) {
-		unlinkSync(bulkDataPath);
+	await importNewCards(filePath);
+
+	if (args.includes('--cleanup') && existsSync(filePath)) {
+		unlinkSync(filePath);
 		console.log('Cleaned up bulk data file.');
 	}
 }
