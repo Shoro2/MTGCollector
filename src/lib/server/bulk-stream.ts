@@ -1,25 +1,34 @@
 import { createReadStream } from 'node:fs';
+import { createGunzip } from 'node:zlib';
 
 /**
- * Async iterator that yields each element of a Scryfall bulk-data JSON array
- * without loading the whole document into memory. The bulk files are a single
- * top-level JSON array (`[ {...}, {...}, ... ]`), so we walk the byte stream
- * and emit objects as we balance braces at the top level.
+ * Async iterator that yields each card object of a Scryfall bulk-data file
+ * without loading the whole document into memory.
+ *
+ * Handles both payload shapes, because Scryfall switched formats:
+ *  - **JSONL** (current): one JSON object per line, served gzipped.
+ *  - **JSON array** (legacy): a single top-level `[ {...}, {...} ]` document.
+ *
+ * The scanner just walks the byte stream and emits an object every time brace
+ * depth returns to zero, so array punctuation and newlines are both simply
+ * skipped — no format flag is needed. Files ending in `.gz` are decompressed on
+ * the fly.
  *
  * Memory stays proportional to the size of a single card object (~a few KB)
- * rather than the whole ~600 MB payload.
+ * rather than the whole payload.
  */
 export async function* parseScryfallBulkStream<T>(
 	filePath: string
 ): AsyncGenerator<T, void, unknown> {
-	const stream = createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 1 << 20 });
+	const raw = createReadStream(filePath, { highWaterMark: 1 << 20 });
+	const stream = filePath.endsWith('.gz') ? raw.pipe(createGunzip()) : raw;
+	stream.setEncoding('utf-8');
 
 	let buffer = '';
 	let cursor = 0;
 	let depth = 0;
 	let inString = false;
 	let escape = false;
-	let inArray = false;
 	let objectStart = -1;
 
 	for await (const chunk of stream) {
@@ -27,12 +36,6 @@ export async function* parseScryfallBulkStream<T>(
 
 		while (cursor < buffer.length) {
 			const ch = buffer[cursor];
-
-			if (!inArray) {
-				if (ch === '[') inArray = true;
-				cursor++;
-				continue;
-			}
 
 			if (escape) {
 				escape = false;
@@ -68,10 +71,6 @@ export async function* parseScryfallBulkStream<T>(
 					objectStart = -1;
 				}
 				continue;
-			}
-
-			if (ch === ']' && depth === 0) {
-				return;
 			}
 
 			cursor++;
