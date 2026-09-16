@@ -284,8 +284,8 @@ The app's state is two files under `data/`:
 Recommended backup flow (safe while the app is running, because SQLite is in WAL mode):
 
 ```bash
-# Consistent snapshot of the DB, even under load
-sqlite3 data/mtg.db ".backup 'backups/mtg-$(date +%Y%m%d-%H%M%S).db'"
+# Consistent snapshot of the DB, even under load (the directory is not part of the checkout)
+mkdir -p backups && sqlite3 data/mtg.db ".backup 'backups/mtg-$(date +%Y%m%d-%H%M%S).db'"
 # And the secret key alongside it
 cp data/secret-key.hex backups/secret-key-$(date +%Y%m%d-%H%M%S).hex
 ```
