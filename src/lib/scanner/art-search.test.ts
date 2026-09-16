@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { searchHashes, type HashEntry } from './art-index';
+import { searchHashes, type HashEntry } from './art-search';
 
 const e = (key: string, hash: string): HashEntry => ({ key, hash });
 

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import sharp from 'sharp';
-import { hashImageBytes, smallImageUrl } from './art-hash';
+import { hashImageBytes, smallImageUrl } from './art-image';
 import { ART_BOX, hashArtPixels } from '../scanner/phash';
 
-describe('art-hash job', () => {
+describe('art-image (art-hash job)', () => {
 	it('derives the small rendition from the stored image URL', () => {
 		expect(smallImageUrl('https://cards.scryfall.io/normal/front/0/0/0000.jpg?123')).toBe('https://cards.scryfall.io/small/front/0/0/0000.jpg?123');
 	});
