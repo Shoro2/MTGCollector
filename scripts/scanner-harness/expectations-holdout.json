@@ -1,0 +1,39 @@
+{
+ "20260916_202337.jpg": [
+  { "name": "Preordain", "set": "soa", "number": "21" },
+  { "name": "Koma, Cosmos Serpent", "set": "tle", "number": "51" },
+  { "name": "Veil of Summer", "set": "soa", "number": "60" },
+  { "name": "Thassa's Oracle", "set": "sld", "number": "1280" },
+  { "name": "Spell Pierce", "set": "soa", "number": "23" },
+  { "name": "Bitter Triumph", "set": "soa", "number": "26" }
+ ],
+ "20260916_202915.jpg": [
+  { "name": "Mountain", "set": "sos", "number": "270", "finish": "foil" },
+  { "name": "Startled Relic Sloth", "set": "sos", "number": "233", "finish": "foil" },
+  { "name": "Shattered Acolyte", "set": "sos", "number": "31", "finish": "foil" },
+  { "name": "Mountain", "set": "sos", "number": "279", "finish": "foil" },
+  { "name": "Paradox Gardens", "set": "sos", "number": "258", "finish": "foil" },
+  { "name": "The Last Ronin's Technique", "set": "tmt", "number": "223", "finish": "foil" }
+ ],
+ "20260916_202956.jpg": [
+  { "name": "Barkchannel Pathway // Tidechannel Pathway", "set": "khm", "number": "251" }
+ ],
+ "20260916_203317.jpg": [
+  { "name": "Counterspell", "set": "fca", "number": "4" },
+  { "name": "Imposter Mech", "set": "nec", "number": "13" },
+  { "name": "Snapback", "set": "tsr", "number": "87" },
+  { "name": "Delighted Halfling", "set": "ltr", "number": "158" },
+  { "name": "Borne Upon a Wind", "set": "ltr", "number": "44" },
+  { "name": "Flooded Strand", "set": "ons", "number": "316" },
+  { "name": "Enduring Vitality", "set": "dsk", "number": "176" },
+  { "name": "Finale of Devastation", "set": "war", "number": "160" },
+  { "name": "Sink into Stupor // Soporific Springs", "set": "mh3", "number": "241" },
+  { "name": "Misdirection", "set": "ddt", "number": "15" },
+  { "name": "Force of Will", "set": "all", "number": "28" },
+  { "name": "Tropical Island", "set": "30a", "number": "279" }
+ ],
+ "20260916_203408.jpg": [],
+ "20260916_203427.jpg": [
+  { "name": "Arnyn, Deathbloom Botanist", "set": "sos", "number": "74" }
+ ]
+}

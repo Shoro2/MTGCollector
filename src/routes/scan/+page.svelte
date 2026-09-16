@@ -1465,8 +1465,12 @@
 					}
 				}
 				try {
-					if (names.size > 0) {
-						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printings: [...names] }) });
+					// The server answers at most 50 names per request; a busy spread with
+					// three candidates per pass exceeds that, and every name beyond the
+					// cut used to come back without printings ("confirmed", nothing to pick).
+					const nameList = [...names];
+					for (let start = 0; start < nameList.length; start += 50) {
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printings: nameList.slice(start, start + 50) }) });
 						const data = await res.json();
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) printingsCache.set(entry.name, entry.results ?? []);
 					}
