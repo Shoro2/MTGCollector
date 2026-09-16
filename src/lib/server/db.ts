@@ -299,6 +299,17 @@ const MIGRATIONS: Migration[] = [
 				'CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at DESC)'
 			);
 		}
+	},
+	{
+		// Scanner Phase 3: 64-bit perceptual hash of the art region as 16 hex
+		// characters ('-' when the image could not be hashed), filled by
+		// `npm run hash-art` (src/lib/server/art-hash.ts); back faces of
+		// double-faced cards carry their own.
+		id: '0021_art_hash',
+		run: (db) => {
+			addColumnIfMissing(db, 'cards', 'art_hash', 'TEXT');
+			addColumnIfMissing(db, 'card_faces', 'art_hash', 'TEXT');
+		}
 	}
 ];
 
