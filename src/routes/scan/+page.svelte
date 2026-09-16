@@ -8,10 +8,11 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
-	import { bestNameMatch } from '$lib/scanner/similarity';
+	import { bestNameMatch, looksLikeOcrJunk, similarity } from '$lib/scanner/similarity';
 	import { disambiguateReprints } from '$lib/scanner/pipeline';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
+	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
 	import type { QuickRect } from '$lib/scanner/detect';
 
 	let { data }: { data: PageData } = $props();
@@ -40,6 +41,10 @@
 		status: 'scanning' | 'found' | 'not_found';
 		foil: boolean;
 		selectedResultIdx: number;
+		/** Crops from the 180°-rotated warp when the upside-down retry did not resolve the name (Phase 2b). */
+		altNameUrl?: string;
+		altBottomUrl?: string;
+		altCroppedUrl?: string;
 	}>>([]);
 	let debugCanvasUrl = $state('');
 	let debugLog = $state<string[]>([]);
@@ -479,6 +484,26 @@
 					log(`Size filter: median=${medianArea.toFixed(0)}, threshold=${(medianArea * 0.4).toFixed(0)}, ${beforeSize} -> ${cardContours.length}`);
 				}
 
+				// === Dimension consistency filter (multiple mode) ===
+				// In a spread every card has the same size. A bounding box far off the
+				// median width/height is either a partial card (the contour ran into a
+				// neighbour) or two touching cards merged into one card-shaped blob —
+				// both would OCR garbage. Drop them; the grid inference below re-creates
+				// the cells from the surviving neighbours.
+				if (scanMode === 'multiple' && cardContours.length >= 4) {
+					const ws = cardContours.map(c => c.rect.width).sort((a, b) => a - b);
+					const hs = cardContours.map(c => c.rect.height).sort((a, b) => a - b);
+					const medW = ws[Math.floor(ws.length / 2)];
+					const medH = hs[Math.floor(hs.length / 2)];
+					const beforeDim = cardContours.length;
+					// 15%: flat-lay spreads vary a few percent with perspective; a partial
+					// card is typically 20%+ short on one side.
+					cardContours = cardContours.filter(c =>
+						Math.abs(c.rect.width - medW) <= medW * 0.15 && Math.abs(c.rect.height - medH) <= medH * 0.15
+					);
+					log(`Dimension filter: median ${medW.toFixed(0)}x${medH.toFixed(0)} (+-15%), ${beforeDim} -> ${cardContours.length}`);
+				}
+
 				// === Progressive relaxation if expected card count not met ===
 				if (expectedCardCount && cardContours.length < expectedCardCount) {
 					log(`Progressive relaxation triggered (have ${cardContours.length}, need ${expectedCardCount})`);
@@ -549,7 +574,12 @@
 				}
 
 				// === Grid inference: fill missing positions if cards form a grid ===
-				if (expectedCardCount && cardContours.length < expectedCardCount && cardContours.length >= 3) {
+				// Single mode completes the grid up to expectedCardCount. Multiple mode
+				// fills every empty cell of a detected grid and keeps the ones with
+				// texture, so a card that was merged with or cut off by its neighbour
+				// still gets its own warp while blank paper is ignored.
+				const wantGridFill = expectedCardCount ? cardContours.length < expectedCardCount : scanMode === 'multiple';
+				if (wantGridFill && cardContours.length >= 3) {
 					// Use bounding rect centers for grid layout (stable for upright cards)
 					const gridRects = cardContours.map(c => c.rect);
 					const gridCenters = gridRects.map(r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
@@ -578,42 +608,64 @@
 					const cols = cluster1D(gridCenters.map(c => c.x), medW * 0.4);
 
 					log(`Grid analysis: ${rows.length} rows x ${cols.length} cols detected`);
-					if (rows.length >= 2 && cols.length >= 2 && rows.length * cols.length >= expectedCardCount * 0.8) {
-						// Assign each card to a (row, col) index
-						const cardGrid: { [key: string]: number } = {}; // "row,col" -> card index
-						for (let ci = 0; ci < cardContours.length; ci++) {
-							const rowIdx = rows.findIndex(r => r.includes(ci));
-							const colIdx = cols.findIndex(c => c.includes(ci));
-							if (rowIdx >= 0 && colIdx >= 0) {
-								cardGrid[`${rowIdx},${colIdx}`] = ci;
-							}
+					const cells = rows.length * cols.length;
+					const gridPlausible = expectedCardCount
+						? cells >= expectedCardCount * 0.8
+						: cells > cardContours.length && cells <= cardContours.length * 2;
+					const hasGrid = rows.length >= 2 && cols.length >= 2;
+					// Multiple mode also runs with a complete-looking grid so an entire
+					// missed edge row/column can still be extrapolated below.
+					if (hasGrid && (gridPlausible || (!expectedCardCount && scanMode === 'multiple'))) {
+						const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+						const rowCenters = rows.map(r => mean(r.map(idx => gridCenters[idx].y)));
+						const colCenters = cols.map(c => mean(c.map(idx => gridCenters[idx].x)));
+
+						// Extrapolate one row above/below and one column left/right at the
+						// median pitch when the cell would still lie inside the image. A
+						// whole edge row is lost when its cards were merged with or cut off
+						// by a neighbour; the contrast check below discards empty paper.
+						const pitch = (centers: number[]) => {
+							const diffs = centers.slice(1).map((c, i) => c - centers[i]).sort((a, b) => a - b);
+							return diffs[Math.floor(diffs.length / 2)];
+						};
+						if (!expectedCardCount) {
+							const rp = pitch(rowCenters);
+							if (rowCenters[0] - rp - medH / 2 >= -medH * 0.05) rowCenters.unshift(rowCenters[0] - rp);
+							if (rowCenters[rowCenters.length - 1] + rp + medH / 2 <= det.height + medH * 0.05) rowCenters.push(rowCenters[rowCenters.length - 1] + rp);
+							const cp = pitch(colCenters);
+							if (colCenters[0] - cp - medW / 2 >= -medW * 0.05) colCenters.unshift(colCenters[0] - cp);
+							if (colCenters[colCenters.length - 1] + cp + medW / 2 <= det.width + medW * 0.05) colCenters.push(colCenters[colCenters.length - 1] + cp);
 						}
 
-						// For each empty cell, compute position from same-row and same-col neighbors
-						for (let ri = 0; ri < rows.length; ri++) {
-							for (let ci = 0; ci < cols.length; ci++) {
-								if (cardContours.length >= expectedCardCount) break;
-								if (cardGrid[`${ri},${ci}`] !== undefined) continue;
+						// Occupied cells: nearest row/col centre for every detected card
+						const nearest = (centers: number[], v: number) => centers.reduce((best, c, i) => (Math.abs(c - v) < Math.abs(centers[best] - v) ? i : best), 0);
+						const occupied = new Set<string>();
+						for (let ci = 0; ci < cardContours.length; ci++) {
+							occupied.add(`${nearest(rowCenters, gridCenters[ci].y)},${nearest(colCenters, gridCenters[ci].x)}`);
+						}
 
-								// Get X from same-column neighbors (cards in column ci, any row)
-								const colNeighbors = cols[ci].map(idx => gridCenters[idx].x);
-								const inferX = colNeighbors.length > 0
-									? colNeighbors.reduce((a, b) => a + b, 0) / colNeighbors.length
-									: null;
-
-								// Get Y from same-row neighbors (cards in row ri, any column)
-								const rowNeighbors = rows[ri].map(idx => gridCenters[idx].y);
-								const inferY = rowNeighbors.length > 0
-									? rowNeighbors.reduce((a, b) => a + b, 0) / rowNeighbors.length
-									: null;
-
-								if (inferX === null || inferY === null) continue;
+						for (let ri = 0; ri < rowCenters.length; ri++) {
+							for (let ci = 0; ci < colCenters.length; ci++) {
+								if (expectedCardCount && cardContours.length >= expectedCardCount) break;
+								if (occupied.has(`${ri},${ci}`)) continue;
 
 								// Use median bounding rect dimensions (not corner edge lengths)
-								const x1 = Math.max(0, Math.round(inferX - medW / 2));
-								const y1 = Math.max(0, Math.round(inferY - medH / 2));
+								const x1 = Math.max(0, Math.round(colCenters[ci] - medW / 2));
+								const y1 = Math.max(0, Math.round(rowCenters[ri] - medH / 2));
 								const x2 = Math.min(det.width - 1, x1 + medW);
 								const y2 = Math.min(det.height - 1, y1 + medH);
+								if (x2 - x1 < medW * 0.9 || y2 - y1 < medH * 0.9) continue; // cell mostly outside the image
+								// Blank paper has almost no contrast, a card has plenty: skip empty cells.
+								const cellRoi = gray.roi(new cv.Rect(x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1)));
+								const cellMean = new cv.Mat();
+								const cellStd = new cv.Mat();
+								cv.meanStdDev(cellRoi, cellMean, cellStd);
+								const cellContrast = cellStd.data64F[0];
+								cellRoi.delete(); cellMean.delete(); cellStd.delete();
+								if (cellContrast < 20) {
+									log(`Grid cell (${ri},${ci}) skipped: contrast ${cellContrast.toFixed(1)} looks empty`);
+									continue;
+								}
 								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
 								corners.data32S[0] = x1; corners.data32S[1] = y1;
 								corners.data32S[2] = x2; corners.data32S[3] = y1;
@@ -715,19 +767,40 @@
 				const cardW = warpedMat.cols as number;
 				const cardH = warpedMat.rows as number;
 
-				// Crop name area — skip black border + frame top, capture name text line.
-				// The band is taller than the name box itself so the text stays inside
-				// whether the detected quad was the outer black border (~3.5% margin
-				// after expansion) or the inner coloured frame (~1%). It starts at 6%
-				// from the left so the first letter isn't clipped on tight warps and
-				// ends at 74% so a three-symbol mana cost doesn't turn into junk
-				// letters glued to the name. Synthetic (grid-inferred) cards have
-				// less margin (~3%).
-				const nameY = Math.floor(cardH * (synthetic ? 0.03 : 0.055));
-				const nameH = Math.floor(cardH * 0.08);
-				const nameX = Math.floor(cardW * (synthetic ? 0.08 : 0.06));
-				const nameW = Math.floor(cardW * 0.68);
-				log(`${label}: name crop x=${nameX} y=${nameY} h=${nameH} w=${nameW}`);
+				// Where is the card inside this warp? A loose quad leaves margin, a
+				// tight one cuts into the border, a grid-inferred cell may be shifted.
+				// Intensity profiles find the inner edges of the black border and the
+				// OCR windows are anchored on them (src/lib/scanner/crops.ts); cards
+				// without a dark border fall back to the fixed percentages.
+				const grayCard = new cv.Mat();
+				cv.cvtColor(warpedMat, grayCard, cv.COLOR_RGBA2GRAY);
+				const rowMeans = (x0: number, x1: number): number[] => {
+					const roi = grayCard.roi(new cv.Rect(x0, 0, x1 - x0, cardH));
+					const out = new cv.Mat();
+					cv.reduce(roi, out, 1, cv.REDUCE_AVG, cv.CV_32F);
+					const arr = Array.from(out.data32F as Float32Array);
+					roi.delete(); out.delete();
+					return arr;
+				};
+				const colMeans = (y0: number, y1: number): number[] => {
+					const roi = grayCard.roi(new cv.Rect(0, y0, cardW, y1 - y0));
+					const out = new cv.Mat();
+					cv.reduce(roi, out, 0, cv.REDUCE_AVG, cv.CV_32F);
+					const arr = Array.from(out.data32F as Float32Array);
+					roi.delete(); out.delete();
+					return arr;
+				};
+				const win = cropWindowsFromProfiles(
+					rowMeans(Math.floor(cardW * 0.15), Math.floor(cardW * 0.85)),
+					rowMeans(Math.floor(cardW * 0.04), Math.floor(cardW * 0.46)),
+					colMeans(Math.floor(cardH * 0.2), Math.floor(cardH * 0.8)),
+					cardW,
+					cardH,
+					synthetic
+				);
+				grayCard.delete();
+				const { nameX, nameY, nameW, nameH } = win;
+				log(`${label}: crop windows (${win.source}, edges top=${win.edges.top} bottom=${win.edges.bottom} left=${win.edges.left}) name x=${nameX} y=${nameY} w=${nameW} h=${nameH}`);
 				const nameRoi = warpedMat.roi(new cv.Rect(nameX, nameY, nameW, nameH));
 				const grayName = new cv.Mat();
 				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
@@ -739,15 +812,9 @@
 				nameRoi.delete(); grayName.delete(); nameScaled.delete();
 
 				// Crop bottom strip for collector info (left half only, right has copyright).
-				// 89-99% rather than 90-97%: the collector line sits at ~96-99% of the
-				// physical card, which lands anywhere between ~91% and ~98% of the warp
-				// depending on how much margin the detected quad left. PSM 6 plus the
-				// anchor-based parser cope with the extra flavour-text line above it.
-				const bottomY = Math.floor(cardH * 0.89);
-				const bottomH = Math.floor(cardH * 0.10);
-				const roiW = Math.floor(cardW * 0.5);
-				log(`${label}: bottom crop y=${bottomY} h=${bottomH} w=${roiW}`);
-				const bottomRoi = warpedMat.roi(new cv.Rect(0, bottomY, roiW, bottomH));
+				const { bottomX, bottomY, bottomW: roiW, bottomH } = win;
+				log(`${label}: bottom crop x=${bottomX} y=${bottomY} h=${bottomH} w=${roiW}`);
+				const bottomRoi = warpedMat.roi(new cv.Rect(bottomX, bottomY, roiW, bottomH));
 
 				// Convert to grayscale, scale up 6x, and sharpen for better OCR
 				const grayBottom = new cv.Mat();
@@ -1032,6 +1099,16 @@
 						rotMat.delete();
 					}
 				}
+				// Whether or not the rotated name resolves, keep the rotated crops:
+				// Phase 3 reads the collector line in both orientations for cards
+				// that are still unresolved, so an unreadable name doesn't waste a
+				// perfectly legible "C 0156 TMT EN" on the other side.
+				for (const r of rotated) {
+					const card = detectedCards[firstIdx + r.i];
+					card.altNameUrl = r.nameUrl;
+					card.altBottomUrl = r.bottomUrl;
+					card.altCroppedUrl = r.canvas.toDataURL();
+				}
 				const rotTexts = await recognizeBatch(pool, rotated.map((r) => r.nameUrl));
 				const rotQueries: Array<{ k: number; cleanName: string }> = [];
 				rotated.forEach((r, k) => {
@@ -1061,6 +1138,9 @@
 						const best = bestNameMatch(searchData.results, cleanName);
 						log(`Card ${firstIdx + r.i + 1} rotated: best match "${best.name}" score=${best.score.toFixed(3)}`);
 						if (best.score < 0.6) return;
+						card.altNameUrl = undefined;
+						card.altBottomUrl = undefined;
+						card.altCroppedUrl = undefined;
 						card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
 						card.matchType = searchData.matchType;
 						card.nameText = cleanName;
@@ -1180,7 +1260,7 @@
 					// Common case: the batch pre-pass populated setNumCache, so this
 					// short-circuits without a network hit. Vision-retry path falls
 					// through to a per-card fetch since it's rare and post-batch.
-					log(`Card ${cardIdx}: name unresolved, trying set+number fallback (${card.setCode}#${card.collectorNumber})`);
+					log(`Card ${cardIdx}: name unresolved, trying set+number fallback (${card.setCode}#${card.collectorNumber}, number source=${parsed.numberSource})`);
 					const cached = setNumCache.get(setNumKey(card.setCode, card.collectorNumber));
 					if (cached) {
 						card.results = cached.results;
@@ -1201,6 +1281,23 @@
 							log(`Card ${cardIdx}: set+number fallback -> ${card.results.length} results, status=${card.status}`);
 						} catch { card.status = 'not_found'; }
 					}
+					// A "weak" number (bare digits before the set code) is often the
+					// set total or a mana value, and a wrong number silently yields a
+					// wrong card ("…/277" -> Forest). When the name OCR produced real
+					// text that has nothing in common with the hit, drop it.
+					if (card.status === 'found' && parsed.numberSource === 'weak') {
+						// Only when the name OCR contains at least one real-looking word;
+						// pure fragments ("f Sr wo TS") say nothing about the card.
+						const realWords = card.nameText.split(/\s+/).filter((w) => w.replace(/[^a-z]/gi, '').length >= 5 && !looksLikeOcrJunk(w));
+						if (realWords.length > 0) {
+							const check = bestNameMatch(card.results, card.nameText.replace(/^[^A-Za-z]+/, ''));
+							if (check.score < 0.3) {
+								log(`Card ${cardIdx}: weak number ${card.setCode}#${card.collectorNumber} -> "${check.name}" contradicts name OCR "${card.nameText}" (score ${check.score.toFixed(2)}), rejected`);
+								card.results = [];
+								card.status = 'not_found';
+							}
+						}
+					}
 				} else {
 					log(`Card ${cardIdx}: no match possible -> not_found`);
 					card.status = 'not_found';
@@ -1212,20 +1309,98 @@
 			log(`Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6, ${pool.length} workers)`);
 			const newCards = detectedCards.slice(firstIdx);
 			const bottomUrls = newCards.map((c) => c.bottomUrl);
+			// Unresolved cards with a rotated alternative get both strips OCR'd.
+			const altIdx: number[] = [];
+			for (let i = 0; i < newCount; i++) {
+				const c = newCards[i];
+				if (c.results.length === 0 && c.altBottomUrl) {
+					altIdx.push(i);
+					bottomUrls.push(c.altBottomUrl);
+				}
+			}
 			const bottomTexts = await recognizeBatch(pool, bottomUrls, (done, total) => {
 				scanProgress = `OCR bottom ${done}/${total}...`;
 			});
+			const cleanOcr = (t: string) => t.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
 			for (let i = 0; i < newCount; i++) {
 				const absIdx = firstIdx + i;
-				detectedCards[absIdx].ocrText = bottomTexts[i].replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+				detectedCards[absIdx].ocrText = cleanOcr(bottomTexts[i]);
 				log(`Card ${absIdx + 1} bottom OCR: "${detectedCards[absIdx].ocrText}"`);
 			}
+			// Pick the orientation whose strip parses as a collector line. A card
+			// that came out of the warp upside down and whose rotated name OCR was
+			// too poor to match still gets its set + number this way.
+			altIdx.forEach((i, k) => {
+				const card = detectedCards[firstIdx + i];
+				const altText = cleanOcr(bottomTexts[newCount + k]);
+				log(`Card ${firstIdx + i + 1} bottom OCR (rotated): "${altText}"`);
+				const primary = parseCollectorInfo(card.ocrText, langs);
+				const alt = parseCollectorInfo(altText, langs);
+				const score = (p: { setCode: string; collectorNumber: string; numberSource: string }) =>
+					(p.setCode ? 2 : 0) + (p.collectorNumber ? (p.numberSource === 'weak' ? 1 : 2) : 0);
+				if (score(alt) > score(primary) && card.altBottomUrl && card.altNameUrl && card.altCroppedUrl) {
+					log(`Card ${firstIdx + i + 1}: rotated strip reads better (${alt.setCode}#${alt.collectorNumber}), switching to the rotated warp`);
+					card.ocrText = altText;
+					card.bottomUrl = card.altBottomUrl;
+					card.nameUrl = card.altNameUrl;
+					card.croppedUrl = card.altCroppedUrl;
+				}
+				card.altNameUrl = undefined;
+				card.altBottomUrl = undefined;
+				card.altCroppedUrl = undefined;
+			});
 			if (superseded()) return;
 			await prefetchSetNumberLookups(detectedCards.slice(firstIdx));
 			for (let i = 0; i < newCount; i++) {
 				const absIdx = firstIdx + i;
 				scanProgress = `Matching card ${i + 1}/${newCount}...`;
 				await applyBottomMatch(detectedCards[absIdx], absIdx + 1, false);
+			}
+
+			// Phase 3c: majority-set fallback. The cards in one photo usually come
+			// from one set (a booster, a spread sorted by set). For cards whose
+			// collector number was read reliably but whose set code was not, try
+			// the set most identified cards belong to, and accept only when the
+			// hit's name agrees with the (partial) name OCR.
+			{
+				const identified = detectedCards.slice(firstIdx).filter((c) => c.status === 'found' && c.results.length === 1);
+				const counts = new Map<string, number>();
+				for (const c of identified) {
+					const sc = String(c.results[0].set_code);
+					counts.set(sc, (counts.get(sc) ?? 0) + 1);
+				}
+				const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+				if (top && top[1] >= 3 && top[1] >= identified.length * 0.6) {
+					const majoritySet = top[0];
+					for (let i = 0; i < newCount; i++) {
+						const card = detectedCards[firstIdx + i];
+						if (card.status !== 'not_found' || card.setCode || !card.collectorNumber) continue;
+						const parsed = parseCollectorInfo(card.ocrText, langs);
+						if (parsed.numberSource !== 'rarity' && parsed.numberSource !== 'fraction' && parsed.numberSource !== 'pair') continue;
+						if (superseded()) return;
+						try {
+							const res = await fetch('/scan', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ setCode: majoritySet, collectorNumber: card.collectorNumber })
+							});
+							const data = await res.json();
+							const rows: Array<Record<string, unknown>> = Array.isArray(data?.results) ? data.results : [];
+							if (rows.length !== 1) continue;
+							const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
+							const sim = cleanName.length >= 3 ? similarity(cleanName, rows[0].name as string) : 0;
+							if (sim >= 0.4) {
+								card.results = rows;
+								card.matchType = 'majority_set';
+								card.setCode = majoritySet;
+								card.status = 'found';
+								log(`Card ${firstIdx + i + 1}: majority-set fallback ${majoritySet}#${card.collectorNumber} -> "${rows[0].name}" (name similarity ${sim.toFixed(2)})`);
+							} else {
+								log(`Card ${firstIdx + i + 1}: majority-set fallback ${majoritySet}#${card.collectorNumber} -> "${rows[0].name}" rejected (name similarity ${sim.toFixed(2)})`);
+							}
+						} catch { /* keep not_found */ }
+					}
+				}
 			}
 
 			// Pixel-based foil detection — only for single-card mode where the

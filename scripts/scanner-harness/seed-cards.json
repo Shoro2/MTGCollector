@@ -47,7 +47,7 @@
  {"id":"tmt-74","name":"Shredder, Unrelenting","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"74","rarity":"uncommon","type_line":"Legendary Creature — Human Ninja","oracle_id":"o-shredder"},
  {"id":"tmt-150","name":"Ice Cream Kitty","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"150","rarity":"common","type_line":"Artifact Creature — Food Cat Mutant","oracle_id":"o-icecream"},
  {"id":"tmt-187","name":"Mutant Town","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"187","rarity":"common","type_line":"Land","oracle_id":"o-mutanttown"},
- {"id":"tmt-88","name":"Null Group Biological Assets","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"88","rarity":"common","type_line":"Creature — Mutant Mercenary","oracle_id":"o-nullgroup"},
+ {"id":"tmt-88","name":"Null Group Biological Assets","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"98","rarity":"common","type_line":"Creature — Mutant Mercenary","oracle_id":"o-nullgroup"},
  {"id":"tmt-111","name":"Zog, Triceraton Castaway","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"111","rarity":"common","type_line":"Legendary Creature — Dinosaur Soldier","oracle_id":"o-zog"},
  {"id":"tmt-161","name":"Nobody","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"161","rarity":"common","type_line":"Artifact Creature — Human Hero","oracle_id":"o-nobody"},
  {"id":"tmt-51","name":"Retro-Mutation","set_code":"tmt","set_name":"Teenage Mutant Ninja Turtles","collector_number":"51","rarity":"common","type_line":"Enchantment — Aura","oracle_id":"o-retromutation"},

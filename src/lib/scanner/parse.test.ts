@@ -97,3 +97,47 @@ describe('parseCollectorInfo — generic fallback (no language anchor)', () => {
 		expect(r.collectorNumber).toBe('42');
 	});
 });
+
+describe('parseCollectorInfo number confidence', () => {
+	const langs = 'EN|DE|FR';
+
+	it('reports fraction numbers as reliable', () => {
+		const r = parseCollectorInfo('040/277 C MID EN Ryan', langs);
+		expect(r.collectorNumber).toBe('40');
+		expect(r.numberSource).toBe('fraction');
+	});
+
+	it('takes the first number of a slash-less number/total pair', () => {
+		const r = parseCollectorInfo('040 277 C MID EN', langs);
+		expect(r.collectorNumber).toBe('40');
+		expect(r.numberSource).toBe('pair');
+	});
+
+	it('rejects a merged number that exceeds the set total instead of guessing', () => {
+		// OCR turned "180/277" into "1820 277"
+		const r = parseCollectorInfo('1820 277 C MID EN Darren Tan', langs);
+		expect(r.setCode).toBe('mid');
+		expect(r.collectorNumber).toBe('');
+	});
+
+	it('marks a bare trailing number as weak', () => {
+		// "Qs 277 C MID EN": the only number is the set total
+		const r = parseCollectorInfo('Qs 277 C MID EN', langs);
+		expect(r.collectorNumber).toBe('277');
+		expect(r.numberSource).toBe('weak');
+	});
+
+	it('marks rarity-prefixed numbers as reliable', () => {
+		const r = parseCollectorInfo('C 0052 TMT EN Miklos Ligeti', langs);
+		expect(r.collectorNumber).toBe('52');
+		expect(r.numberSource).toBe('rarity');
+	});
+});
+
+describe('parseCollectorInfo without a set anchor', () => {
+	it('still reports a rarity-prefixed number as reliable', () => {
+		const r = parseCollectorInfo('Cc 0150 oT ad as Mat OLLIVIERHENRY', 'EN|DE|FR');
+		expect(r.collectorNumber).toBe('150');
+		expect(r.numberSource).toBe('rarity');
+	});
+});

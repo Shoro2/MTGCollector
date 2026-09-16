@@ -25,6 +25,13 @@ export interface CollectorInfo {
 	setCode: string;
 	collectorNumber: string;
 	foilFromText: boolean;
+	/**
+	 * How the collector number was found. 'fraction' (123/277) and 'rarity'
+	 * (C 0123) are reliable; 'weak' means "the last digits before the set
+	 * code", which can be the set total or any other number — callers should
+	 * treat a weak number as a hint and sanity-check the result.
+	 */
+	numberSource: 'fraction' | 'pair' | 'rarity' | 'weak' | 'none';
 }
 
 /**
@@ -34,7 +41,7 @@ export interface CollectorInfo {
  * @param dbg optional per-step debug logger
  */
 export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: string) => void): CollectorInfo {
-	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false };
+	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false, numberSource: 'none' };
 
 	// Step 1: Find anchor — <SET code, 3-4 alphanumeric> followed by <LANG 2-letter> within a few chars
 	const anchor = new RegExp(`\\b([A-Z0-9]{3,4})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'gi');
@@ -65,9 +72,25 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 
 		// Handle fraction format first (Era 3): "010/277"
 		const fractionMatch = before.match(/([\dOoIilJjBbSsZz]{1,4})\/([\dOoIilJjBbSsZz]{1,4})/);
+		// OCR often drops the slash: "040 277 C". Two numbers followed by a
+		// rarity letter are collector number + set total; the first one counts,
+		// and a "number" larger than the total is an OCR merge ("1820 277 C"
+		// for 180/277) that must not be used at all.
+		const pairMatch = !fractionMatch ? before.match(/(\d{1,4})\s+(\d{2,4})\s*[CURMLST]?\s*$/) : null;
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
+			result.numberSource = 'fraction';
 			dbg?.(`fraction format: "${fractionMatch[0]}" -> num="${result.collectorNumber}"`);
+		} else if (pairMatch) {
+			const num = stripLeadingZeros(pairMatch[1]);
+			const total = Number(pairMatch[2]);
+			if (Number(num) <= total) {
+				result.collectorNumber = num;
+				result.numberSource = 'pair';
+				dbg?.(`number/total pair: "${pairMatch[0]}" -> num="${result.collectorNumber}"`);
+			} else {
+				dbg?.(`number/total pair rejected: ${num} > total ${total} ("${pairMatch[0]}")`);
+			}
 		} else {
 			// Strategy: find the collector number near the end of `before`.
 			// It may be split by spaces/OCR errors: "C 0 045" or "0045" or "024 J"
@@ -81,6 +104,7 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 				const fixed = fixOcrDigits(rarityNumMatch[1].replace(/\s/g, ''));
 				if (fixed.length > 0 && fixed.length <= 4) {
 					result.collectorNumber = stripLeadingZeros(fixed);
+					result.numberSource = 'rarity';
 					dbg?.(`rarity+number: "${rarityNumMatch[0]}" -> num="${result.collectorNumber}"`);
 				}
 			}
@@ -99,6 +123,7 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 					const fixed = fixOcrDigits(raw);
 					if (fixed.length > 0 && fixed.length <= 4) {
 						result.collectorNumber = stripLeadingZeros(fixed);
+						result.numberSource = 'weak';
 						dbg?.(`last-digit fallback: raw="${raw}" -> num="${result.collectorNumber}"`);
 					}
 				}
@@ -132,11 +157,21 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			}
 		}
 		const fractionMatch = text.match(/(\d{1,4})\/\d{1,4}/);
+		// "C 0150" / "Cc 0150" (OCR doubles letters): rarity + number is reliable
+		// even when the set code next to it was unreadable.
+		const rarityMatch = !fractionMatch ? text.match(/(?:^|\s)[curml]{1,2}\s+0*(\d{1,4})(?!\d)/i) : null;
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
+			result.numberSource = 'fraction';
+		} else if (rarityMatch) {
+			result.collectorNumber = stripLeadingZeros(rarityMatch[1]);
+			result.numberSource = 'rarity';
 		} else {
 			const numMatch = text.match(/(\d{1,4})/);
-			if (numMatch) result.collectorNumber = stripLeadingZeros(numMatch[1]);
+			if (numMatch) {
+				result.collectorNumber = stripLeadingZeros(numMatch[1]);
+				result.numberSource = 'weak';
+			}
 		}
 		dbg?.(`generic fallback: set="${result.setCode}" num="${result.collectorNumber}"`);
 	}

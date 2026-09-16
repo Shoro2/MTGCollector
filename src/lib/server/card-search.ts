@@ -1,10 +1,11 @@
 import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
+import { setsCache } from './cache.js';
 
 const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity`;
 
 export type CardRow = Record<string, unknown>;
-export type SearchResult = { results: CardRow[]; matchType: 'exact' | 'like' | 'fts' | 'none' };
+export type SearchResult = { results: CardRow[]; matchType: 'exact' | 'like' | 'fts' | 'fuzzy' | 'none' };
 
 // Statements are lazily prepared so module load doesn't hit the DB before
 // initDb() has created the required tables. The build bundler imports this
@@ -40,10 +41,27 @@ const ftsStmt = () => (_fts ??= sqlite.prepare(
 ));
 const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ?`));
 
+function runFts(query: string): CardRow[] {
+	try {
+		return ftsStmt().all(query) as CardRow[];
+	} catch {
+		return []; // FTS syntax error on odd OCR input — treat as no match
+	}
+}
+
+/** FTS5 term for a word: quoted so punctuation can't break the query, prefix-matched. */
+const term = (w: string) => `"${w.replace(/"/g, '')}"*`;
+
 /**
  * Resolve a card by its (probably OCR'd) name. Tries cheapest paths first:
- * exact match → FTS5 prefix match (indexed) → substring LIKE (full scan,
- * last-resort fallback).
+ * exact match → FTS5 prefix match on all words (indexed) → substring LIKE →
+ * two OCR-tolerant fallbacks restricted to the name column:
+ *  - any word (OR): junk glued to a good name ("Nobody ol", "Negate Has") no
+ *    longer hides the card, because the AND query required every word to match;
+ *  - word stems (first 4 letters of words with 5+ letters, OR): a single
+ *    misread letter inside a word ("Tendcrize", "Comesiibisl") still reaches
+ *    the right candidates. The caller ranks candidates by string similarity
+ *    and applies its own acceptance threshold, so a wide net here is safe.
  */
 export function searchByName(query: string): SearchResult {
 	const cleaned = query.trim();
@@ -57,15 +75,25 @@ export function searchByName(query: string): SearchResult {
 		.split(/\s+/)
 		.filter((w) => w.length >= 2);
 	if (words.length > 0) {
-		const ftsQuery = words.map((w) => `"${w}"*`).join(' ');
-		try {
-			const fts = ftsStmt().all(ftsQuery) as CardRow[];
-			if (fts.length > 0) return { results: fts, matchType: 'fts' };
-		} catch { /* FTS syntax error — fall through to LIKE */ }
+		const fts = runFts(words.map(term).join(' '));
+		if (fts.length > 0) return { results: fts, matchType: 'fts' };
 	}
 
 	const like = likeStmt().all(`%${cleaned}%`) as CardRow[];
 	if (like.length > 0) return { results: like, matchType: 'like' };
+
+	// Words that can carry a name: 3+ letters with a vowel (drops "ol", "TT").
+	const strong = [...new Set(words.filter((w) => w.length >= 3 && /[aeiouy]/i.test(w)))];
+	if (strong.length > 0) {
+		const any = runFts(`name : (${strong.map(term).join(' OR ')})`);
+		if (any.length > 0) return { results: any, matchType: 'fuzzy' };
+
+		const stems = [...new Set(strong.filter((w) => w.length >= 5).map((w) => w.slice(0, 4)))];
+		if (stems.length > 0) {
+			const stemmed = runFts(`name : (${stems.map(term).join(' OR ')})`);
+			if (stemmed.length > 0) return { results: stemmed, matchType: 'fuzzy' };
+		}
+	}
 
 	return { results: [], matchType: 'none' };
 }
@@ -92,5 +120,38 @@ export function searchBySetNumber(setCode: string, collectorNumber: string): Sea
 		const noSuffix = collectorNumber.replace(/[a-z]$/i, '');
 		if (noSuffix) results = setNumStmt().all(lc, noSuffix) as CardRow[];
 	}
-	return { results, matchType: results.length > 0 ? 'exact' : 'none' };
+	if (results.length > 0) return { results, matchType: 'exact' };
+
+	// OCR confuses similar glyphs in the set code (IMT/THT for TMT, MlD for
+	// MID). When the code is unknown, try every known code one substitution
+	// away; accept only if exactly one of them has this collector number.
+	const known = new Set(setsCache.get().map((s) => s.set_code));
+	if (!known.has(lc) && /^[a-z0-9]{3,4}$/.test(lc)) {
+		const near = [...known].filter((code) => code.length === lc.length && oneSubstitutionApart(code, lc));
+		const hits = near
+			.map((code) => searchBySetNumberExact(code, collectorNumber))
+			.filter((rows) => rows.length > 0);
+		if (hits.length === 1) return { results: hits[0], matchType: 'fuzzy' };
+	}
+	return { results: [], matchType: 'none' };
+}
+
+function oneSubstitutionApart(a: string, b: string): boolean {
+	let diff = 0;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++diff > 1) return false;
+	return diff === 1;
+}
+
+/** Raw / zero-stripped / zero-padded lookups for one set code, no fuzzing. */
+function searchBySetNumberExact(lc: string, collectorNumber: string): CardRow[] {
+	let rows = setNumStmt().all(lc, collectorNumber) as CardRow[];
+	if (rows.length === 0) {
+		const stripped = collectorNumber.replace(/^0+/, '');
+		if (stripped !== collectorNumber) rows = setNumStmt().all(lc, stripped) as CardRow[];
+	}
+	if (rows.length === 0) {
+		const padded = collectorNumber.padStart(3, '0');
+		if (padded !== collectorNumber) rows = setNumStmt().all(lc, padded) as CardRow[];
+	}
+	return rows;
 }
