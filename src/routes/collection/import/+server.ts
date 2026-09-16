@@ -264,9 +264,31 @@ export async function POST({ request, locals }) {
 	const notFoundCards: string[] = [];
 	const foreignPairs: Array<{ cardId: string; language: string }> = [];
 
+	// In sync mode we wipe and re-insert the whole collection. Capture each
+	// existing card's original added_at (keyed by printing + finish + condition
+	// + language) BEFORE deleting, so re-syncing a card the user already owned
+	// keeps its acquisition date. Without this every re-synced card looks
+	// "added today", which collapses its /prices value/profit history to today
+	// even though price_history is fully intact.
+	const preservedAddedAt = new Map<string, string>();
+	const addedAtKey = (cardId: string, condition: string, foil: 0 | 1, language: string) =>
+		`${cardId}|${condition}|${foil}|${language}`;
+
 	const transaction = sqlite.transaction(() => {
 		// In sync mode, clear existing collection first
 		if (mode === 'sync') {
+			const priorRows = sqlite
+				.prepare(
+					`SELECT card_id, condition, foil, COALESCE(language, 'en') AS language, MIN(added_at) AS added_at
+					 FROM collection_cards
+					 WHERE user_id = ? AND added_at IS NOT NULL
+					 GROUP BY card_id, condition, foil, COALESCE(language, 'en')`
+				)
+				.all(userId) as Array<{ card_id: string; condition: string; foil: number; language: string; added_at: string }>;
+			for (const r of priorRows) {
+				preservedAddedAt.set(addedAtKey(r.card_id, r.condition, r.foil as 0 | 1, r.language), r.added_at);
+			}
+
 			sqlite.prepare('DELETE FROM collection_card_tags WHERE collection_card_id IN (SELECT id FROM collection_cards WHERE user_id = ?)').run(userId);
 			sqlite.prepare('DELETE FROM collection_cards WHERE user_id = ?').run(userId);
 		}
@@ -311,6 +333,12 @@ export async function POST({ request, locals }) {
 				}
 			}
 
+			// Reuse the original acquisition date for cards that survived a sync
+			// wipe; genuinely new rows fall back to now.
+			const addedAt =
+				preservedAddedAt.get(addedAtKey(card.id, row.condition, row.foil, row.language)) ??
+				new Date().toISOString();
+
 			insertCollection.run(
 				userId,
 				card.id,
@@ -320,7 +348,7 @@ export async function POST({ request, locals }) {
 				row.language,
 				row.purchasePrice,
 				notes,
-				new Date().toISOString()
+				addedAt
 			);
 
 			if (row.language && row.language !== 'en') {
