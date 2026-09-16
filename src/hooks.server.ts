@@ -67,7 +67,14 @@ function scheduleDailyPriceUpdate() {
 		}
 	}, 30_000);
 }
-scheduleDailyPriceUpdate();
+// DISABLE_PRICE_UPDATES=1 keeps the catalogue and the price history frozen —
+// for a second dev server on a seeded harness database, where the first
+// catch-up run would otherwise import every Scryfall card into it.
+if (process.env.DISABLE_PRICE_UPDATES === '1') {
+	console.log('[price-updater] Disabled by DISABLE_PRICE_UPDATES=1');
+} else {
+	scheduleDailyPriceUpdate();
+}
 
 // Graceful shutdown so in-flight SQLite writes finish and the WAL flushes
 // before the process exits. Without this, `docker stop` or `kubectl delete`

@@ -20,7 +20,7 @@ const totals = {};
 for (const file of files) {
 	const expNames = (expectations[basename(file)] || []).map((e) => (typeof e === 'string' ? e : e.name));
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-	await page.goto('http://127.0.0.1:5173/scan', { waitUntil: 'networkidle' });
+	await page.goto(`${process.env.HARNESS_URL ?? 'http://localhost:5173'}/scan`, { waitUntil: 'networkidle' });
 	await page.getByRole('button', { name: 'Multiple cards' }).click();
 	await page.setInputFiles('input[type=file]', file);
 	await page.waitForFunction(() => /Scan complete:|No cards detected|Error:/.test(document.querySelector('pre')?.textContent ?? ''), null, { timeout: 600000 });

@@ -3,12 +3,16 @@
 // card_faces, layouts and rarities. Reads the printings listed in an
 // expectations file (name + set + number) and writes one seed entry per
 // distinct printing. Run from the repository root against data/mtg.db.
-// usage: node scripts/scanner-harness/export-seed.mjs [expectations.json] [seed-cards.json]
+// usage: node scripts/scanner-harness/export-seed.mjs [--out seed-cards.json] [expectations.json ...]
+// Default: the real-photo and the synthetic expectations into seed-cards.json.
 import Database from 'better-sqlite3';
 import { readFileSync, writeFileSync } from 'node:fs';
-const [expectPath = 'scripts/scanner-harness/expectations-real-photos.json', outPath = 'scripts/scanner-harness/seed-cards.json'] = process.argv.slice(2);
-const db = new Database('data/mtg.db', { readonly: true });
-const expectations = JSON.parse(readFileSync(expectPath, 'utf8'));
+const argv = process.argv.slice(2);
+const outPath = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : 'scripts/scanner-harness/seed-cards.json';
+const expectPaths = argv.filter((a, i) => a !== '--out' && argv[i - 1] !== '--out');
+if (expectPaths.length === 0) expectPaths.push('scripts/scanner-harness/expectations-real-photos.json', 'scripts/scanner-harness/expectations.json');
+const db = new Database(process.env.MTG_DB_PATH ?? 'data/mtg.db', { readonly: true });
+const expectations = Object.assign({}, ...expectPaths.map((p) => JSON.parse(readFileSync(p, 'utf8'))));
 const byPrinting = db.prepare(`SELECT id, oracle_id, name, mana_cost, type_line, set_code, set_name, collector_number, rarity, layout FROM cards WHERE set_code = ? AND collector_number = ?`);
 const faces = db.prepare(`SELECT name, mana_cost, type_line, power, toughness FROM card_faces WHERE card_id = ? ORDER BY face_index`);
 const seen = new Map();

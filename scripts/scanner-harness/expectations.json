@@ -1,5 +1,38 @@
 {
- "synth-single.jpg": ["Lightning Bolt"],
- "synth-grid.jpg": ["Lightning Bolt", "Counterspell", "Giant Growth", "Lightning Helix"],
- "synth-sideways.jpg": ["Counterspell"]
+ "synth-single.jpg": [
+  {
+   "name": "Lightning Bolt",
+   "set": "m10",
+   "number": "146"
+  }
+ ],
+ "synth-grid.jpg": [
+  {
+   "name": "Lightning Bolt",
+   "set": "m10",
+   "number": "146"
+  },
+  {
+   "name": "Counterspell",
+   "set": "mh2",
+   "number": "267"
+  },
+  {
+   "name": "Giant Growth",
+   "set": "m10",
+   "number": "184"
+  },
+  {
+   "name": "Lightning Helix",
+   "set": "rvr",
+   "number": "372"
+  }
+ ],
+ "synth-sideways.jpg": [
+  {
+   "name": "Counterspell",
+   "set": "mh2",
+   "number": "267"
+  }
+ ]
 }

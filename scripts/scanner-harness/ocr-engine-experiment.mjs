@@ -24,7 +24,7 @@ for (const file of files) {
 	const expNums = expected.filter((e) => typeof e === 'object').map((e) => String(e.number).replace(/^0+/, ''));
 	const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 	page.on('console', (m) => { if (m.type() === 'error') console.log('console error:', m.text().slice(0, 160)); });
-	await page.goto('http://127.0.0.1:5173/scan', { waitUntil: 'networkidle' });
+	await page.goto(`${process.env.HARNESS_URL ?? 'http://localhost:5173'}/scan`, { waitUntil: 'networkidle' });
 	await page.getByRole('button', { name: 'Multiple cards' }).click();
 	await page.setInputFiles('input[type=file]', file);
 	await page.waitForFunction(() => /Scan complete:|No cards detected|Error:/.test(document.querySelector('pre')?.textContent ?? ''), null, { timeout: 600000 });

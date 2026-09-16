@@ -44,7 +44,7 @@ for (const file of files) {
 	const errors = [];
 	page.on('pageerror', (e) => errors.push(e.message));
 	page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-	await page.goto('http://127.0.0.1:5173/scan', { waitUntil: 'networkidle' });
+	await page.goto(`${process.env.HARNESS_URL ?? 'http://localhost:5173'}/scan`, { waitUntil: 'networkidle' });
 	await page.getByRole('button', { name: mode === 'single' ? 'Single card' : 'Multiple cards' }).click();
 	const t0 = Date.now();
 	await page.setInputFiles('input[type=file]', file);

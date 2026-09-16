@@ -6,7 +6,7 @@ const context = await browser.newContext({ viewport: { width: 390, height: 844 }
 const page = await context.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
-await page.goto('http://127.0.0.1:5173/scan', { waitUntil: 'networkidle' });
+await page.goto(`${process.env.HARNESS_URL ?? 'http://localhost:5173'}/scan`, { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: 'Live camera' }).click();
 const t0 = Date.now();
 // Wait for the pipeline to finish (the debug log is authoritative; it is inside a collapsed <details>, hence textContent).

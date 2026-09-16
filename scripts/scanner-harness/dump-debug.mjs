@@ -6,7 +6,7 @@ const [file, outDir, mode = 'multiple'] = process.argv.slice(2);
 mkdirSync(outDir, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-await page.goto('http://127.0.0.1:5173/scan', { waitUntil: 'networkidle' });
+await page.goto(`${process.env.HARNESS_URL ?? 'http://localhost:5173'}/scan`, { waitUntil: 'networkidle' });
 await page.getByRole('button', { name: mode === 'single' ? 'Single card' : 'Multiple cards' }).click();
 await page.setInputFiles('input[type=file]', file);
 await page.waitForFunction(() => /Scan complete:|No cards detected|Error:/.test(document.querySelector('pre')?.textContent ?? ''), null, { timeout: 600000 });

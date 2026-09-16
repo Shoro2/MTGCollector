@@ -8,10 +8,12 @@ function parsePrinting(text) {
 /** Score the accepted cards of one photo against its expected instances. */
 export function scorePhoto(cards, expected) {
 	const pool = expected.map((e) => (typeof e === 'string' ? { name: e } : { ...e, set: e.set?.toLowerCase() }));
-	const m = { detected: cards.length, identity: 0, printing: 0, unresolvedPrinting: 0, wrongIdentity: 0, wrongPrinting: 0, missing: 0, extra: Math.max(0, cards.length - pool.length), likely: 0 };
+	const m = { detected: cards.length, identity: 0, printing: 0, unresolvedPrinting: 0, wrongIdentity: 0, wrongPrinting: 0, missing: 0, extra: Math.max(0, cards.length - pool.length), likely: 0, conflict: 0 };
 	const wrong = [];
 	for (const c of cards) {
 		if (c.state === 'likely') { m.likely++; continue; }
+		// A conflict lists both readings for the user; neither is an automatic acceptance.
+		if (c.state === 'conflict') { m.conflict++; continue; }
 		if (!c.name) continue;
 		const p = parsePrinting(c.printing);
 		const unique = c.candidates <= 1;

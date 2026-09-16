@@ -11,8 +11,8 @@ const scenes = {
 	'synth-grid.jpg': { w: 2400, h: 2000, cards: [
 		{ name: 'Lightning Bolt', type: 'Instant', text: 'Lightning Bolt deals 3 damage to any target.', num: '146/249 C', set: 'M10', cx: 650, cy: 520, h: 800, angle: -2, color: '#c8433a' },
 		{ name: 'Counterspell', type: 'Instant', text: 'Counter target spell.', num: '267/303 U', set: 'MH2', cx: 1750, cy: 520, h: 800, angle: 1.5, color: '#3a6fc8' },
-		{ name: 'Giant Growth', type: 'Instant', text: 'Target creature gets +3/+3 until end of turn.', num: '186/249 C', set: 'M10', cx: 650, cy: 1480, h: 800, angle: 0.5, color: '#3aa05a' },
-		{ name: 'Lightning Helix', type: 'Instant', text: 'Lightning Helix deals 3 damage to any target and you gain 3 life.', num: '208/291 U', set: 'RVR', cx: 1750, cy: 1480, h: 800, angle: -1, color: '#c88a3a' }
+		{ name: 'Giant Growth', type: 'Instant', text: 'Target creature gets +3/+3 until end of turn.', num: '184/249 C', set: 'M10', cx: 650, cy: 1480, h: 800, angle: 0.5, color: '#3aa05a' },
+		{ name: 'Lightning Helix', type: 'Instant', text: 'Lightning Helix deals 3 damage to any target and you gain 3 life.', num: '372/291 U', set: 'RVR', cx: 1750, cy: 1480, h: 800, angle: -1, color: '#c88a3a' }
 	] },
 	'synth-sideways.jpg': { w: 2200, h: 1600, cards: [{ name: 'Counterspell', type: 'Instant', text: 'Counter target spell.', num: '267/303 U', set: 'MH2', cx: 1100, cy: 800, h: 1200, angle: 90, color: '#3a6fc8' }] }
 };
