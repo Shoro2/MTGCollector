@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { createQuickDetector, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
 	import { loadOpenCV } from '$lib/scanner/opencv';
-	import { SceneStabilizer, sceneSignature } from '$lib/scanner/stability';
+	import { SceneStabilizer, sceneDiffers, sceneSignature } from '$lib/scanner/stability';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
 	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
 
@@ -74,12 +74,15 @@
 	// happened to be current when the stabiliser fired.
 	const bestFrames = new BestFrameSelector({ windowMs: 2500, improveFactor: 1.15 });
 	let bestSceneId = '';
+	/** Layout the best-frame candidates belong to; compared coarsely (sceneDiffers), not by fingerprint. */
+	let bestSceneRects: QuickRect[] | null = null;
 	let bestRects: QuickRect[] = [];
 	let bestQuality: FrameQuality | null = null;
 	let bestAt = 0;
 
-	let lastCapturedSceneId = '';
 	let needSceneChange = false;
+	/** Layout at the last capture; auto-capture re-arms only once the layout really differs from it. */
+	let capturedRects: QuickRect[] = [];
 
 	const TARGET_FPS = 6;
 	const FRAME_INTERVAL_MS = 1000 / TARGET_FPS;
@@ -188,7 +191,6 @@
 		resetBestFrame();
 		lastRects = [];
 		cutOff = [];
-		lastCapturedSceneId = '';
 		needSceneChange = false;
 		stableProgress = 0;
 		holdReason = '';
@@ -206,6 +208,7 @@
 	}
 
 	function resetBestFrame() {
+		bestSceneRects = null;
 		bestFrames.reset();
 		bestSceneId = '';
 		bestRects = [];
@@ -318,9 +321,14 @@
 			resetBestFrame();
 			qualityHint = '';
 		} else {
-			if (sceneId !== bestSceneId) {
+			// The same scene up to hand jitter: the fingerprint quantises centroids
+			// to ~30 px cells, which a hand crosses constantly, so the layouts are
+			// compared coarsely instead — otherwise every jitter threw the best
+			// frame away and the capture came from whatever frame followed.
+			if (!bestSceneRects || sceneDiffers(bestSceneRects, lastRects)) {
 				bestFrames.reset();
 				bestSceneId = sceneId;
+				bestSceneRects = lastRects;
 			}
 			qualityHint = bestFrames.hint(quality, now);
 			if (bestFrames.offer(quality, now) && bestCanvas) {
@@ -341,20 +349,16 @@
 			holdReason = '';
 		}
 
-		if (stable) {
-			if (sceneId !== lastCapturedSceneId && !needSceneChange) {
-				if (autoCapture && !busy && !holdReason) {
-					triggerCapture(sceneId, lastRects, now);
-				}
-			} else if (sceneId !== lastCapturedSceneId) {
-				// Scene already changed enough that we can re-arm.
-				needSceneChange = false;
-			}
-		} else {
-			// Scene moving — once it stabilizes again, allow re-capture
-			// even if the resulting sceneId matches the previous one
-			// (user picked the cards up and put them back).
-			if (lastRects.length === 0) needSceneChange = false;
+		// Re-arm only when the layout really changed since the capture: the
+		// cards left the frame (picked up and put back), a card moved by half
+		// its short edge, or the count changed. Re-arming on the fingerprint
+		// alone captured the same card three times in a row on a phone — hand
+		// jitter crosses a fingerprint cell all the time.
+		if (needSceneChange && (lastRects.length === 0 || sceneDiffers(capturedRects, lastRects))) {
+			needSceneChange = false;
+		}
+		if (stable && !needSceneChange && autoCapture && !busy && !holdReason) {
+			triggerCapture(sceneId, lastRects, now);
 		}
 
 		scheduleFrame();
@@ -390,7 +394,7 @@
 		captureCanvas.height = vh;
 		const ctx = captureCanvas.getContext('2d');
 		if (!ctx) return;
-		const best = bestCanvas && bestQuality && bestSceneId === sceneId && rects.length > 0
+		const best = bestCanvas && bestQuality && bestSceneRects !== null && !sceneDiffers(bestSceneRects, rects) && rects.length > 0
 			&& bestCanvas.width === vw && bestCanvas.height === vh
 			? { canvas: bestCanvas, quality: bestQuality }
 			: null;
@@ -402,8 +406,8 @@
 		} else {
 			ctx.drawImage(videoEl, 0, 0, vw, vh);
 		}
-		lastCapturedSceneId = sceneId;
 		needSceneChange = true;
+		capturedRects = lastRects;
 		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
 		onCapture(captureCanvas, [...handedRects]);
 	}

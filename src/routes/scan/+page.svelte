@@ -229,6 +229,48 @@
 		setTimeout(() => debugLogCopied = false, 2000);
 	}
 
+	// Every scan's debug log goes to the server (text only, never a photo) so a
+	// problem seen on a phone can be analysed without copying the log by hand:
+	// /api/scan-log stores it under data/scan-logs/ for 30 days and lists it
+	// on /admin. Fire-and-forget — a failure only adds a line to the local log.
+	let scanLogUploadedLength = 0;
+	function scanLogPayload(): string {
+		const identified = detectedCards.filter((c) => c.status === 'found').length;
+		const likely = detectedCards.filter((c) => c.status === 'likely' || c.status === 'conflict').length;
+		return JSON.stringify({
+			mode: scanMode,
+			source: scanMode === 'live' ? 'live' : 'upload',
+			summary: scanProgress,
+			cards: detectedCards.length,
+			identified,
+			likely,
+			wallMs: Math.round(performance.now() - scanStartTime),
+			text: debugLog.join('\n')
+		});
+	}
+	async function uploadScanLog(): Promise<void> {
+		if (debugLog.length === 0 || debugLog.length === scanLogUploadedLength) return;
+		scanLogUploadedLength = debugLog.length;
+		try {
+			const res = await fetch('/api/scan-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: scanLogPayload() });
+			if (!res.ok) log(`Scan log upload refused (${res.status})`);
+		} catch (err) {
+			log(`Scan log upload failed: ${err}`);
+		}
+	}
+	// A live session that never captured still has the interesting lines
+	// (detector, stability, quality); send them when the page goes away.
+	$effect(() => {
+		const flush = () => {
+			if (document.visibilityState !== 'hidden') return;
+			if (scanMode !== 'live' || debugLog.length === 0 || debugLog.length === scanLogUploadedLength) return;
+			scanLogUploadedLength = debugLog.length;
+			navigator.sendBeacon('/api/scan-log', new Blob([scanLogPayload()], { type: 'application/json' }));
+		};
+		document.addEventListener('visibilitychange', flush);
+		return () => document.removeEventListener('visibilitychange', flush);
+	});
+
 	// OpenCV + Tesseract + name/parse helpers come from src/lib/scanner/.
 
 	function onFileSelect(e: Event) {
@@ -1655,7 +1697,10 @@
 		} finally {
 			// Don't clear the busy flag if a newer scan superseded us — that scan
 			// owns `scanning` now.
-			if (!superseded()) scanning = false;
+			if (!superseded()) {
+				scanning = false;
+				void uploadScanLog();
+			}
 		}
 	}
 
@@ -2301,6 +2346,7 @@
 				>
 					{debugLogCopied ? 'Copied!' : 'Copy Log'}
 				</button>
+				<span class="text-xs text-[var(--color-text-muted)] ml-2">This log is also stored on the server for 30 days (text only, no photos) so problems can be analysed.</span>
 				<pre class="text-xs font-mono bg-[var(--color-bg)] p-3 rounded max-h-96 overflow-y-auto whitespace-pre-wrap break-all border border-[var(--color-border)]">{debugLog.join('\n')}</pre>
 			</div>
 		</details>

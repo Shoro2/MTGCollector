@@ -95,7 +95,8 @@ function shutdown(signal: string) {
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
 
-const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz', '/contact', '/api/health'];
+// /api/scan-log is public like /scan itself (its GET side checks for an admin on its own).
+const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/impressum', '/datenschutz', '/contact', '/api/health', '/api/scan-log'];
 
 // Permissive CSP: the app loads OpenCV and Tesseract from CDNs and embeds a
 // self-hosted Plausible script. 'unsafe-inline' is required by SvelteKit's

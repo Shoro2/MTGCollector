@@ -44,6 +44,40 @@
 		updateMsg = result.message;
 	}
 
+	// Scan logs uploaded by /scan (see src/lib/server/scan-logs.ts): the newest
+	// entries with their headline facts, one opened at a time.
+	type ScanLogEntry = { name: string; at?: string; mode?: string; source?: string; summary?: string; cards?: number; identified?: number; likely?: number; wallMs?: number; detector?: string; complete?: string; bestFrames?: number; userAgent?: string; userId?: string | null; bytes?: number };
+	let scanLogs = $state<ScanLogEntry[]>([]);
+	let scanLogsLoaded = $state(false);
+	let openScanLog = $state<{ name: string; text: string } | null>(null);
+
+	async function loadScanLogs() {
+		const res = await fetch('/api/scan-log?limit=50');
+		const data = await res.json();
+		scanLogs = Array.isArray(data?.logs) ? data.logs : [];
+		scanLogsLoaded = true;
+	}
+
+	async function showScanLog(name: string) {
+		if (openScanLog?.name === name) {
+			openScanLog = null;
+			return;
+		}
+		const res = await fetch(`/api/scan-log?name=${encodeURIComponent(name)}`);
+		const data = await res.json();
+		openScanLog = { name, text: typeof data?.text === 'string' ? data.text : '(unreadable)' };
+	}
+
+	function deviceOf(ua: string | undefined): string {
+		if (!ua) return '';
+		if (/iPhone|iPad/.test(ua)) return 'iOS';
+		if (/Android/.test(ua)) return 'Android';
+		if (/Windows/.test(ua)) return 'Windows';
+		if (/Macintosh/.test(ua)) return 'macOS';
+		if (/Linux/.test(ua)) return 'Linux';
+		return 'other';
+	}
+
 	function formatDate(d: unknown): string {
 		if (!d) return '—';
 		return new Date(d as string).toLocaleString();
@@ -70,6 +104,56 @@
 			{updateMsg}
 		</div>
 	{/if}
+
+	<!-- Scan logs -->
+	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+		<div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+			<h2 class="text-lg font-semibold">Scan logs</h2>
+			<button onclick={loadScanLogs} class="px-3 py-1 text-sm rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-hover)] transition-colors">
+				{scanLogsLoaded ? 'Reload' : 'Load the last 50'}
+			</button>
+		</div>
+		<p class="text-xs text-[var(--color-text-muted)] mb-3">Every scan on /scan uploads its debug log (text only). Files live under data/scan-logs/ for 30 days.</p>
+		{#if scanLogsLoaded && scanLogs.length === 0}
+			<p class="text-sm text-[var(--color-text-muted)]">No scan logs yet.</p>
+		{:else if scanLogs.length > 0}
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead>
+						<tr class="text-left text-xs text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+							<th class="py-1 pr-3">Time (UTC)</th>
+							<th class="py-1 pr-3">Source</th>
+							<th class="py-1 pr-3">Device</th>
+							<th class="py-1 pr-3">Result</th>
+							<th class="py-1 pr-3">Detector</th>
+							<th class="py-1 pr-3">Wall</th>
+							<th class="py-1 pr-3">Size</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each scanLogs as entry (entry.name)}
+							<tr class="border-b border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] cursor-pointer" onclick={() => showScanLog(entry.name)}>
+								<td class="py-1 pr-3 font-mono text-xs whitespace-nowrap">{(entry.at ?? '').replace('T', ' ').slice(0, 19)}</td>
+								<td class="py-1 pr-3">{entry.source ?? ''}{entry.mode && entry.mode !== entry.source ? ` (${entry.mode})` : ''}</td>
+								<td class="py-1 pr-3">{deviceOf(entry.userAgent)}{entry.userId ? ' · user' : ''}</td>
+								<td class="py-1 pr-3">{entry.complete || entry.summary || (entry.bestFrames ? `${entry.bestFrames} best frame(s), no scan` : 'no result')}</td>
+								<td class="py-1 pr-3 text-xs">{entry.detector ?? ''}</td>
+								<td class="py-1 pr-3 text-xs whitespace-nowrap">{entry.wallMs ? `${(entry.wallMs / 1000).toFixed(1)} s` : ''}</td>
+								<td class="py-1 pr-3 text-xs whitespace-nowrap">{entry.bytes ? `${Math.round(entry.bytes / 1024)} KB` : ''}</td>
+							</tr>
+							{#if openScanLog?.name === entry.name}
+								<tr>
+									<td colspan="7" class="py-2">
+										<pre class="text-xs font-mono bg-[var(--color-bg)] p-3 rounded max-h-96 overflow-y-auto whitespace-pre-wrap break-all border border-[var(--color-border)]">{openScanLog.text}</pre>
+									</td>
+								</tr>
+							{/if}
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</div>
 
 	<!-- Quick Actions -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
