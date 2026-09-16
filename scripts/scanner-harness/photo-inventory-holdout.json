@@ -1,0 +1,96 @@
+{
+ "scope": "Hold-out inventory: six phone photos taken 2026-09-16 after the development set was frozen; never used for tuning. Expected printings in expectations-holdout.json (six of them read from the photo and awaiting the owner's confirmation, see README).",
+ "photos": [
+  {
+   "file": "20260916_202337.jpg",
+   "sha256": "48530aa75ddd597079bf657aa06d9e75a905150ca7842c431a07b60ed12e9420",
+   "sourceSize": [
+    4032,
+    2268
+   ],
+   "exifOrientation": 6,
+   "orientedSize": [
+    2268,
+    4032
+   ],
+   "motif": "showcase / borderless frames, 6 cards, multiple mode",
+   "expectedCardInstances": 6
+  },
+  {
+   "file": "20260916_202915.jpg",
+   "sha256": "94bbc608436ff46e642f43b2929a46e7073d898c216d5234b9558b91868b5ef5",
+   "sourceSize": [
+    4032,
+    2268
+   ],
+   "exifOrientation": 6,
+   "orientedSize": [
+    2268,
+    4032
+   ],
+   "motif": "foils under a lamp, 6 cards, multiple mode",
+   "expectedCardInstances": 6
+  },
+  {
+   "file": "20260916_202956.jpg",
+   "sha256": "ee4fcc8a7b8003972be6dc4acc693fcfccbc7e64a72d473ccc464d1b1c65f2f0",
+   "sourceSize": [
+    4032,
+    2268
+   ],
+   "exifOrientation": 6,
+   "orientedSize": [
+    2268,
+    4032
+   ],
+   "motif": "one modal double-faced card, back face up, single mode",
+   "expectedCardInstances": 1
+  },
+  {
+   "file": "20260916_203317.jpg",
+   "sha256": "7b13b9096f3203c05c5c3f444d3e33b17e3df4167401a72de6a595180802d743",
+   "sourceSize": [
+    4032,
+    2268
+   ],
+   "exifOrientation": 6,
+   "orientedSize": [
+    2268,
+    4032
+   ],
+   "motif": "mixed sets and old frames, 3x4, multiple mode",
+   "expectedCardInstances": 12
+  },
+  {
+   "file": "20260916_203408.jpg",
+   "sha256": "e754101f7dac6959cc3c707de96c259c621c166071a37f7a9b650ba029137ac2",
+   "sourceSize": [
+    4032,
+    2268
+   ],
+   "exifOrientation": 6,
+   "orientedSize": [
+    2268,
+    4032
+   ],
+   "motif": "negative case: sleeved card backs and a deck box, no card faces, multiple mode",
+   "expectedCardInstances": 0
+  },
+  {
+   "file": "20260916_203427.jpg",
+   "sha256": "badaac99672f90f788e4db01ec24ed64eac7a673b8d08d20ddf6cdc78af91bf1",
+   "sourceSize": [
+    4032,
+    2268
+   ],
+   "exifOrientation": 6,
+   "orientedSize": [
+    2268,
+    4032
+   ],
+   "motif": "one card filling the frame on a dark cloth, single mode",
+   "expectedCardInstances": 1
+  }
+ ],
+ "totalCardInstances": 26
+}

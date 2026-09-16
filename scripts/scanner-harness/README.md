@@ -111,6 +111,58 @@ reads the face name, the database stores the canonical one.
 node scripts/scanner-harness/dump-debug.mjs photos/spread.jpg out/ multiple
 ```
 
+## Hold-out set (WP0.4)
+
+Six phone photos taken on 2026-09-16 after the development set was frozen
+(`photo-inventory-holdout.json`: hashes, motifs; `expectations-holdout.json`:
+26 card instances, every entry verified to exist in the catalogue). They are
+**never used for tuning**; a change is measured on them after the fact, and
+they are reported separately from the eight development photos. Spreads run in
+multiple mode, the two single-card photos in single mode
+(`baseline-holdout.json` carries the mode per photo):
+
+```bash
+E=scripts/scanner-harness/expectations-holdout.json
+node scripts/scanner-harness/harness.mjs --mode multiple --expect $E holdout/20260916_202337.jpg holdout/20260916_202915.jpg holdout/20260916_203317.jpg holdout/20260916_203408.jpg
+node scripts/scanner-harness/harness.mjs --mode single   --expect $E holdout/20260916_202956.jpg holdout/20260916_203427.jpg
+```
+
+Six expected printings were read from the photos and still await the owner's
+confirmation: Thassa's Oracle SLD #1280 (retro frame), the full-art foil
+Mountain SOS #270, Counterspell FCA #4 (the card shows the flavor name "Wild
+Rose Rebellion"), Misdirection DDT #15, Force of Will ALL #28 ("Illus. Terese
+Nielsen", old frame) and Tropical Island 30A #279. Identity does not depend
+on them; the printing metric does.
+
+**Result against the full catalogue (2026-09-16, same code as the Round 10
+column above):** identity **16 / 26**, printing **5 / 26**, 11 printings
+open, 4 `likely`, **0 wrong**, 10 missing; the negative photo (sleeved backs,
+a deck box) yields two unidentified rectangles and no identification, as it
+should. Failure classes the development set did not contain — none of them
+tuned away, all logged for the roadmap:
+
+- **Flavor names** (Universes Beyond): the card prints "The Monstrous
+  Serpent" (Koma, Cosmos Serpent, TLE) or "Wild Rose Rebellion" (Counterspell,
+  FCA); the catalogue has no `flavor_name` column, so the name channel cannot
+  match them and one became a `likely` of the wrong card. Needs the Scryfall
+  `flavor_name` field at import and as a name alias.
+- **Collector number on its own line** (SOA, TLE showcase frames): the strip
+  crop catches "SOA • EN ILLUS …" but the number sits on the line above; only
+  the name identifies these cards and the printing stays open.
+- **A black-bordered card filling the frame on a dark cloth** (single-card
+  photo): all six strategies return the image frame itself as the card, the
+  warp is the whole photo and the name window lands on the rules text — in
+  single *and* multiple mode. The live scanner's edge guard would refuse such a
+  frame; the upload path needs a "card = whole image" fallback.
+- **Old frames** (Alliances Force of Will, a numberless Tropical Island): the
+  name font defeats every pass and there is no collector line.
+- **Foil glare on a full-art land** and one upside-down warp (Misdirection)
+  that the rotated retry did not recover.
+
+The 11 open printings are the same class as on the development set (many
+printings, footer unreadable): basic lands, Preordain, Flooded Strand, LTR /
+DSK / WAR cards with several variants.
+
 ## Reference results (September 2026)
 
 Columns: state before the scanner work, after spread-aware detection and

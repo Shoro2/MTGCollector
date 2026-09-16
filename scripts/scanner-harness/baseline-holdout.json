@@ -1,0 +1,89 @@
+{
+ "written": "2026-09-16T18:48:02.690Z",
+ "photos": {
+  "20260916_202337.jpg": {
+   "detected": 6,
+   "identity": 3,
+   "printing": 0,
+   "unresolvedPrinting": 3,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 3,
+   "extra": 0,
+   "likely": 2,
+   "conflict": 0,
+   "wallSeconds": 20.4,
+   "mode": "multiple"
+  },
+  "20260916_202915.jpg": {
+   "detected": 6,
+   "identity": 4,
+   "printing": 3,
+   "unresolvedPrinting": 1,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 2,
+   "extra": 0,
+   "likely": 2,
+   "conflict": 0,
+   "wallSeconds": 10.5,
+   "mode": "multiple"
+  },
+  "20260916_203317.jpg": {
+   "detected": 12,
+   "identity": 8,
+   "printing": 1,
+   "unresolvedPrinting": 7,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 4,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 18.4,
+   "mode": "multiple"
+  },
+  "20260916_203408.jpg": {
+   "detected": 2,
+   "identity": 0,
+   "printing": 0,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 2,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 3.8,
+   "mode": "multiple"
+  },
+  "20260916_202956.jpg": {
+   "detected": 1,
+   "identity": 1,
+   "printing": 1,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 3,
+   "mode": "single"
+  },
+  "20260916_203427.jpg": {
+   "detected": 1,
+   "identity": 0,
+   "printing": 0,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 1,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 4.1,
+   "mode": "single"
+  }
+ }
+}
