@@ -9,7 +9,8 @@
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { rankNameMatches, realWordCount } from '$lib/scanner/similarity';
-	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState } from '$lib/scanner/resolve';
+	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
+	import { artBoxOnWarp, hashArtPixels } from '$lib/scanner/phash';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
@@ -55,6 +56,10 @@
 		/** Up to three candidates attached to a not_found card (structural number without name evidence, one digit off) for one-tap acceptance. */
 		suggestions: PrintingRow[];
 		reasons: string[];
+		/** Art hash of the warped card (Phase 3), upright and for the 180°-rotated warp; the server's nearest printings once fetched. */
+		artHash?: string;
+		artHashAlt?: string;
+		artMatches?: ArtMatch[];
 		/** Crops from the 180°-rotated warp when the upside-down retry did not resolve the name (Phase 2b). */
 		altNameUrl?: string;
 		altBottomUrl?: string;
@@ -145,6 +150,33 @@
 	/** A card the bulk actions may take: identity confirmed and exactly one printing established. */
 	function isImportable(card: { status: string; printingState: string; results: Array<Record<string, unknown>> }): boolean {
 		return card.status === 'found' && card.results.length > 0 && (card.results.length === 1 || card.printingState === 'confirmed');
+	}
+
+	/**
+	 * Art hashes of a warped card (Phase 3): the same luminance and box filter
+	 * as the reference job (`hashArtPixels`) over the reference box moved
+	 * inwards by the warp's background margin (`artBoxOnWarp`), for the upright
+	 * warp and for the warp rotated 180° — a card that lies upside down puts
+	 * its art at the mirrored position, read back to front.
+	 */
+	function artHashesOfWarp(canvas: HTMLCanvasElement): { hash: string; alt: string } {
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (!ctx || canvas.width < 16 || canvas.height < 16) return { hash: '', alt: '' };
+		const box = artBoxOnWarp();
+		const w = Math.max(1, Math.round(canvas.width * box.w));
+		const h = Math.max(1, Math.round(canvas.height * box.h));
+		const x = Math.round(canvas.width * box.x);
+		const y = Math.round(canvas.height * box.y);
+		const upright = ctx.getImageData(x, y, w, h).data;
+		const mirrored = ctx.getImageData(canvas.width - x - w, canvas.height - y - h, w, h).data;
+		const reversed = new Uint8ClampedArray(mirrored.length);
+		for (let i = 0, j = mirrored.length - 4; i < mirrored.length; i += 4, j -= 4) {
+			reversed[i] = mirrored[j];
+			reversed[i + 1] = mirrored[j + 1];
+			reversed[i + 2] = mirrored[j + 2];
+			reversed[i + 3] = 255;
+		}
+		return { hash: hashArtPixels(upright, w, h, 4), alt: hashArtPixels(reversed, w, h, 4) };
 	}
 
 	/** Base-size PNG data URL of a warped card canvas for the result list and debug views. */
@@ -1006,6 +1038,7 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardThumbnailUrl(cardCanvas);
 				cardCanvases.push(cardCanvas);
+				const artHashes = artHashesOfWarp(cardCanvas);
 
 				const { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl, bottomUrl2, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
 				bottomCanvases.push(bottomCanvas);
@@ -1034,7 +1067,9 @@
 					nameCandidates: [],
 					readings: [],
 					suggestions: [],
-					reasons: []
+					reasons: [],
+					artHash: artHashes.hash,
+					artHashAlt: artHashes.alt
 				});
 
 				// Cleanup card-specific mats
@@ -1525,13 +1560,39 @@
 							knownSets.set(String(entry.setCode).toLowerCase(), !!entry.setKnown);
 						}
 					}
+					// Art hashes (Phase 3): once per card, the server's nearest printings.
+					const artCards = cards.filter((c) => c.artHash && c.artMatches === undefined);
+					for (let start = 0; start < artCards.length; start += 50) {
+						const chunk = artCards.slice(start, start + 50);
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artHashes: chunk.map((c) => ({ hash: c.artHash, alt: c.artHashAlt })) }) });
+						const data = await res.json();
+						const batch = Array.isArray(data?.batch) ? data.batch : [];
+						chunk.forEach((c, k) => {
+							const matches = Array.isArray(batch[k]?.matches) ? batch[k].matches : [];
+							c.artMatches = matches.map((m: { row: PrintingRow; distance: number; rotated: boolean; face: number }) => ({ row: m.row, distance: m.distance, rotated: m.rotated, face: m.face }));
+							const idx = detectedCards.indexOf(c) + 1;
+							if (c.artMatches && c.artMatches.length > 0) {
+								log(`Card ${idx}: art matches ${c.artMatches.slice(0, 3).map((m) => `"${m.row.name}" ${m.row.set_code}#${m.row.collector_number} ${m.distance} bits${m.rotated ? ' (rotated)' : ''}`).join(', ')}`);
+							} else {
+								log(`Card ${idx}: no art match within ${ART_LIKELY} bits`);
+							}
+						});
+					}
+					// The fusion needs every printing of an art-matched name (the hits are only the
+					// printings within the search radius), so fetch the ones no name pass asked for.
+					const artNames = [...new Set(cards.flatMap((c) => (c.artMatches ?? []).map((m) => String(m.row.name))))].filter((n) => !printingsCache.has(n));
+					for (let start = 0; start < artNames.length; start += 50) {
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printings: artNames.slice(start, start + 50) }) });
+						const data = await res.json();
+						for (const entry of Array.isArray(data?.batch) ? data.batch : []) printingsCache.set(entry.name, entry.results ?? []);
+					}
 					for (let start = 0; start < near.length; start += 100) {
 						const chunk = near.slice(start, start + 100);
 						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ near: chunk }) });
 						const data = await res.json();
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) nearCache.set(nearKey(entry.setCode, entry.collectorNumber, entry.rarity ?? ''), entry.results ?? []);
 					}
-					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s)`);
+					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s), ${artCards.length} art hash(es)`);
 				} catch (err) {
 					log(`Phase 3 prefetch error: ${err}`);
 				}
@@ -1543,6 +1604,9 @@
 					footer: card.readings,
 					majoritySet,
 					printingsByName: (n) => printingsCache.get(n) ?? [],
+					artMatches: card.artMatches ?? [],
+					artHash: card.artHash,
+					artHashAlt: card.artHashAlt,
 					lookup: (setCode, n) => lookupCache.get(lookupKey(setCode, n)) ?? [],
 					nearLookup: (setCode, n, rarity) => nearCache.get(nearKey(setCode, n, rarity)) ?? [],
 					isKnownSet: (setCode) => (majoritySet !== null && setCode.toLowerCase() === majoritySet) || (knownSets.get(setCode.toLowerCase()) ?? false)

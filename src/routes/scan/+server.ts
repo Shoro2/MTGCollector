@@ -1,5 +1,8 @@
 import { json } from '@sveltejs/kit';
-import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySetNumber } from '$lib/server/card-search';
+import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySetNumber, cardsById } from '$lib/server/card-search';
+import { searchArt, type ArtSearchHit } from '$lib/server/art-index';
+import type { CardRow } from '$lib/server/card-search';
+import { ART_LIKELY } from '$lib/scanner/resolve';
 
 type Lookup = { setCode: string; collectorNumber: string };
 
@@ -54,6 +57,28 @@ export async function POST({ request }) {
 			rarity: typeof l.rarity === 'string' ? l.rarity : '',
 			results: nearBySetNumber(l.setCode, l.collectorNumber, typeof l.rarity === 'string' ? l.rarity : '')
 		}));
+		return json({ batch });
+	}
+
+	// Batch art form: { artHashes: [{ hash, alt? }, ...] } -> the printings whose
+	// reference art hash lies within ART_LIKELY bits of the scanned card's art
+	// (Phase 3; `alt` is the hash of the 180°-rotated warp), nearest first, with
+	// the distance. The Hamming scan runs here over the in-memory index; the
+	// phone never downloads the table.
+	if (Array.isArray(body.artHashes)) {
+		const items = (body.artHashes as unknown[])
+			.filter((x): x is { hash: string; alt?: unknown } => !!x && typeof (x as { hash?: unknown }).hash === 'string')
+			.slice(0, 50);
+		const batch = items.map((it) => {
+			const hits = searchArt(it.hash, typeof it.alt === 'string' ? it.alt : undefined, ART_LIKELY, 12);
+			const rows = cardsById(hits.map((h) => h.id));
+			const matches: Array<ArtSearchHit & { row: CardRow }> = [];
+			for (const h of hits) {
+				const row = rows.get(h.id);
+				if (row) matches.push({ ...h, row });
+			}
+			return { hash: it.hash, matches };
+		});
 		return json({ batch });
 	}
 

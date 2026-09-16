@@ -3,6 +3,7 @@
  *   npm run hash-art                       # hash every pending printing and back face (resumable)
  *   npm run hash-art -- --limit 500        # a slice
  *   npm run hash-art -- --retry-failed     # include rows whose image failed before
+ *   npm run hash-art -- --sets mid,vow     # only these sets (a new set on release, or what a measurement needs first)
  *   npm run hash-art -- --status           # counts only
  *   npm run hash-art -- --export hashes.json / --import hashes.json   # move hashes between databases
  * MTG_DB_PATH selects the database like everywhere else.
@@ -35,6 +36,7 @@ async function main() {
 			delayMs: Number(value('--delay') ?? DEFAULT_DELAY_MS) || DEFAULT_DELAY_MS,
 			retryFailed: flag('--retry-failed'),
 			skipFaces: flag('--skip-faces'),
+			sets: (value('--sets') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
 			log
 		});
 		log(`run finished: ${result.hashed} hashed, ${result.failed} failed of ${result.total}`);

@@ -15,7 +15,7 @@
 import sharp from 'sharp';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { sqlite } from './db.js';
-import { ART_BOX, HASH_SIZE, dctHash } from '../scanner/phash.js';
+import { ART_BOX, hashArtPixels } from '../scanner/phash.js';
 
 /** Stored instead of a hash when the image could not be fetched or decoded. */
 export const ART_HASH_FAILED = '-';
@@ -40,13 +40,11 @@ export async function hashImageBytes(bytes: Buffer): Promise<string> {
 		width: Math.max(1, Math.round(w * ART_BOX.w)),
 		height: Math.max(1, Math.round(h * ART_BOX.h))
 	};
-	const { data } = await sharp(bytes)
-		.extract(box)
-		.resize(HASH_SIZE, HASH_SIZE, { fit: 'fill' })
-		.grayscale()
-		.raw()
-		.toBuffer({ resolveWithObject: true });
-	return dctHash(data);
+	// Decode the box at its native size and hand the pixels to the shared
+	// pipeline (luminance, box-filter resize, DCT) — the scanner does the same
+	// with its warped card, so no resampler difference creeps into the bits.
+	const { data, info } = await sharp(bytes).extract(box).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+	return hashArtPixels(data, info.width, info.height, info.channels);
 }
 
 /** Fetch an image; null for a 404 (a card without that size), an error for anything else. */
@@ -74,6 +72,8 @@ export type ArtHashJobOptions = {
 	retryFailed?: boolean;
 	/** Skip the back faces of double-faced cards. */
 	skipFaces?: boolean;
+	/** Only these set codes (a new set on release, or the sets a measurement needs first). */
+	sets?: string[];
 	log?: (line: string) => void;
 };
 
@@ -81,17 +81,19 @@ type Target = { kind: 'card' | 'face'; id: string; faceIndex: number; imageUri: 
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function pendingTargets(retryFailed: boolean, skipFaces: boolean): Target[] {
+function pendingTargets(retryFailed: boolean, skipFaces: boolean, sets: string[] = []): Target[] {
 	const cond = retryFailed ? `(art_hash IS NULL OR art_hash = '${ART_HASH_FAILED}')` : 'art_hash IS NULL';
+	const setFilter = sets.length > 0 ? ` AND set_code IN (${sets.map(() => '?').join(',')})` : '';
+	const setArgs = sets.map((s) => s.toLowerCase());
 	const cards = sqlite
-		.prepare(`SELECT id, image_uri FROM cards WHERE image_uri IS NOT NULL AND image_uri <> '' AND layout <> 'art_series' AND ${cond} ORDER BY released_at DESC, id`)
-		.all() as Array<{ id: string; image_uri: string }>;
+		.prepare(`SELECT id, image_uri FROM cards WHERE image_uri IS NOT NULL AND image_uri <> '' AND layout <> 'art_series' AND ${cond}${setFilter} ORDER BY released_at DESC, id`)
+		.all(...setArgs) as Array<{ id: string; image_uri: string }>;
 	const targets: Target[] = cards.map((c) => ({ kind: 'card', id: c.id, faceIndex: 0, imageUri: c.image_uri }));
 	if (!skipFaces) {
 		// Face 0 shares the card's own image; the back faces have their own.
 		const faces = sqlite
-			.prepare(`SELECT f.card_id, f.face_index, f.image_uri FROM card_faces f JOIN cards c ON c.id = f.card_id WHERE f.face_index > 0 AND f.image_uri IS NOT NULL AND f.image_uri <> '' AND c.layout <> 'art_series' AND ${cond.replace(/art_hash/g, 'f.art_hash')} ORDER BY c.released_at DESC, f.card_id, f.face_index`)
-			.all() as Array<{ card_id: string; face_index: number; image_uri: string }>;
+			.prepare(`SELECT f.card_id, f.face_index, f.image_uri FROM card_faces f JOIN cards c ON c.id = f.card_id WHERE f.face_index > 0 AND f.image_uri IS NOT NULL AND f.image_uri <> '' AND c.layout <> 'art_series' AND ${cond.replace(/art_hash/g, 'f.art_hash')}${setFilter.replace('set_code', 'c.set_code')} ORDER BY c.released_at DESC, f.card_id, f.face_index`)
+			.all(...setArgs) as Array<{ card_id: string; face_index: number; image_uri: string }>;
 		for (const f of faces) targets.push({ kind: 'face', id: f.card_id, faceIndex: f.face_index, imageUri: f.image_uri });
 	}
 	return targets;
@@ -101,7 +103,7 @@ function pendingTargets(retryFailed: boolean, skipFaces: boolean): Target[] {
 export async function runArtHashJob(opts: ArtHashJobOptions = {}): Promise<{ hashed: number; failed: number; total: number }> {
 	const log = opts.log ?? (() => {});
 	const delayMs = opts.delayMs ?? DEFAULT_DELAY_MS;
-	const targets = pendingTargets(!!opts.retryFailed, !!opts.skipFaces);
+	const targets = pendingTargets(!!opts.retryFailed, !!opts.skipFaces, opts.sets ?? []);
 	const total = opts.limit && opts.limit > 0 ? Math.min(opts.limit, targets.length) : targets.length;
 	log(`${targets.length} image(s) pending (${targets.filter((t) => t.kind === 'face').length} back faces), processing ${total} with ${delayMs} ms between requests`);
 	const setCard = sqlite.prepare('UPDATE cards SET art_hash = ? WHERE id = ?');

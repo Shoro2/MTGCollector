@@ -1,5 +1,5 @@
 {
- "written": "2026-09-16T17:42:29.176Z",
+ "written": "2026-09-16T21:17:53.205Z",
  "photos": {
   "20260403_114602(1).jpg": {
    "detected": 4,
@@ -12,20 +12,20 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 4.9
+   "wallSeconds": 5.2
   },
   "20260403_120150(1).jpg": {
    "detected": 15,
-   "identity": 14,
-   "printing": 11,
-   "unresolvedPrinting": 3,
+   "identity": 15,
+   "printing": 13,
+   "unresolvedPrinting": 2,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
-   "missing": 1,
+   "missing": 0,
    "extra": 0,
-   "likely": 1,
+   "likely": 0,
    "conflict": 0,
-   "wallSeconds": 22.2
+   "wallSeconds": 23.3
   },
   "20260403_121351(1).jpg": {
    "detected": 10,
@@ -38,7 +38,7 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 15.4
+   "wallSeconds": 15.5
   },
   "20260405_154748.jpg": {
    "detected": 15,
@@ -51,59 +51,59 @@
    "extra": 0,
    "likely": 1,
    "conflict": 0,
-   "wallSeconds": 17.1
+   "wallSeconds": 17.4
   },
   "DSC00847.JPG": {
    "detected": 15,
    "identity": 15,
-   "printing": 12,
-   "unresolvedPrinting": 3,
+   "printing": 15,
+   "unresolvedPrinting": 0,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
    "missing": 0,
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 7.1
+   "wallSeconds": 7.4
   },
   "DSC00853.JPG": {
    "detected": 15,
-   "identity": 13,
-   "printing": 8,
-   "unresolvedPrinting": 5,
+   "identity": 15,
+   "printing": 11,
+   "unresolvedPrinting": 4,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
-   "missing": 2,
+   "missing": 0,
    "extra": 0,
-   "likely": 2,
+   "likely": 0,
    "conflict": 0,
-   "wallSeconds": 8.2
+   "wallSeconds": 7
   },
   "DSC00854.JPG": {
    "detected": 15,
-   "identity": 13,
-   "printing": 7,
-   "unresolvedPrinting": 6,
+   "identity": 15,
+   "printing": 8,
+   "unresolvedPrinting": 7,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
-   "missing": 2,
+   "missing": 0,
    "extra": 0,
-   "likely": 2,
+   "likely": 0,
    "conflict": 0,
-   "wallSeconds": 8.3
+   "wallSeconds": 8.4
   },
   "DSC00855(1).JPG": {
    "detected": 15,
-   "identity": 12,
+   "identity": 15,
    "printing": 6,
-   "unresolvedPrinting": 6,
+   "unresolvedPrinting": 9,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
-   "missing": 3,
+   "missing": 0,
    "extra": 0,
-   "likely": 3,
+   "likely": 0,
    "conflict": 0,
-   "wallSeconds": 5.5
+   "wallSeconds": 5.7
   }
  }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ART_BOX, HASH_SIZE, dctHash, grayFromRgba, hammingDistance, resizeGray } from './phash';
+import { ART_BOX, HASH_SIZE, WARP_ART_MARGIN, artBoxOnWarp, dctHash, grayFromRgba, hammingDistance, resizeGray } from './phash';
 
 /** A 32x32 gray image from a function of (x, y) in [0, 1). */
 const image = (f: (x: number, y: number) => number): Float32Array => {
@@ -61,8 +61,35 @@ describe('grayFromRgba / resizeGray', () => {
 		expect(Math.round(small[0])).toBe(Math.round((gray[0] + gray[1] + gray[2] + gray[3]) / 4));
 	});
 
+	it('averages colour channels the same way for 3- and 4-channel buffers', () => {
+		const rgb = new Uint8ClampedArray([255, 255, 255, 0, 0, 0]);
+		const rgba = new Uint8ClampedArray([255, 255, 255, 255, 0, 0, 0, 255]);
+		expect(Array.from(grayFromRgba(rgb, 2, 1, 3))).toEqual(Array.from(grayFromRgba(rgba, 2, 1)));
+	});
+
 	it('defines the art box inside the card', () => {
 		expect(ART_BOX.x + ART_BOX.w).toBeLessThanOrEqual(1);
 		expect(ART_BOX.y + ART_BOX.h).toBeLessThan(0.6);
+	});
+});
+
+describe('artBoxOnWarp', () => {
+	it('shrinks the reference box towards the centre by the margin on every side', () => {
+		const b = artBoxOnWarp(0.02);
+		const k = 1 - 0.04;
+		expect(b.x).toBeCloseTo(0.02 + ART_BOX.x * k, 6);
+		expect(b.y).toBeCloseTo(0.02 + ART_BOX.y * k, 6);
+		expect(b.w).toBeCloseTo(ART_BOX.w * k, 6);
+		expect(b.h).toBeCloseTo(ART_BOX.h * k, 6);
+		// the right and bottom edges move inwards by the same amount as the left and top
+		expect(1 - (b.x + b.w)).toBeCloseTo(0.02 + (1 - ART_BOX.x - ART_BOX.w) * k, 6);
+		expect(1 - (b.y + b.h)).toBeCloseTo(0.02 + (1 - ART_BOX.y - ART_BOX.h) * k, 6);
+	});
+
+	it('is the reference box at margin 0 and uses the measured margin by default', () => {
+		expect(artBoxOnWarp(0)).toEqual({ x: ART_BOX.x, y: ART_BOX.y, w: ART_BOX.w, h: ART_BOX.h });
+		expect(artBoxOnWarp()).toEqual(artBoxOnWarp(WARP_ART_MARGIN));
+		expect(WARP_ART_MARGIN).toBeGreaterThan(0);
+		expect(WARP_ART_MARGIN).toBeLessThan(0.05);
 	});
 });

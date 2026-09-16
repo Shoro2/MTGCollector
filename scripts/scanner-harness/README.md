@@ -138,7 +138,10 @@ on them; the printing metric does.
 column above):** identity **16 / 26**, printing **5 / 26**, 11 printings
 open, 4 `likely`, **0 wrong**, 10 missing; the negative photo (sleeved backs,
 a deck box) yields two unidentified rectangles and no identification, as it
-should. Failure classes the development set did not contain — none of them
+should. **With Phase 3 (art hashes of 20 sets):** identity **18 / 26**,
+printing 5 / 26, 13 open, 3 `likely`, **0 wrong** — the two flavor-name cards
+(Koma, Counterspell) are recognised by their artwork; their printings stay
+open until the remaining printings of those names are hashed. Failure classes the development set did not contain — none of them
 tuned away, all logged for the roadmap:
 
 - **Flavor names** (Universes Beyond): the card prints "The Monstrous
@@ -172,17 +175,17 @@ distractors) — and finally **Round 10, the same photos against the full
 Scryfall catalogue** (115,459 printings, 38k distinct names, tokens and
 The List / Double Feature reprints included), which is what production sees.
 
-| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis | Round 10, seeded DB | **Round 10, full DB** (identity / printing) |
-|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|-------------------------|---------------------|---------------------------------------------|
-| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 |
-| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 | 15 / 15 | 15 / 15 | 14 / 11, 3 printings open, 1 likely |
-| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 | 10 / 10 | 10 / 10 | 10 / 10 |
-| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 | 15 / 15 | 14 / 12, 2 open, 1 likely |
-| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 15 / 12, 3 open |
-| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 | 15 / 15 | 13 / 8, 5 open, 2 likely |
-| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 13 / 7, 6 open, 2 likely |
-| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 12 / 6, 6 open, 3 likely |
-| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s | **103 / 103 of 104, 1 likely, none wrong**, 33 s | **95 / 70 of 104, 25 printings open, 9 likely, none wrong**, 89 s |
+| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis | Round 10, seeded DB | **Round 10, full DB** (identity / printing) | **Phase 3, full DB + art hashes of 20 sets** (identity / printing) |
+|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|-------------------------|---------------------|---------------------------------------------|---|
+| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 |
+| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 | 15 / 15 | 15 / 15 | 14 / 11, 3 printings open, 1 likely | 15 / 13, 2 open |
+| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 | 10 / 10 | 10 / 10 | 10 / 10 | 10 / 10 |
+| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 | 15 / 15 | 14 / 12, 2 open, 1 likely | 14 / 12, 2 open, 1 likely |
+| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 15 / 12, 3 open | 15 / 15 |
+| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 | 15 / 15 | 13 / 8, 5 open, 2 likely | 15 / 11, 4 open |
+| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 13 / 7, 6 open, 2 likely | 15 / 8, 7 open |
+| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 12 / 6, 6 open, 3 likely | 15 / 6, 9 open |
+| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s | **103 / 103 of 104, 1 likely, none wrong**, 33 s | **95 / 70 of 104, 25 printings open, 9 likely, none wrong**, 89 s | **103 / 79 of 104, 24 printings open, 1 likely, none wrong**, 90 s |
 
 The fusion columns are measured with the canonical seed (double-faced names)
 and the printing-level metric; the earlier columns counted names only. The
@@ -224,6 +227,30 @@ Innistrad: Double Feature reprints with the *same* collector numbers as MID /
 VOW, The List, promos, and Forest with 200 printings; the seeded DB had made
 them unique by construction. Two intermittent 15-minute hangs traced to a
 stalled CDN download got the PaddleOCR and Tesseract loads a 90 s deadline.
+
+**Phase 3 — the artwork as evidence (2026-09-16).** Every warped card is
+hashed like the reference images (`src/lib/scanner/phash.ts`) and the server
+returns the printings within 12 bits from its in-memory index (WP3.1 job,
+`npm run hash-art`; measured here with the hashes of 20 sets, 8.5k printings,
+while the full run continued). Two things had to be measured first, with
+`art-box-experiment.mjs` on the 102 warps of the eight photos: the warp keeps
+~3.5 % of background around the detected quad, so the reference box as-is
+hashed the same artwork 12.3 bits away on average (51 cards within 10 bits);
+moved 2 % inwards it is 9.2 bits (78 within 10). And against the reference
+hashes of *every* printing of a name (`--printings`), same-artwork reprints
+and variants (MID vs Double Feature, regular vs extended frame) sit 0–8 bits
+behind the nearest printing while different artwork sits 20–36 behind — so the
+artwork narrows a printing list only with a 16-bit gap and never settles a
+printing on its own (a first version that confirmed the single printing inside
+the search radius turned Lantern Flare VOW #23 into the extended-art #351).
+The nearest artwork at 12–14 bits was a different card in 7 of 15 cases, so
+the artwork alone (without an agreeing name) never produces a one-tap offer
+and the radius is 12. Result on the eight photos: identity 95 → **103**,
+printing 70 → **79** of 104, 1 `likely`, **0 wrong**; the seeded DB with the
+same hashes imported (`npm run hash-art -- --export/--import`) 104 / 104.
+The one miss is a small, sideways Dawnhart Rejuvenator whose hash lands more
+than 12 bits from every reference (it stays a `likely` of Dawnhart Geist from
+the name channel).
 
 \* measured against the distractor database (see below); without it those two
 digit misreads were "not found" because the test DB had no card at the misread

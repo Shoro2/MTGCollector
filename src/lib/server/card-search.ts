@@ -3,7 +3,7 @@ import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
 import { nameAliases, normalizeName, rankNameMatches, similarity } from '../scanner/similarity.js';
 
-const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity`;
+const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity, art_hash`;
 // Art-series records are not playable cards: Scryfall lists them as
 // "Name // Name" with the artwork of a real card, so a scanned name matched
 // them as often as the card itself (11 of 23 wrong identities on the eight
@@ -191,6 +191,15 @@ export function fuzzyNames(query: string, limit = 5): Array<{ name: string; scor
 		if (score >= 0.5 && score > (best.get(e.name) ?? 0)) best.set(e.name, score);
 	}
 	return [...best.entries()].map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+/** Rows for a list of Scryfall ids (art-hash hits), keyed by id. */
+export function cardsById(ids: string[]): Map<string, CardRow> {
+	const out = new Map<string, CardRow>();
+	if (ids.length === 0) return out;
+	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) as CardRow[];
+	for (const r of rows) out.set(String(r.id), r);
+	return out;
 }
 
 /** Every printing of a canonical card name, newest first (no date cut-off). */
