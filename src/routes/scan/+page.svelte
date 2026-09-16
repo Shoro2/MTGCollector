@@ -11,6 +11,7 @@
 	import { disambiguateReprints } from '$lib/scanner/pipeline';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
+	import type { QuickRect } from '$lib/scanner/detect';
 
 	let { data }: { data: PageData } = $props();
 	let loggedIn = $derived(!!data.user);
@@ -92,6 +93,15 @@
 		} catch { /* localStorage unavailable */ }
 	});
 
+	// Live mode: spin up the Tesseract worker pool while the camera is still
+	// being set up, so the first capture doesn't pay the worker spawn +
+	// traineddata download (several seconds on a phone) on top of the OCR
+	// itself. The pool is torn down in onDestroy as before.
+	$effect(() => {
+		if (scanMode !== 'live') return;
+		getTesseractPool().catch((err) => log(`[live] Tesseract pre-warm failed: ${err}`));
+	});
+
 	// Terminate Tesseract workers when leaving the page. Each worker holds
 	// ~50 MB of runtime + language data; without this the pool persists until
 	// the tab closes even after a single scan.
@@ -132,17 +142,23 @@
 		}
 	}
 
-	async function handleLiveCapture(canvas: HTMLCanvasElement) {
+	async function handleLiveCapture(canvas: HTMLCanvasElement, rects: QuickRect[] = []) {
 		// Don't reset detectedCards — captures accumulate. Skip if a previous
 		// capture is still being identified (the LiveScanner's busy prop also
 		// gates the auto-capture loop, but a manual click can race past it).
 		if (scanning) return;
 		manualResults = [];
 		manualCardIndex = null;
-		await processImage(canvas);
+		await processImage(canvas, rects);
 	}
 
-	async function processImage(source: File | HTMLCanvasElement) {
+	/**
+	 * Detect, warp, OCR and identify every card in `source`.
+	 * `presetRects` (live mode) are rectangles the preview loop already tracked
+	 * as steady on this very frame; when given, the six-strategy detection is
+	 * skipped and the cards are warped straight from them.
+	 */
+	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = []) {
 		const myToken = ++scanToken;
 		const superseded = () => myToken !== scanToken;
 		scanning = true;
@@ -192,247 +208,120 @@
 			let allCandidates: CardCandidate[] = [];
 			const imgArea = img.width * img.height;
 
-			function computeIoU(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }): number {
-				const x1 = Math.max(a.x, b.x);
-				const y1 = Math.max(a.y, b.y);
-				const x2 = Math.min(a.x + a.width, b.x + b.width);
-				const y2 = Math.min(a.y + a.height, b.y + b.height);
-				if (x2 <= x1 || y2 <= y1) return 0;
-				const inter = (x2 - x1) * (y2 - y1);
-				const union = a.width * a.height + b.width * b.height - inter;
-				return inter / union;
-			}
-
-			function addCandidate(approx: any, minAspect = 0.5, maxAspect = 0.9) {
-				const rect = cv.boundingRect(approx);
-				const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-				if (aspect > minAspect && aspect < maxAspect) {
-					const dominated = allCandidates.some(c => computeIoU(rect, c.rect) > 0.5);
-					if (!dominated) {
-						allCandidates.push({ corners: approx.clone(), area: cv.contourArea(approx), rect });
-					}
-				}
-			}
-
-			// Build a 4-corner Mat from minAreaRect points for the addCandidate function
-			function makeCornerMat(rotRect: any): any {
-				const vertices = cv.RotatedRect.points(rotRect);
-				const pts = new cv.Mat(4, 1, cv.CV_32SC2);
-				for (let k = 0; k < 4; k++) {
-					pts.data32S[k * 2] = Math.round(vertices[k].x);
-					pts.data32S[k * 2 + 1] = Math.round(vertices[k].y);
-				}
-				return pts;
-			}
-
-			// Extract contours from a binary/edge image and add card candidates
-			function findCardContours(edgeImg: any, minArea: number, maxArea: number, minAspect = 0.5, maxAspect = 0.9) {
-				const conts = new cv.MatVector();
-				const hier = new cv.Mat();
-				cv.findContours(edgeImg, conts, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-				for (let i = 0; i < conts.size(); i++) {
-					const contour = conts.get(i);
-					const area = cv.contourArea(contour);
-					if (area < minArea || area > maxArea) continue;
-
-					const perimeter = cv.arcLength(contour, true);
-
-					// Try multiple epsilon values to find a 4-sided polygon
-					let found = false;
-					for (const eps of [0.015, 0.02, 0.03, 0.04]) {
-						const approx = new cv.Mat();
-						cv.approxPolyDP(contour, approx, eps * perimeter, true);
-						if (approx.rows === 4) {
-							addCandidate(approx, minAspect, maxAspect);
-							found = true;
-							approx.delete();
-							break;
-						}
-						approx.delete();
-					}
-
-					// Fallback: if polygon has 5-8 sides, use minAreaRect for 4 corners
-					if (!found) {
-						const approx = new cv.Mat();
-						cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
-						if (approx.rows >= 5 && approx.rows <= 8) {
-							const rotRect = cv.minAreaRect(contour);
-							const cornerMat = makeCornerMat(rotRect);
-							addCandidate(cornerMat, minAspect, maxAspect);
-							cornerMat.delete();
-						}
-						approx.delete();
-					}
-				}
-
-				conts.delete(); hier.delete();
-			}
-
-			// === Strategy 1: Canny edge detection with multiple thresholds ===
-			const cannyParams = [
-				{ blur: 5, low: 30, high: 100 },
-				{ blur: 5, low: 50, high: 150 },
-				{ blur: 3, low: 75, high: 200 },
-			];
-
-			const minArea = imgArea * 0.008;
-			const maxArea = imgArea * 0.5;
-			log(`Area thresholds: min=${minArea.toFixed(0)} (0.8%), max=${maxArea.toFixed(0)} (50%)`);
-
-			// Pre-compute blur(gray, 5x5) once and share across strategies 1/2/4/6
-			// (all of them used identical parameters). Also cache the two structuring
-			// elements reused throughout. cv.threshold / adaptiveThreshold / Canny
-			// read their source without modifying it, so one blur5 is safe to share.
-			const blur5 = new cv.Mat();
-			cv.GaussianBlur(gray, blur5, new cv.Size(5, 5), 0);
-			const sepKernel5 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			const dilateKernel3 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-
-			for (const params of cannyParams) {
-				const edgeMat = new cv.Mat();
-				try {
-					if (params.blur === 5) {
-						cv.Canny(blur5, edgeMat, params.low, params.high);
-					} else {
-						const localBlur = new cv.Mat();
-						try {
-							cv.GaussianBlur(gray, localBlur, new cv.Size(params.blur, params.blur), 0);
-							cv.Canny(localBlur, edgeMat, params.low, params.high);
-						} finally {
-							localBlur.delete();
-						}
-					}
-					cv.dilate(edgeMat, edgeMat, dilateKernel3);
-					findCardContours(edgeMat, minArea, maxArea);
-					log(`Strategy 1 Canny(blur=${params.blur}, ${params.low}-${params.high}): ${allCandidates.length} total candidates`);
-				} finally {
-					edgeMat.delete();
-				}
-			}
-
-			// === Strategy 2: Threshold segmentation for tightly packed cards ===
-			const threshMat = new cv.Mat();
-			try {
-				cv.adaptiveThreshold(blur5, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, -5);
-				cv.erode(threshMat, threshMat, sepKernel5);
-				cv.dilate(threshMat, threshMat, sepKernel5);
-				findCardContours(threshMat, minArea, maxArea);
-				log(`Strategy 2 AdaptiveThreshold(blockSize=51, delta=-5): ${allCandidates.length} total candidates`);
-			} finally {
-				threshMat.delete();
-			}
-
-			// === Strategy 3: Histogram equalization + Canny for low-contrast cards ===
-			const eqHist = new cv.Mat();
-			const eqBlur = new cv.Mat();
-			const eqEdge = new cv.Mat();
-			try {
-				cv.equalizeHist(gray, eqHist);
-				cv.GaussianBlur(eqHist, eqBlur, new cv.Size(5, 5), 0);
-				cv.Canny(eqBlur, eqEdge, 40, 120);
-				cv.dilate(eqEdge, eqEdge, dilateKernel3);
-				findCardContours(eqEdge, minArea, maxArea);
-				log(`Strategy 3 HistEq+Canny(40-120): ${allCandidates.length} total candidates`);
-			} finally {
-				eqHist.delete(); eqBlur.delete(); eqEdge.delete();
-			}
-
-			// === Strategy 4: Otsu global threshold ===
-			const otsuMat = new cv.Mat();
-			try {
-				cv.threshold(blur5, otsuMat, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-				cv.erode(otsuMat, otsuMat, sepKernel5);
-				cv.dilate(otsuMat, otsuMat, sepKernel5);
-				findCardContours(otsuMat, minArea, maxArea);
-				log(`Strategy 4 Otsu: ${allCandidates.length} total candidates`);
-			} finally {
-				otsuMat.delete();
-			}
-
-			// === Strategy 5: Color saturation mask ===
-			// Cards have colored frames/art that are more saturated than a plain background.
-			// This helps detect light-bordered cards that blend with the background in grayscale.
-			// try/finally so a throw mid-pipeline doesn't leak Mats into the WASM heap.
-			const rgb = new cv.Mat();
-			const hsvMat = new cv.Mat();
-			const channels = new cv.MatVector();
-			const satThresh = new cv.Mat();
-			const satCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
-			const satSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-			try {
-				cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
-				cv.cvtColor(rgb, hsvMat, cv.COLOR_RGB2HSV);
-				cv.split(hsvMat, channels);
-				const saturation = channels.get(1);
-				cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
-				cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
-				cv.erode(satThresh, satThresh, satSepKernel);
-				cv.dilate(satThresh, satThresh, satSepKernel);
-				findCardContours(satThresh, minArea, maxArea);
-				log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
-				saturation.delete();
-			} finally {
-				satThresh.delete();
-				satCloseKernel.delete();
-				satSepKernel.delete();
-				channels.delete();
-				hsvMat.delete();
-				rgb.delete();
-			}
-
-			// === Strategy 6: Inverted Otsu for light cards on light backgrounds ===
-			// Some cards (lands with light borders) blend with white backgrounds.
-			// Inverted threshold can catch them. Reuses the shared blur5 + sepKernel5.
-			const invOtsuMat = new cv.Mat();
-			try {
-				cv.threshold(blur5, invOtsuMat, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-				cv.erode(invOtsuMat, invOtsuMat, sepKernel5);
-				cv.dilate(invOtsuMat, invOtsuMat, sepKernel5);
-				findCardContours(invOtsuMat, minArea, maxArea);
-				log(`Strategy 6 InvertedOtsu: ${allCandidates.length} total candidates`);
-			} finally {
-				invOtsuMat.delete();
-			}
-
-			// Filter out contours contained within larger ones
-			allCandidates.sort((a, b) => b.area - a.area);
 			let cardContours: CardCandidate[] = [];
-			for (const candidate of allCandidates) {
-				const r = candidate.rect;
-				const isInside = cardContours.some(card => {
-					const c = card.rect;
-					const cx = r.x + r.width / 2;
-					const cy = r.y + r.height / 2;
-					return cx > c.x && cx < c.x + c.width && cy > c.y && cy < c.y + c.height;
-				});
-				if (!isInside) {
-					cardContours.push(candidate);
+			if (presetRects.length > 0) {
+				// Live mode: the preview loop already found and tracked these
+				// rectangles on this very frame, so re-running the six full-
+				// resolution strategies (1-3 s on a phone) would only rediscover
+				// them. Build the candidates directly and go straight to the warp.
+				log(`Using ${presetRects.length} rectangle(s) tracked by the live preview, skipping full detection`);
+				for (const r of presetRects) {
+					const pts = new cv.Mat(4, 1, cv.CV_32SC2);
+					for (let k = 0; k < 4; k++) {
+						pts.data32S[k * 2] = Math.round(r.corners[k][0]);
+						pts.data32S[k * 2 + 1] = Math.round(r.corners[k][1]);
+					}
+					cardContours.push({ corners: pts, area: r.area, rect: { ...r.rect } });
 				}
-			}
-			log(`Containment filter: ${allCandidates.length} -> ${cardContours.length} candidates`);
+			} else {
+				function computeIoU(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }): number {
+					const x1 = Math.max(a.x, b.x);
+					const y1 = Math.max(a.y, b.y);
+					const x2 = Math.min(a.x + a.width, b.x + b.width);
+					const y2 = Math.min(a.y + a.height, b.y + b.height);
+					if (x2 <= x1 || y2 <= y1) return 0;
+					const inter = (x2 - x1) * (y2 - y1);
+					const union = a.width * a.height + b.width * b.height - inter;
+					return inter / union;
+				}
 
-			// === Size consistency filter: remove detections much smaller than median ===
-			// This catches text-block false positives (e.g. only the text area of a card detected)
-			if (cardContours.length >= 3) {
-				const areas = cardContours.map(c => c.area).sort((a, b) => a - b);
-				const medianArea = areas[Math.floor(areas.length / 2)];
-				const beforeSize = cardContours.length;
-				cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
-				log(`Size filter: median=${medianArea.toFixed(0)}, threshold=${(medianArea * 0.4).toFixed(0)}, ${beforeSize} -> ${cardContours.length}`);
-			}
+				function addCandidate(approx: any, minAspect = 0.5, maxAspect = 0.9) {
+					const rect = cv.boundingRect(approx);
+					const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
+					if (aspect > minAspect && aspect < maxAspect) {
+						const dominated = allCandidates.some(c => computeIoU(rect, c.rect) > 0.5);
+						if (!dominated) {
+							allCandidates.push({ corners: approx.clone(), area: cv.contourArea(approx), rect });
+						}
+					}
+				}
 
-			// === Progressive relaxation if expected card count not met ===
-			if (expectedCardCount && cardContours.length < expectedCardCount) {
-				log(`Progressive relaxation triggered (have ${cardContours.length}, need ${expectedCardCount})`);
-				const relaxedMinArea = imgArea * 0.004;
-				const relaxedMinAspect = 0.4;
-				const relaxedMaxAspect = 0.95;
+				// Build a 4-corner Mat from minAreaRect points for the addCandidate function
+				function makeCornerMat(rotRect: any): any {
+					const vertices = cv.RotatedRect.points(rotRect);
+					const pts = new cv.Mat(4, 1, cv.CV_32SC2);
+					for (let k = 0; k < 4; k++) {
+						pts.data32S[k * 2] = Math.round(vertices[k].x);
+						pts.data32S[k * 2 + 1] = Math.round(vertices[k].y);
+					}
+					return pts;
+				}
 
-				// Re-run Canny with relaxed params, stopping early if we've
-				// already surfaced enough candidates for the expected card count.
-				// Reuses the shared blur5 for params.blur === 5.
-				for (const params of [{ blur: 5, low: 20, high: 80 }, { blur: 7, low: 30, high: 100 }]) {
+				// Extract contours from a binary/edge image and add card candidates
+				function findCardContours(edgeImg: any, minArea: number, maxArea: number, minAspect = 0.5, maxAspect = 0.9) {
+					const conts = new cv.MatVector();
+					const hier = new cv.Mat();
+					cv.findContours(edgeImg, conts, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+					for (let i = 0; i < conts.size(); i++) {
+						const contour = conts.get(i);
+						const area = cv.contourArea(contour);
+						if (area < minArea || area > maxArea) continue;
+
+						const perimeter = cv.arcLength(contour, true);
+
+						// Try multiple epsilon values to find a 4-sided polygon
+						let found = false;
+						for (const eps of [0.015, 0.02, 0.03, 0.04]) {
+							const approx = new cv.Mat();
+							cv.approxPolyDP(contour, approx, eps * perimeter, true);
+							if (approx.rows === 4) {
+								addCandidate(approx, minAspect, maxAspect);
+								found = true;
+								approx.delete();
+								break;
+							}
+							approx.delete();
+						}
+
+						// Fallback: if polygon has 5-8 sides, use minAreaRect for 4 corners
+						if (!found) {
+							const approx = new cv.Mat();
+							cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
+							if (approx.rows >= 5 && approx.rows <= 8) {
+								const rotRect = cv.minAreaRect(contour);
+								const cornerMat = makeCornerMat(rotRect);
+								addCandidate(cornerMat, minAspect, maxAspect);
+								cornerMat.delete();
+							}
+							approx.delete();
+						}
+					}
+
+					conts.delete(); hier.delete();
+				}
+
+				// === Strategy 1: Canny edge detection with multiple thresholds ===
+				const cannyParams = [
+					{ blur: 5, low: 30, high: 100 },
+					{ blur: 5, low: 50, high: 150 },
+					{ blur: 3, low: 75, high: 200 },
+				];
+
+				const minArea = imgArea * 0.008;
+				const maxArea = imgArea * 0.5;
+				log(`Area thresholds: min=${minArea.toFixed(0)} (0.8%), max=${maxArea.toFixed(0)} (50%)`);
+
+				// Pre-compute blur(gray, 5x5) once and share across strategies 1/2/4/6
+				// (all of them used identical parameters). Also cache the two structuring
+				// elements reused throughout. cv.threshold / adaptiveThreshold / Canny
+				// read their source without modifying it, so one blur5 is safe to share.
+				const blur5 = new cv.Mat();
+				cv.GaussianBlur(gray, blur5, new cv.Size(5, 5), 0);
+				const sepKernel5 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+				const dilateKernel3 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+
+				for (const params of cannyParams) {
 					const edgeMat = new cv.Mat();
 					try {
 						if (params.blur === 5) {
@@ -446,29 +335,100 @@
 								localBlur.delete();
 							}
 						}
-						cv.dilate(edgeMat, edgeMat, sepKernel5);
-						findCardContours(edgeMat, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+						cv.dilate(edgeMat, edgeMat, dilateKernel3);
+						findCardContours(edgeMat, minArea, maxArea);
+						log(`Strategy 1 Canny(blur=${params.blur}, ${params.low}-${params.high}): ${allCandidates.length} total candidates`);
 					} finally {
 						edgeMat.delete();
 					}
-
-					if (allCandidates.length >= expectedCardCount * 1.5) break;
 				}
 
-				// Re-run adaptive threshold with different params (reuses shared blur5).
-				const relaxThresh = new cv.Mat();
+				// === Strategy 2: Threshold segmentation for tightly packed cards ===
+				const threshMat = new cv.Mat();
 				try {
-					cv.adaptiveThreshold(blur5, relaxThresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, -3);
-					cv.erode(relaxThresh, relaxThresh, dilateKernel3);
-					cv.dilate(relaxThresh, relaxThresh, dilateKernel3);
-					findCardContours(relaxThresh, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+					cv.adaptiveThreshold(blur5, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 51, -5);
+					cv.erode(threshMat, threshMat, sepKernel5);
+					cv.dilate(threshMat, threshMat, sepKernel5);
+					findCardContours(threshMat, minArea, maxArea);
+					log(`Strategy 2 AdaptiveThreshold(blockSize=51, delta=-5): ${allCandidates.length} total candidates`);
 				} finally {
-					relaxThresh.delete();
+					threshMat.delete();
 				}
 
-				// Re-filter containment with all new candidates
+				// === Strategy 3: Histogram equalization + Canny for low-contrast cards ===
+				const eqHist = new cv.Mat();
+				const eqBlur = new cv.Mat();
+				const eqEdge = new cv.Mat();
+				try {
+					cv.equalizeHist(gray, eqHist);
+					cv.GaussianBlur(eqHist, eqBlur, new cv.Size(5, 5), 0);
+					cv.Canny(eqBlur, eqEdge, 40, 120);
+					cv.dilate(eqEdge, eqEdge, dilateKernel3);
+					findCardContours(eqEdge, minArea, maxArea);
+					log(`Strategy 3 HistEq+Canny(40-120): ${allCandidates.length} total candidates`);
+				} finally {
+					eqHist.delete(); eqBlur.delete(); eqEdge.delete();
+				}
+
+				// === Strategy 4: Otsu global threshold ===
+				const otsuMat = new cv.Mat();
+				try {
+					cv.threshold(blur5, otsuMat, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+					cv.erode(otsuMat, otsuMat, sepKernel5);
+					cv.dilate(otsuMat, otsuMat, sepKernel5);
+					findCardContours(otsuMat, minArea, maxArea);
+					log(`Strategy 4 Otsu: ${allCandidates.length} total candidates`);
+				} finally {
+					otsuMat.delete();
+				}
+
+				// === Strategy 5: Color saturation mask ===
+				// Cards have colored frames/art that are more saturated than a plain background.
+				// This helps detect light-bordered cards that blend with the background in grayscale.
+				// try/finally so a throw mid-pipeline doesn't leak Mats into the WASM heap.
+				const rgb = new cv.Mat();
+				const hsvMat = new cv.Mat();
+				const channels = new cv.MatVector();
+				const satThresh = new cv.Mat();
+				const satCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
+				const satSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+				try {
+					cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+					cv.cvtColor(rgb, hsvMat, cv.COLOR_RGB2HSV);
+					cv.split(hsvMat, channels);
+					const saturation = channels.get(1);
+					cv.threshold(saturation, satThresh, 30, 255, cv.THRESH_BINARY);
+					cv.morphologyEx(satThresh, satThresh, cv.MORPH_CLOSE, satCloseKernel);
+					cv.erode(satThresh, satThresh, satSepKernel);
+					cv.dilate(satThresh, satThresh, satSepKernel);
+					findCardContours(satThresh, minArea, maxArea);
+					log(`Strategy 5 Saturation(thresh=30): ${allCandidates.length} total candidates`);
+					saturation.delete();
+				} finally {
+					satThresh.delete();
+					satCloseKernel.delete();
+					satSepKernel.delete();
+					channels.delete();
+					hsvMat.delete();
+					rgb.delete();
+				}
+
+				// === Strategy 6: Inverted Otsu for light cards on light backgrounds ===
+				// Some cards (lands with light borders) blend with white backgrounds.
+				// Inverted threshold can catch them. Reuses the shared blur5 + sepKernel5.
+				const invOtsuMat = new cv.Mat();
+				try {
+					cv.threshold(blur5, invOtsuMat, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+					cv.erode(invOtsuMat, invOtsuMat, sepKernel5);
+					cv.dilate(invOtsuMat, invOtsuMat, sepKernel5);
+					findCardContours(invOtsuMat, minArea, maxArea);
+					log(`Strategy 6 InvertedOtsu: ${allCandidates.length} total candidates`);
+				} finally {
+					invOtsuMat.delete();
+				}
+
+				// Filter out contours contained within larger ones
 				allCandidates.sort((a, b) => b.area - a.area);
-				cardContours = [];
 				for (const candidate of allCandidates) {
 					const r = candidate.rect;
 					const isInside = cardContours.some(card => {
@@ -481,97 +441,171 @@
 						cardContours.push(candidate);
 					}
 				}
+				log(`Containment filter: ${allCandidates.length} -> ${cardContours.length} candidates`);
 
-				// Apply size filter again after relaxed detection
+				// === Size consistency filter: remove detections much smaller than median ===
+				// This catches text-block false positives (e.g. only the text area of a card detected)
 				if (cardContours.length >= 3) {
 					const areas = cardContours.map(c => c.area).sort((a, b) => a - b);
 					const medianArea = areas[Math.floor(areas.length / 2)];
+					const beforeSize = cardContours.length;
 					cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
-				}
-				log(`After relaxation: ${cardContours.length} candidates`);
-			}
-
-			// === Grid inference: fill missing positions if cards form a grid ===
-			if (expectedCardCount && cardContours.length < expectedCardCount && cardContours.length >= 3) {
-				// Use bounding rect centers for grid layout (stable for upright cards)
-				const gridRects = cardContours.map(c => c.rect);
-				const gridCenters = gridRects.map(r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
-
-				// Median card dimensions from bounding rects
-				const bws = gridRects.map(r => r.width).sort((a, b) => a - b);
-				const bhs = gridRects.map(r => r.height).sort((a, b) => a - b);
-				const medW = bws[Math.floor(bws.length / 2)];
-				const medH = bhs[Math.floor(bhs.length / 2)];
-
-				// Cluster into rows (by Y center) and columns (by X center)
-				function cluster1D(values: number[], threshold: number): number[][] {
-					const sorted = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
-					const groups: number[][] = [[]];
-					groups[0].push(sorted[0].i);
-					for (let i = 1; i < sorted.length; i++) {
-						if (sorted[i].v - sorted[i - 1].v > threshold) {
-							groups.push([]);
-						}
-						groups[groups.length - 1].push(sorted[i].i);
-					}
-					return groups;
+					log(`Size filter: median=${medianArea.toFixed(0)}, threshold=${(medianArea * 0.4).toFixed(0)}, ${beforeSize} -> ${cardContours.length}`);
 				}
 
-				const rows = cluster1D(gridCenters.map(c => c.y), medH * 0.4);
-				const cols = cluster1D(gridCenters.map(c => c.x), medW * 0.4);
+				// === Progressive relaxation if expected card count not met ===
+				if (expectedCardCount && cardContours.length < expectedCardCount) {
+					log(`Progressive relaxation triggered (have ${cardContours.length}, need ${expectedCardCount})`);
+					const relaxedMinArea = imgArea * 0.004;
+					const relaxedMinAspect = 0.4;
+					const relaxedMaxAspect = 0.95;
 
-				log(`Grid analysis: ${rows.length} rows x ${cols.length} cols detected`);
-				if (rows.length >= 2 && cols.length >= 2 && rows.length * cols.length >= expectedCardCount * 0.8) {
-					// Assign each card to a (row, col) index
-					const cardGrid: { [key: string]: number } = {}; // "row,col" -> card index
-					for (let ci = 0; ci < cardContours.length; ci++) {
-						const rowIdx = rows.findIndex(r => r.includes(ci));
-						const colIdx = cols.findIndex(c => c.includes(ci));
-						if (rowIdx >= 0 && colIdx >= 0) {
-							cardGrid[`${rowIdx},${colIdx}`] = ci;
+					// Re-run Canny with relaxed params, stopping early if we've
+					// already surfaced enough candidates for the expected card count.
+					// Reuses the shared blur5 for params.blur === 5.
+					for (const params of [{ blur: 5, low: 20, high: 80 }, { blur: 7, low: 30, high: 100 }]) {
+						const edgeMat = new cv.Mat();
+						try {
+							if (params.blur === 5) {
+								cv.Canny(blur5, edgeMat, params.low, params.high);
+							} else {
+								const localBlur = new cv.Mat();
+								try {
+									cv.GaussianBlur(gray, localBlur, new cv.Size(params.blur, params.blur), 0);
+									cv.Canny(localBlur, edgeMat, params.low, params.high);
+								} finally {
+									localBlur.delete();
+								}
+							}
+							cv.dilate(edgeMat, edgeMat, sepKernel5);
+							findCardContours(edgeMat, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+						} finally {
+							edgeMat.delete();
+						}
+
+						if (allCandidates.length >= expectedCardCount * 1.5) break;
+					}
+
+					// Re-run adaptive threshold with different params (reuses shared blur5).
+					const relaxThresh = new cv.Mat();
+					try {
+						cv.adaptiveThreshold(blur5, relaxThresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, -3);
+						cv.erode(relaxThresh, relaxThresh, dilateKernel3);
+						cv.dilate(relaxThresh, relaxThresh, dilateKernel3);
+						findCardContours(relaxThresh, relaxedMinArea, maxArea, relaxedMinAspect, relaxedMaxAspect);
+					} finally {
+						relaxThresh.delete();
+					}
+
+					// Re-filter containment with all new candidates
+					allCandidates.sort((a, b) => b.area - a.area);
+					cardContours = [];
+					for (const candidate of allCandidates) {
+						const r = candidate.rect;
+						const isInside = cardContours.some(card => {
+							const c = card.rect;
+							const cx = r.x + r.width / 2;
+							const cy = r.y + r.height / 2;
+							return cx > c.x && cx < c.x + c.width && cy > c.y && cy < c.y + c.height;
+						});
+						if (!isInside) {
+							cardContours.push(candidate);
 						}
 					}
 
-					// For each empty cell, compute position from same-row and same-col neighbors
-					for (let ri = 0; ri < rows.length; ri++) {
-						for (let ci = 0; ci < cols.length; ci++) {
-							if (cardContours.length >= expectedCardCount) break;
-							if (cardGrid[`${ri},${ci}`] !== undefined) continue;
-
-							// Get X from same-column neighbors (cards in column ci, any row)
-							const colNeighbors = cols[ci].map(idx => gridCenters[idx].x);
-							const inferX = colNeighbors.length > 0
-								? colNeighbors.reduce((a, b) => a + b, 0) / colNeighbors.length
-								: null;
-
-							// Get Y from same-row neighbors (cards in row ri, any column)
-							const rowNeighbors = rows[ri].map(idx => gridCenters[idx].y);
-							const inferY = rowNeighbors.length > 0
-								? rowNeighbors.reduce((a, b) => a + b, 0) / rowNeighbors.length
-								: null;
-
-							if (inferX === null || inferY === null) continue;
-
-							// Use median bounding rect dimensions (not corner edge lengths)
-							const x1 = Math.max(0, Math.round(inferX - medW / 2));
-							const y1 = Math.max(0, Math.round(inferY - medH / 2));
-							const x2 = Math.min(img.width - 1, x1 + medW);
-							const y2 = Math.min(img.height - 1, y1 + medH);
-							const corners = new cv.Mat(4, 1, cv.CV_32SC2);
-							corners.data32S[0] = x1; corners.data32S[1] = y1;
-							corners.data32S[2] = x2; corners.data32S[3] = y1;
-							corners.data32S[4] = x2; corners.data32S[5] = y2;
-							corners.data32S[6] = x1; corners.data32S[7] = y2;
-							cardContours.push({
-								corners,
-								area: (x2 - x1) * (y2 - y1),
-								rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
-								synthetic: true
-							});
-						}
+					// Apply size filter again after relaxed detection
+					if (cardContours.length >= 3) {
+						const areas = cardContours.map(c => c.area).sort((a, b) => a - b);
+						const medianArea = areas[Math.floor(areas.length / 2)];
+						cardContours = cardContours.filter(c => c.area >= medianArea * 0.4);
 					}
+					log(`After relaxation: ${cardContours.length} candidates`);
 				}
-				log(`Grid inference: added synthetic cards, now ${cardContours.length} total`);
+
+				// === Grid inference: fill missing positions if cards form a grid ===
+				if (expectedCardCount && cardContours.length < expectedCardCount && cardContours.length >= 3) {
+					// Use bounding rect centers for grid layout (stable for upright cards)
+					const gridRects = cardContours.map(c => c.rect);
+					const gridCenters = gridRects.map(r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
+
+					// Median card dimensions from bounding rects
+					const bws = gridRects.map(r => r.width).sort((a, b) => a - b);
+					const bhs = gridRects.map(r => r.height).sort((a, b) => a - b);
+					const medW = bws[Math.floor(bws.length / 2)];
+					const medH = bhs[Math.floor(bhs.length / 2)];
+
+					// Cluster into rows (by Y center) and columns (by X center)
+					function cluster1D(values: number[], threshold: number): number[][] {
+						const sorted = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
+						const groups: number[][] = [[]];
+						groups[0].push(sorted[0].i);
+						for (let i = 1; i < sorted.length; i++) {
+							if (sorted[i].v - sorted[i - 1].v > threshold) {
+								groups.push([]);
+							}
+							groups[groups.length - 1].push(sorted[i].i);
+						}
+						return groups;
+					}
+
+					const rows = cluster1D(gridCenters.map(c => c.y), medH * 0.4);
+					const cols = cluster1D(gridCenters.map(c => c.x), medW * 0.4);
+
+					log(`Grid analysis: ${rows.length} rows x ${cols.length} cols detected`);
+					if (rows.length >= 2 && cols.length >= 2 && rows.length * cols.length >= expectedCardCount * 0.8) {
+						// Assign each card to a (row, col) index
+						const cardGrid: { [key: string]: number } = {}; // "row,col" -> card index
+						for (let ci = 0; ci < cardContours.length; ci++) {
+							const rowIdx = rows.findIndex(r => r.includes(ci));
+							const colIdx = cols.findIndex(c => c.includes(ci));
+							if (rowIdx >= 0 && colIdx >= 0) {
+								cardGrid[`${rowIdx},${colIdx}`] = ci;
+							}
+						}
+
+						// For each empty cell, compute position from same-row and same-col neighbors
+						for (let ri = 0; ri < rows.length; ri++) {
+							for (let ci = 0; ci < cols.length; ci++) {
+								if (cardContours.length >= expectedCardCount) break;
+								if (cardGrid[`${ri},${ci}`] !== undefined) continue;
+
+								// Get X from same-column neighbors (cards in column ci, any row)
+								const colNeighbors = cols[ci].map(idx => gridCenters[idx].x);
+								const inferX = colNeighbors.length > 0
+									? colNeighbors.reduce((a, b) => a + b, 0) / colNeighbors.length
+									: null;
+
+								// Get Y from same-row neighbors (cards in row ri, any column)
+								const rowNeighbors = rows[ri].map(idx => gridCenters[idx].y);
+								const inferY = rowNeighbors.length > 0
+									? rowNeighbors.reduce((a, b) => a + b, 0) / rowNeighbors.length
+									: null;
+
+								if (inferX === null || inferY === null) continue;
+
+								// Use median bounding rect dimensions (not corner edge lengths)
+								const x1 = Math.max(0, Math.round(inferX - medW / 2));
+								const y1 = Math.max(0, Math.round(inferY - medH / 2));
+								const x2 = Math.min(img.width - 1, x1 + medW);
+								const y2 = Math.min(img.height - 1, y1 + medH);
+								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
+								corners.data32S[0] = x1; corners.data32S[1] = y1;
+								corners.data32S[2] = x2; corners.data32S[3] = y1;
+								corners.data32S[4] = x2; corners.data32S[5] = y2;
+								corners.data32S[6] = x1; corners.data32S[7] = y2;
+								cardContours.push({
+									corners,
+									area: (x2 - x1) * (y2 - y1),
+									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
+									synthetic: true
+								});
+							}
+						}
+					}
+					log(`Grid inference: added synthetic cards, now ${cardContours.length} total`);
+				}
+
+				blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();
 			}
 
 			// Debug: draw detected rectangles on image
@@ -590,7 +624,9 @@
 
 			const debugCanvas = document.createElement('canvas');
 			cv.imshow(debugCanvas, debugMat);
-			debugCanvasUrl = debugCanvas.toDataURL();
+			// JPEG: encoding a full-resolution PNG took a noticeable fraction of a
+			// second per live capture, and this image is only for eyeballing.
+			debugCanvasUrl = debugCanvas.toDataURL('image/jpeg', 0.8);
 			debugMat.delete();
 
 			// In single-card mode, keep only the most prominent (largest-area)
@@ -619,7 +655,6 @@
 				scanProgress = 'No cards detected. Try a clearer photo.';
 				scanning = false;
 				src.delete(); gray.delete();
-				blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();
 				return;
 			}
 
@@ -670,9 +705,16 @@
 							(dx / dist) * expandX,
 							(dy / dist) * expandY
 						);
+						// Deliberately not clamped to the frame: warpPerspective pads
+						// out-of-frame samples with black, so a card that reaches the
+						// frame edge (typical for a hand-held live capture) keeps the
+						// same ~3.5% margin as any other and the fixed name/collector
+						// crop windows below still line up. Clamping made such warps
+						// tight on the card and pushed the collector line out of its
+						// crop window ("0 of 1 identified").
 						return [
-							Math.max(0, Math.min(img.width - 1, Math.round(x + (dx / dist) * expand))),
-							Math.max(0, Math.min(img.height - 1, Math.round(y + (dy / dist) * expand)))
+							Math.round(x + (dx / dist) * expand),
+							Math.round(y + (dy / dist) * expand)
 						] as [number, number];
 					}) as Array<[number, number]>;
 				}
@@ -691,13 +733,18 @@
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
 
-				// Crop name area — skip black border + frame top, capture name text line
-				// Expanded cards have ~7-8% border at top; synthetic cards have less (~3%)
-				const nameY = Math.floor(cardH * (cardContours[i].synthetic ? 0.03 : 0.07));
-				const nameH = Math.floor(cardH * (cardContours[i].synthetic ? 0.08 : 0.065));
+				// Crop name area — skip black border + frame top, capture name text line.
+				// The band is taller than the name box itself so the text stays inside
+				// whether the detected quad was the outer black border (~3.5% margin
+				// after expansion) or the inner coloured frame (~1%). It starts at 6%
+				// from the left so the first letter isn't clipped on tight warps.
+				// Synthetic (grid-inferred) cards have less margin (~3%).
+				const nameY = Math.floor(cardH * (cardContours[i].synthetic ? 0.03 : 0.055));
+				const nameH = Math.floor(cardH * 0.08);
+				const nameX = Math.floor(cardW * (cardContours[i].synthetic ? 0.08 : 0.06));
 				const nameW = Math.floor(cardW * 0.72);
-				log(`Card ${i + 1}: name crop y=${nameY} h=${nameH} w=${nameW}`);
-				const nameRoi = warped.roi(new cv.Rect(Math.floor(cardW * 0.08), nameY, nameW, nameH));
+				log(`Card ${i + 1}: name crop x=${nameX} y=${nameY} h=${nameH} w=${nameW}`);
+				const nameRoi = warped.roi(new cv.Rect(nameX, nameY, nameW, nameH));
 				const grayName = new cv.Mat();
 				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
 				const nameScaled = new cv.Mat();
@@ -707,9 +754,13 @@
 				const nameUrl = nameCanvas.toDataURL();
 				nameRoi.delete(); grayName.delete(); nameScaled.delete();
 
-				// Crop bottom strip for collector info (left half only, right has copyright)
-				const bottomY = Math.floor(cardH * 0.90);
-				const bottomH = Math.floor(cardH * 0.07);
+				// Crop bottom strip for collector info (left half only, right has copyright).
+				// 89-99% rather than 90-97%: the collector line sits at ~96-99% of the
+				// physical card, which lands anywhere between ~91% and ~98% of the warp
+				// depending on how much margin the detected quad left. PSM 6 plus the
+				// anchor-based parser cope with the extra flavour-text line above it.
+				const bottomY = Math.floor(cardH * 0.89);
+				const bottomH = Math.floor(cardH * 0.10);
 				log(`Card ${i + 1}: bottom crop y=${bottomY} h=${bottomH} w=${Math.floor(cardW * 0.5)}`);
 				const roiW = Math.floor(cardW * 0.5);
 				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
@@ -764,7 +815,6 @@
 
 			// Cleanup OpenCV mats
 			src.delete(); gray.delete();
-			blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();
 
 			// === Name-first OCR approach ===
 			// Phase 1: OCR name areas with Tesseract in parallel across a worker pool.

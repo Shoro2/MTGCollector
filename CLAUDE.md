@@ -100,7 +100,18 @@ src/
 ├── hooks.server.ts                  # Auth middleware, DB init, price check, admin guard
 ├── lib/
 │   ├── components/
-│   │   └── CardPreview.svelte       # Hover zoom (portal to document.body)
+│   │   ├── CardPreview.svelte       # Hover zoom (portal to document.body)
+│   │   └── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, auto-capture)
+│   ├── scanner/                     # Browser-side scanner library; pure modules are unit-tested (vitest)
+│   │   ├── detect.ts                # detectCardsQuick(): fast Canny rectangle detector for the live preview
+│   │   ├── stability.ts             # SceneStabilizer + sceneSignature(): time-based "scene holds still" logic
+│   │   ├── geometry.ts              # orderCornersForCard(), fitContain(), touchesFrameEdge(), loadImage()
+│   │   ├── opencv.ts                # Lazy OpenCV.js CDN loader
+│   │   ├── tesseract.ts             # Tesseract.js worker pool (recognizeBatch, recognizeDetailed)
+│   │   ├── parse.ts                 # parseCollectorInfo(): set code / collector number / foil hint
+│   │   ├── similarity.ts            # Name similarity + bestNameMatch()
+│   │   ├── foil.ts                  # Pixel-based foil detection from the separator glyph
+│   │   └── pipeline.ts              # disambiguateReprints()
 │   ├── server/
 │   │   ├── auth.ts                  # OAuth, sessions, user CRUD
 │   │   ├── db.ts                    # SQLite setup, initDb(), migrations
@@ -170,16 +181,29 @@ src/
    - Color saturation mask (for colored card borders)
    - Inverted Otsu threshold (for light cards on light backgrounds)
 2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9), IoU deduplication
-3. Orientation detection: if top edge > left edge → card is sideways → rotate corners 90° clockwise
-4. Perspective transform to 488×680 flat image
-5. **Name OCR**: Tesseract.js on cropped name area → API search by name → FTS fallback
-6. **Bottom OCR**: Tesseract.js runs locally on every card's bottom area first. If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
+3. Corner ordering via `orderCornersForCard()`: the short edge becomes the top of the warp, so sideways cards come out upright without a separate rotation step
+4. Corner expansion (~5% outward from the quad centre) + perspective transform to 488×680. The expansion is deliberately **not clamped** to the frame: `warpPerspective` pads out-of-frame samples with black, so a card that touches the image edge (typical for hand-held live captures) keeps the same ~3.5% margin as any other and the fixed crop windows below still line up. Clamping used to make such warps tight on the card and pushed the collector line out of its crop window.
+5. **Name OCR**: Tesseract.js (PSM 7) on the name band — x 6–78%, y 5.5–13.5% of the warp (tall enough for both outer-border and inner-frame detections) → batched API search by name → FTS fallback
+6. **Bottom OCR**: Tesseract.js (PSM 6) runs locally on every card's collector strip first (left half, y 89–99% of the warp; the collector line sits at ~96–99% of the physical card and lands between ~91% and ~98% of the warp depending on the detected quad's margin). If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
 7. **Foil detection**: text-based detection from the separator char between set code and language on the bottom line (`*` = foil, `.` = non-foil), parsed from the Tesseract bottom OCR.
 8. API search with fallbacks: set+number → name → FTS
 9. Manual search fallback for unidentified cards
 10. Select all / import all buttons for bulk adding (auth required)
 11. **Copy for Moxfield**: generates text in `1 Name (SET) number` format, appends `*F*` for foils
 12. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing.
+
+### Live Scanner (camera mode, `/scan` → "Live camera")
+
+`src/lib/components/LiveScanner.svelte` streams the device camera and auto-captures when the scene holds still. Only `/scan` has this mode; `/collection/scan` is upload-only.
+
+- **Viewfinder follows the stream.** The container's `aspect-ratio` is bound to `videoWidth / videoHeight` (updated on `loadedmetadata` and `resize`, so it tracks device rotation), capped at `70vh`. A phone held upright therefore gets a portrait preview. Previously the box was hard-wired to 16:9 and the overlay scaled x and y independently, which squashed an upright card into a landscape outline — the scanner looked as if it wanted the card in landscape.
+- **Overlay mapping** goes through `fitContain()` (uniform scale + letterbox offset, same as CSS `object-fit: contain`) and renders at `devicePixelRatio`.
+- **Per-frame detection** (`detectCardsQuick`, ~6 fps): the frame is drawn straight into a 720-px analysis canvas, Canny + `findContours`, then strict filters — min area 3% of the frame, bounding-box aspect 0.55–0.88 (an MTG card is 0.716), candidates below 25% of the largest survivor dropped. The strictness is intentional: the live loop auto-captures whatever it tracks, and the looser full-pipeline thresholds let keyboard keys and other small rectangles qualify as "cards".
+- **Stability** (`SceneStabilizer`, pure + unit-tested): a rect is steady after 700 ms of continuous tracking with ≥3 detections and a centroid spread ≤5% of its long edge (floor 10 px). Time-based so slow phones don't wait longer than fast laptops; relative so hand jitter on a card filling the frame doesn't block forever. The "steady %" badge reaches 100% exactly when auto-capture becomes possible.
+- **Guards:** a rect within 1.5% of the frame edge is drawn red ("card cut off at the edge") and blocks auto-capture; more than 12 tracked rects also block it ("too many rectangles"). Manual "Capture now" always works.
+- **Capture hands the tracked rects to the pipeline.** `onCapture(canvas, rects)` → `processImage(canvas, presetRects)` builds the card candidates directly from them and skips the six full-resolution strategies (1–3 s on a phone). A manual capture while the scene is still moving passes no rects, so full detection runs as a fallback.
+- **Pre-warming:** OpenCV.js loads when the camera starts; the Tesseract worker pool is created as soon as live mode is selected (`$effect` in `/scan`), so the first capture doesn't pay worker spawn + traineddata download on top of the OCR.
+- **Re-arm:** `sceneSignature()` (centroids quantised to ~1/64 of the frame) prevents capturing the same layout twice; moving the cards out of frame and back re-arms.
 
 ### Price Change Indicator
 
@@ -192,6 +216,13 @@ The `/prices` page loads its skeleton immediately (server only returns auth + pr
 ### Profit/Loss Chart
 
 Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purchase price (dashed), current value. Warning banner shown when cards are missing purchase prices.
+
+## Testing
+
+- `npm test` — vitest over `src/lib/scanner/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity, reprint disambiguation, scene stability, overlay geometry. Anything touching OpenCV/Tesseract/DOM is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable.
+- `npm run check` — svelte-check (TypeScript + Svelte). CI runs `check` and `build` on every PR (`.github/workflows/ci.yml`).
+- **Live scanner smoke test (manual):** run `npm run dev`, then drive headless Chromium with Playwright using `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` (add `--use-file-for-fake-video-capture=<clip.y4m>` for a portrait stream; a Y4M file is trivial to synthesise with a few lines of Python). Assert the viewfinder's `aspect-ratio` equals the stream's and that no `pageerror` fires. Without CDN access (OpenCV/Tesseract) this only exercises the UI and stream handling, not detection.
+- There are no image fixtures for the OCR pipeline yet — see Roadmap.
 
 ## Coding Conventions
 
@@ -242,3 +273,32 @@ cp data/secret-key.hex backups/secret-key-$(date +%Y%m%d-%H%M%S).hex
 ```
 
 For Docker deployments, mount `/app/data` as a volume and include it in your host's backup job. `.backup` creates a consistent copy even while writers are active — prefer it over `cp mtg.db`, which can capture a torn page mid-write.
+
+## Roadmap & Open Points
+
+Status of the scanner work (most recent first). Keep this list current when you change the scanner.
+
+### Done
+
+- Live mode viewfinder follows the stream orientation; overlay mapping is letterbox-correct and DPR-aware (fixed the "scanner wants landscape" impression on phones).
+- Time-based, card-size-relative scene stability (`SceneStabilizer`) replaces the frame-count/absolute-pixel version that never turned green on hand-held phones.
+- Live captures skip the six-strategy detection and warp the tracked rectangles directly; Tesseract pool is pre-warmed in live mode.
+- Stricter live detector filters (min area 3%, aspect 0.55–0.88, relative-area 25%) plus edge-cut and too-many-rects guards — keyboard keys are no longer captured as cards.
+- Corner expansion is no longer clamped to the frame; name/collector crop windows widened so cards that fill the frame still OCR (fixed "0 of 1 identified" with the bottom crop showing flavour text).
+
+### Next steps (in suggested order)
+
+1. **Real-device verification** on Android Chrome and iOS Safari: portrait preview, auto-capture within ~1 s of holding still, red edge warning. Tune `minStableMs` / `driftFrac` in `LiveScanner.svelte` if it fires too eagerly or too late.
+2. **Regression fixtures for the OCR pipeline**: a handful of real photos (upload and live captures, incl. a card filling the frame and a 3×3 grid) with expected name/set/number, run in headless Chromium. Needs CDN access for OpenCV/Tesseract in CI or vendored builds.
+3. **Move `detectCardsQuick` into a Web Worker** (OpenCV.js loaded in the worker) so the ~50–100 ms per frame on phones stops blocking the main thread; the overlay would then stay smooth during detection.
+4. **Sharpness gate before auto-capture** (variance of the Laplacian over the card ROI) to reject motion-blurred frames that pass the stability check.
+5. **Derive crop windows from the warp itself** (locate the black border via row/column intensity profiles) instead of fixed percentages — would also make single-photo uploads robust to varying margins.
+6. **Consolidate `/collection/scan` onto the shared pipeline**: it still has its own simpler detection (no name OCR, 92–100% bottom crop, 4× upscale) and none of the fixes above.
+7. **Vendor OpenCV.js / Tesseract.js** instead of loading from CDNs (offline dev, sandboxed CI, privacy) — check licence/attribution requirements first.
+
+### Known limitations
+
+- Filming a monitor instead of a physical card produces moiré and glare that degrade OCR; not a code issue.
+- A card lying on its side can come out upside-down in the warp (the short-edge rule in `orderCornersForCard()` breaks the 180° tie by proximity to the image origin). Upright cards are unaffected.
+- Tesseract can't reliably distinguish the foil `★` from the bullet `•`; text-based foil hints are only trusted from Google Vision, pixel-based detection runs in single-card mode only.
+- The live detector runs on the main thread; on low-end phones the preview can stutter while a frame is analysed.

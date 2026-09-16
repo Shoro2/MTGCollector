@@ -5,7 +5,9 @@
  * relaxation and grid inference — too slow to drive a per-frame overlay.
  * This version runs only Canny on a downscaled grayscale Mat so it fits
  * comfortably inside ~30 ms on a mid-range phone, leaving the main thread
- * free for the video pipeline.
+ * free for the video pipeline. Its filters are deliberately stricter than
+ * the full pipeline's: the live scanner auto-captures whatever it tracks, so
+ * background rectangles (keyboard keys, stickers) must not qualify.
  *
  * Returns plain corner arrays (not cv.Mats) so the caller never has to
  * worry about WASM-heap lifetimes.
@@ -22,10 +24,34 @@ export type QuickRect = {
 export type DetectQuickOptions = {
 	/** Long-edge resolution for the analysis Mat. Default 720. */
 	maxEdge?: number;
-	/** Minimum candidate area as fraction of the analyzed image area. Default 0.01. */
+	/**
+	 * Minimum candidate area as fraction of the analyzed image area. Default
+	 * 0.03: anything smaller is too small to OCR anyway, and the higher floor
+	 * keeps keyboard keys, stickers and UI buttons in the background from
+	 * being tracked as cards.
+	 */
 	minAreaFrac?: number;
 	/** Maximum candidate area as fraction. Default 0.6. */
 	maxAreaFrac?: number;
+	/**
+	 * Accepted short/long edge ratio of the bounding box. An MTG card is
+	 * 63x88 mm (0.716); the defaults 0.55-0.88 leave room for perspective
+	 * while rejecting near-square shapes such as keycaps.
+	 */
+	minAspect?: number;
+	maxAspect?: number;
+	/**
+	 * Drop candidates whose area is below this fraction of the largest
+	 * candidate. Default 0.25. In a hand-held scene the cards are roughly the
+	 * same size; much smaller rectangles are background clutter.
+	 */
+	minRelativeArea?: number;
+	/**
+	 * Multiplier applied to every returned coordinate. Lets a caller hand in
+	 * an already-downscaled frame and still get results in the original
+	 * (e.g. full video) pixel space. Default 1.
+	 */
+	coordScale?: number;
 };
 
 let busy = false;
@@ -54,21 +80,30 @@ export async function detectCardsQuick(
 		await loadOpenCV();
 		const cv = (window as unknown as { cv: any }).cv;
 		const maxEdge = opts.maxEdge ?? 720;
-		const minAreaFrac = opts.minAreaFrac ?? 0.01;
+		const minAreaFrac = opts.minAreaFrac ?? 0.03;
 		const maxAreaFrac = opts.maxAreaFrac ?? 0.6;
+		const minAspect = opts.minAspect ?? 0.55;
+		const maxAspect = opts.maxAspect ?? 0.88;
+		const minRelativeArea = opts.minRelativeArea ?? 0.25;
+		const coordScale = opts.coordScale ?? 1;
 
-		// Downscale to keep the per-frame cost predictable.
+		// Downscale to keep the per-frame cost predictable. When the caller
+		// already hands us a small enough canvas, read it directly instead of
+		// allocating and blitting an intermediate one every frame.
 		const longEdge = Math.max(srcCanvas.width, srcCanvas.height);
 		const scale = longEdge > maxEdge ? maxEdge / longEdge : 1;
 		const w = Math.max(1, Math.round(srcCanvas.width * scale));
 		const h = Math.max(1, Math.round(srcCanvas.height * scale));
 
-		const work = document.createElement('canvas');
-		work.width = w;
-		work.height = h;
-		const wctx = work.getContext('2d');
-		if (!wctx) return [];
-		wctx.drawImage(srcCanvas, 0, 0, w, h);
+		let work: HTMLCanvasElement = srcCanvas;
+		if (scale < 1) {
+			work = document.createElement('canvas');
+			work.width = w;
+			work.height = h;
+			const wctx = work.getContext('2d');
+			if (!wctx) return [];
+			wctx.drawImage(srcCanvas, 0, 0, w, h);
+		}
 
 		const src = cv.imread(work);
 		const gray = new cv.Mat();
@@ -89,7 +124,7 @@ export async function detectCardsQuick(
 			const imgArea = w * h;
 			const minArea = imgArea * minAreaFrac;
 			const maxArea = imgArea * maxAreaFrac;
-			const invScale = 1 / scale;
+			const invScale = coordScale / scale;
 
 			for (let i = 0; i < contours.size(); i++) {
 				const contour = contours.get(i);
@@ -129,7 +164,7 @@ export async function detectCardsQuick(
 
 					const rect = cv.boundingRect(used);
 					const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-					if (aspect <= 0.5 || aspect >= 0.95) continue;
+					if (aspect < minAspect || aspect > maxAspect) continue;
 
 					const corners: Array<[number, number]> = [];
 					for (let k = 0; k < 4; k++) {
@@ -164,6 +199,9 @@ export async function detectCardsQuick(
 		}
 
 		// Containment filter: drop any rect whose center sits inside a larger one.
+		// Then drop anything far smaller than the largest survivor — in a
+		// hand-held scene the cards are about the same size, so tiny extra
+		// rectangles are clutter (keycaps, badges, phone icons), not cards.
 		candidates.sort((a, b) => b.area - a.area);
 		const kept: QuickRect[] = [];
 		for (const c of candidates) {
@@ -175,7 +213,9 @@ export async function detectCardsQuick(
 			});
 			if (!inside) kept.push(c);
 		}
-		return kept;
+		if (kept.length === 0) return kept;
+		const largest = kept[0].area;
+		return kept.filter((c) => c.area >= largest * minRelativeArea);
 	} finally {
 		busy = false;
 	}

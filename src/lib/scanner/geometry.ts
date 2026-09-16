@@ -95,3 +95,45 @@ export function orderCornersForCard(pts: Array<[number, number]>): Array<[number
 export function orderCorners(pts: Array<[number, number]>): Array<[number, number]> {
 	return orderCornersForCard(pts);
 }
+
+/**
+ * Where a `srcW x srcH` image lands inside a `boxW x boxH` box under CSS
+ * `object-fit: contain` — uniform scale, centred, letterboxed. Used to map
+ * video-pixel coordinates onto an overlay canvas that covers the whole box:
+ * scaling x and y independently (boxW/srcW, boxH/srcH) distorts the outline
+ * whenever the box and stream aspect ratios differ, e.g. a portrait phone
+ * stream in a landscape viewfinder.
+ */
+export function fitContain(
+	srcW: number,
+	srcH: number,
+	boxW: number,
+	boxH: number
+): { x: number; y: number; width: number; height: number; scale: number } {
+	if (srcW <= 0 || srcH <= 0 || boxW <= 0 || boxH <= 0) {
+		return { x: 0, y: 0, width: 0, height: 0, scale: 0 };
+	}
+	const scale = Math.min(boxW / srcW, boxH / srcH);
+	const width = srcW * scale;
+	const height = srcH * scale;
+	return { x: (boxW - width) / 2, y: (boxH - height) / 2, width, height, scale };
+}
+
+/**
+ * True when an axis-aligned rect comes within `marginPx` of any frame edge.
+ * A card that touches the edge is (partially) cut off: its name or collector
+ * line may lie outside the frame, so the live scanner shouldn't auto-capture.
+ */
+export function touchesFrameEdge(
+	rect: { x: number; y: number; width: number; height: number },
+	frameW: number,
+	frameH: number,
+	marginPx: number
+): boolean {
+	return (
+		rect.x <= marginPx ||
+		rect.y <= marginPx ||
+		rect.x + rect.width >= frameW - marginPx ||
+		rect.y + rect.height >= frameH - marginPx
+	);
+}
