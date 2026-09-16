@@ -9,7 +9,7 @@ identified. Works fully offline once the browser libraries are self-hosted.
 ```bash
 npm install                                   # playwright is a devDependency
 npx playwright install chromium               # browser binary; or point PLAYWRIGHT_CHROMIUM_PATH at an existing Chromium
-node scripts/scanner-harness/vendor-assets.mjs   # OpenCV.js + Tesseract.js + eng data -> static/vendor/ (gitignored)
+node scripts/scanner-harness/vendor-assets.mjs   # OpenCV.js + Tesseract.js + eng data + onnxruntime-web + PaddleOCR model -> static/vendor/ (gitignored)
 echo 'PUBLIC_SCANNER_ASSETS_URL=/vendor' >> .env
 npm run dev                                   # in a second terminal
 node scripts/scanner-harness/seed-test-db.mjs --distractors # only on an empty DB: inserts the printings from seed-cards.json (+ distractor printings, see below)
@@ -69,17 +69,17 @@ Columns: state before the scanner work, after spread-aware detection and
 adaptive crop windows, and after the OCR input-size fix plus the plausibility
 check for number-only hits (current code).
 
-| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) |
-|-------|--------|--------|---------------------|--------------------------|----------------------------------------|
-| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 |
-| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 |
-| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 |
-| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 |
-| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 |
-| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 |
-| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely |
-| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 |
-| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | **90 / 90 of 104, 2 likely, none wrong**, 65 s |
+| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR |
+|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|
+| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 |
+| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 |
+| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 |
+| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 |
+| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 |
+| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 |
+| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely |
+| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 |
+| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s |
 
 The last column is measured with the canonical seed (double-faced names) and
 the printing-level metric; the earlier columns counted names only. The
@@ -111,13 +111,19 @@ with a second pass at 2x.
 node scripts/scanner-harness/ocr-scale-experiment.mjs --json out.json photos/*.jpg
 ```
 
-The remaining 14 misses are showcase/borderless frames (no name bar or
-collector line where the crops expect them), collector digits misread at
-~12 px (15 cards on one phone photo is the resolution limit for Tesseract),
-names Tesseract cannot read on a legible crop ("Skaab Wrangler"), and dropped
-digits that are rejected instead of misidentified ("4/277" for Unruly Mob
-040/277). Dawnhart Rejuvenator ("Dawnhart r" + "80/277") and The Last Ronin's
-Technique ("LAST … Techmaue" + "223 THT") are offered as `likely` for one tap.
+The remaining three: Retro-Mutation (every name pass and both strips are
+junk on the 12 px phone crop), Tunnel Rats (the rotated strip reads the set
+but loses the number), and The Last Ronin's Technique on one camera photo
+(showcase frame; offered as `likely` from "LAST … Techmaue" + "223 THT").
+
+**Name-band experiments.** `ocr-preprocess-experiment.mjs` re-OCRs every name
+crop with canvas-only preprocessings (Otsu binarisation, inversion, contrast
+stretch, blur) at two scales and reports the union with the two gray passes;
+`ocr-engine-experiment.mjs` reads the same crops with PaddleOCR's PP-OCRv4
+recognition model (ONNX, onnxruntime-web, needs `static/vendor/ort/` and
+`static/vendor/paddle/` from `vendor-assets.mjs`). On 75 cards: gray PSM 7
+49, binarised 57, union of the Tesseract passes 68, PaddleOCR alone 64, both
+engines 72. The scan page runs the passes in that order and PaddleOCR last.
 
 Notes: the fake camera crops portrait clips when the app asks for 1920x1080,
 so render live scenes in landscape; real phones deliver native portrait frames.

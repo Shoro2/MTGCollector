@@ -10,6 +10,7 @@
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { bestNameMatch, realWordCount } from '$lib/scanner/similarity';
 	import { resolveCard, NAME_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState } from '$lib/scanner/resolve';
+	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
@@ -50,17 +51,21 @@
 		/** Evidence collected by the OCR phases; the fusion (resolveCard) turns it into the fields above. */
 		nameCandidates: NameCandidate[];
 		readings: FooterReading[];
-		/** Candidate attached to a not_found card (weak number, majority set) for the manual search. */
-		suggestion: PrintingRow | null;
+		/** Up to three candidates attached to a not_found card (structural number without name evidence, one digit off) for one-tap acceptance. */
+		suggestions: PrintingRow[];
 		reasons: string[];
 		/** Crops from the 180°-rotated warp when the upside-down retry did not resolve the name (Phase 2b). */
 		altNameUrl?: string;
 		altBottomUrl?: string;
 		altCroppedUrl?: string;
-		/** Secondary OCR inputs: name band at NAME_OCR_SCALE_ALT (raw-line pass), collector strip at BOTTOM_OCR_SCALE_ALT. */
+		/** Secondary OCR inputs: name band binarised at NAME_OCR_SCALE_ALT (raw-line pass) and at NAME_OCR_SCALE (binarised single-line pass), collector strip at BOTTOM_OCR_SCALE_ALT. */
 		nameUrl2?: string;
+		nameUrl3?: string;
+		nameUrl4?: string;
 		bottomUrl2?: string;
 		altNameUrl2?: string;
+		altNameUrl3?: string;
+		altNameUrl4?: string;
 		altBottomUrl2?: string;
 	}>>([]);
 	let debugCanvasUrl = $state('');
@@ -97,7 +102,10 @@
 	// ~140 px letters and made the line finder fail on perfectly legible names.
 	// Measured on 75 real-photo cards: 41 names read at 6x, 51 at 1.5x, 58 with
 	// a second raw-line (PSM 13) pass at 2x; collector strips 18 at 6x, 24 at
-	// 4x, 27 with a second pass at 2x.
+	// 4x, 27 with a second pass at 2x. Name passes (ocr-preprocess-experiment):
+	// gray PSM 7 at 1.5x reads 49, an Otsu-binarised copy 57, and the union of
+	// gray PSM 7 + binarised PSM 7 + binarised PSM 13 at 2x is 68 of 75 (the
+	// two gray passes alone: 60).
 	const NAME_OCR_SCALE = 1.5;
 	const NAME_OCR_SCALE_ALT = 2;
 	const BOTTOM_OCR_SCALE = 4;
@@ -847,7 +855,7 @@
 				warpedMat: any,
 				synthetic: boolean,
 				label: string
-			): { nameUrl: string; nameUrl2: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement } {
+			): { nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement } {
 				const cardW = warpedMat.cols as number;
 				const cardH = warpedMat.rows as number;
 
@@ -888,7 +896,10 @@
 				// Gray crop of a window, resized to `factor` x the base warp size (so a
 				// 2x warp is scaled by half the factor and the OCR input carries real
 				// detail at the same cost); the collector strip gets an unsharp mask.
-				const cropUrl = (x: number, y: number, w: number, h: number, factor: number, sharpen: boolean): { url: string; canvas: HTMLCanvasElement } => {
+				// `binarize` applies an Otsu threshold with dark text on white (a
+				// light-on-dark name bar is inverted first) — Tesseract reads a clean
+				// binary name bar better than the gray one on many phone photos.
+				const cropUrl = (x: number, y: number, w: number, h: number, factor: number, sharpen: boolean, binarize = false): { url: string; canvas: HTMLCanvasElement } => {
 					const roi = warpedMat.roi(new cv.Rect(x, y, w, h));
 					const gray = new cv.Mat();
 					cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
@@ -902,6 +913,11 @@
 						out = new cv.Mat();
 						cv.addWeighted(scaled, 1.5, blurred, -0.5, 0, out);
 						blurred.delete(); scaled.delete();
+					} else if (binarize) {
+						const lightOnDark = (cv.mean(scaled)[0] as number) < 110;
+						out = new cv.Mat();
+						cv.threshold(scaled, out, 0, 255, (lightOnDark ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY) | cv.THRESH_OTSU);
+						scaled.delete();
 					}
 					const canvas = document.createElement('canvas');
 					cv.imshow(canvas, out);
@@ -909,14 +925,16 @@
 					return { url: canvas.toDataURL(), canvas };
 				};
 				const nameUrl = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE, false).url;
-				const nameUrl2 = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE_ALT, false).url;
+				const nameUrl2 = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE_ALT, false, true).url;
+				const nameUrl3 = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE, false, true).url;
+				const nameUrl4 = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE_ALT, false).url;
 
 				// Collector strip (left half only, the right half has the copyright line).
 				const { bottomX, bottomY, bottomW: roiW, bottomH } = win;
 				log(`${label}: bottom crop x=${bottomX} y=${bottomY} h=${bottomH} w=${roiW}`);
 				const bottom = cropUrl(bottomX, bottomY, roiW, bottomH, BOTTOM_OCR_SCALE, true);
 				const bottomUrl2 = cropUrl(bottomX, bottomY, roiW, bottomH, BOTTOM_OCR_SCALE_ALT, true).url;
-				return { nameUrl, nameUrl2, bottomUrl: bottom.url, bottomUrl2, bottomCanvas: bottom.canvas };
+				return { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl: bottom.url, bottomUrl2, bottomCanvas: bottom.canvas };
 			}
 
 			// Process each detected card
@@ -1000,7 +1018,7 @@
 				const croppedUrl = cardThumbnailUrl(cardCanvas);
 				cardCanvases.push(cardCanvas);
 
-				const { nameUrl, nameUrl2, bottomUrl, bottomUrl2, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
+				const { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl, bottomUrl2, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
 				bottomCanvases.push(bottomCanvas);
 
 				cards.push({
@@ -1008,6 +1026,8 @@
 					croppedUrl,
 					nameUrl,
 					nameUrl2,
+					nameUrl3,
+					nameUrl4,
 					bottomUrl,
 					bottomUrl2,
 					nameText: '',
@@ -1024,7 +1044,7 @@
 					selectedResultIdx: 0,
 					nameCandidates: [],
 					readings: [],
-					suggestion: null,
+					suggestions: [],
 					reasons: []
 				});
 
@@ -1220,28 +1240,50 @@
 				return out;
 			};
 
-			// Phase 2a: raw-line name pass. Tesseract's line finder (PSM 7) fails
-			// on some perfectly legible name bars and returns nothing or a few
-			// stray letters; raw-line mode (PSM 13) on a slightly larger crop reads
-			// a different subset of cards, and the union is worth ~10% more names
-			// on real photos. Only the cards still unresolved pay for it.
-			{
-				const idx = unresolved();
-				if (idx.length > 0 && !superseded()) {
-					log(`Phase 2a: raw-line name OCR (Tesseract PSM 13) for ${idx.length} unresolved card(s)`);
-					scanProgress = `Re-reading ${idx.length} name${idx.length === 1 ? '' : 's'}...`;
-					const texts = await ocrNames(idx.map((i) => detectedCards[firstIdx + i].nameUrl2 ?? detectedCards[firstIdx + i].nameUrl), '13');
-					const items: Array<{ i: number; cleanName: string }> = [];
-					idx.forEach((i, k) => {
-						const card = detectedCards[firstIdx + i];
-						log(`Card ${firstIdx + i + 1} raw-line name OCR: "${texts[k]}"`);
-						const cleanName = cleanNameOf(texts[k]);
-						if (cleanName.length >= 2) items.push({ i, cleanName });
-						// Keep the more informative text for the plausibility checks later on.
-						if (realWordCount(cleanName) > realWordCount(card.nameText)) card.nameText = cleanName;
-					});
-					await acceptNameMatches(items, 'raw-line');
+			// Name passes beyond the first (gray, PSM 7): a binarised copy of the
+			// same band (PSM 7) and a binarised 2x copy in raw-line mode (PSM 13).
+			// Each reads a different subset of name bars — on 75 real-photo cards
+			// the union is 68 against 60 for the two gray passes. Only the cards
+			// still unresolved pay for them; the same list serves the rotated retry.
+			type NameCrops = { nameUrl: string; nameUrl2?: string; nameUrl3?: string; nameUrl4?: string };
+			type NamePass = { engine: 'tesseract' | 'paddle'; psm: '7' | '13'; pick: (c: NameCrops) => string; tag: string };
+			const extraNamePasses: NamePass[] = [
+				{ engine: 'tesseract', psm: '7', pick: (c) => c.nameUrl3 ?? c.nameUrl, tag: 'binarized' },
+				{ engine: 'tesseract', psm: '13', pick: (c) => c.nameUrl2 ?? c.nameUrl, tag: 'raw-line' },
+				// Gray raw line: binarisation erases light text on busy art
+				// (showcase frames), and this pass alone rescued such a card.
+				{ engine: 'tesseract', psm: '13', pick: (c) => c.nameUrl4 ?? c.nameUrl, tag: 'raw-line gray' },
+				// Second engine last, so only stubborn cards pay its lazy ~25 MB
+				// download: PaddleOCR reads a different subset of name bars than
+				// Tesseract (64 vs 65 of 75 alone, 72 together).
+				{ engine: 'paddle', psm: '7', pick: (c) => c.nameUrl, tag: 'paddle' }
+			];
+			const runNamePass = async (pass: NamePass, urls: string[]): Promise<string[]> => {
+				if (pass.engine === 'paddle') {
+					const texts = await paddleRecognizeLines(urls);
+					if (texts.every((t) => t === '')) log('PaddleOCR pass: no text (engine unavailable or nothing read)');
+					return texts.map((t) => t.replace(/[\r\n]+/g, ' ').trim());
 				}
+				return ocrNames(urls, pass.psm);
+			};
+
+			// Phase 2a: extra name passes for the cards the first pass didn't resolve.
+			for (const pass of extraNamePasses) {
+				const idx = unresolved();
+				if (idx.length === 0 || superseded()) break;
+				log(`Phase 2a: ${pass.tag} name OCR (${pass.engine === 'paddle' ? 'PaddleOCR PP-OCRv4' : `Tesseract PSM ${pass.psm}`}) for ${idx.length} unresolved card(s)`);
+				scanProgress = `Re-reading ${idx.length} name${idx.length === 1 ? '' : 's'}...`;
+				const texts = await runNamePass(pass, idx.map((i) => pass.pick(detectedCards[firstIdx + i])));
+				const items: Array<{ i: number; cleanName: string }> = [];
+				idx.forEach((i, k) => {
+					const card = detectedCards[firstIdx + i];
+					log(`Card ${firstIdx + i + 1} ${pass.tag} name OCR: "${texts[k]}"`);
+					const cleanName = cleanNameOf(texts[k]);
+					if (cleanName.length >= 2) items.push({ i, cleanName });
+					// Keep the more informative text for the plausibility checks later on.
+					if (realWordCount(cleanName) > realWordCount(card.nameText)) card.nameText = cleanName;
+				});
+				await acceptNameMatches(items, pass.tag);
 			}
 
 			// Phase 2b: upside-down retry. orderCornersForCard() cannot tell a
@@ -1253,7 +1295,7 @@
 			// then raw-line pass) and search again; when that yields a real name,
 			// the rotated crops replace the originals so the bottom-line phase
 			// reads the right strip as well.
-			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement };
+			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement };
 			{
 				const retryIdx = unresolved();
 				if (retryIdx.length > 0 && !superseded()) {
@@ -1286,6 +1328,8 @@
 						const card = detectedCards[firstIdx + i];
 						card.altNameUrl = r.nameUrl;
 						card.altNameUrl2 = r.nameUrl2;
+						card.altNameUrl3 = r.nameUrl3;
+						card.altNameUrl4 = r.nameUrl4;
 						card.altBottomUrl = r.bottomUrl;
 						card.altBottomUrl2 = r.bottomUrl2;
 						card.altCroppedUrl = cardThumbnailUrl(r.canvas);
@@ -1297,11 +1341,15 @@
 						const card = detectedCards[firstIdx + i];
 						card.altNameUrl = undefined;
 						card.altNameUrl2 = undefined;
+						card.altNameUrl3 = undefined;
+						card.altNameUrl4 = undefined;
 						card.altBottomUrl = undefined;
 						card.altBottomUrl2 = undefined;
 						card.altCroppedUrl = undefined;
 						card.nameUrl = r.nameUrl;
 						card.nameUrl2 = r.nameUrl2;
+						card.nameUrl3 = r.nameUrl3;
+						card.nameUrl4 = r.nameUrl4;
 						card.bottomUrl = r.bottomUrl;
 						card.bottomUrl2 = r.bottomUrl2;
 						card.croppedUrl = cardThumbnailUrl(r.canvas);
@@ -1309,15 +1357,15 @@
 						cardCanvases[i] = r.canvas;
 						log(`Card ${firstIdx + i + 1}: accepted after 180° rotation`);
 					};
-					// Same two passes as upright: single line first, raw line for the rest.
-					const passes: Array<{ psm: '7' | '13'; pick: (r: RotCrops) => string; tag: string }> = [
-						{ psm: '7', pick: (r) => r.nameUrl, tag: 'rotated' },
-						{ psm: '13', pick: (r) => r.nameUrl2, tag: 'rotated raw-line' }
+					// Same passes as upright: gray single line first, then the extra passes.
+					const passes: Array<{ engine: 'tesseract' | 'paddle'; psm: '7' | '13'; pick: (r: RotCrops) => string; tag: string }> = [
+						{ engine: 'tesseract', psm: '7', pick: (r) => r.nameUrl, tag: 'rotated' },
+						...extraNamePasses.map((p) => ({ engine: p.engine, psm: p.psm, pick: (r: RotCrops) => p.pick(r), tag: `rotated ${p.tag}` }))
 					];
 					for (const pass of passes) {
 						const idx = [...rotated.keys()].filter((i) => detectedCards[firstIdx + i].results.length === 0);
 						if (idx.length === 0 || superseded()) break;
-						const texts = await ocrNames(idx.map((i) => pass.pick(rotated.get(i)!)), pass.psm);
+						const texts = await runNamePass({ ...pass, pick: (c: NameCrops) => c.nameUrl }, idx.map((i) => pass.pick(rotated.get(i)!)));
 						const items: Array<{ i: number; cleanName: string }> = [];
 						idx.forEach((i, k) => {
 							log(`Card ${firstIdx + i + 1} ${pass.tag} name OCR: "${texts[k]}"`);
@@ -1404,6 +1452,8 @@
 						card.bottomUrl2 = card.altBottomUrl2;
 						card.nameUrl = card.altNameUrl;
 						card.nameUrl2 = card.altNameUrl2;
+						card.nameUrl3 = card.altNameUrl3;
+						card.nameUrl4 = card.altNameUrl4;
 						card.croppedUrl = card.altCroppedUrl;
 						const rt = rotatedNameText.get(i);
 						if (rt !== undefined && realWordCount(rt) >= realWordCount(card.nameText)) card.nameText = rt;
@@ -1411,6 +1461,8 @@
 				}
 				card.altNameUrl = undefined;
 				card.altNameUrl2 = undefined;
+				card.altNameUrl3 = undefined;
+				card.altNameUrl4 = undefined;
 				card.altBottomUrl = undefined;
 				card.altBottomUrl2 = undefined;
 				card.altCroppedUrl = undefined;
@@ -1429,21 +1481,35 @@
 			// the majority set's number in the second pass).
 			const printingsCache = new Map<string, PrintingRow[]>();
 			const lookupCache = new Map<string, PrintingRow[]>();
+			const nearCache = new Map<string, PrintingRow[]>();
 			const knownSets = new Map<string, boolean>();
 			const lookupKey = (setCode: string, n: string) => `${setCode.toLowerCase()}|${n}`;
+			const nearKey = (setCode: string, n: string, rarity: string) => `${setCode.toLowerCase()}|${n}|${rarity}`;
+			const structural = (r: FooterReading) => r.numberSource === 'fraction' || r.numberSource === 'pair' || r.numberSource === 'rarity';
 			async function prefetch(cards: typeof detectedCards, majoritySet: string | null) {
 				const names = new Set<string>();
 				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
+				const near: Array<{ setCode: string; collectorNumber: string; rarity: string }> = [];
 				const want = (setCode: string, n: string) => {
 					if (!setCode || lookupCache.has(lookupKey(setCode, n))) return;
 					lookupCache.set(lookupKey(setCode, n), []);
 					lookups.push({ setCode, collectorNumber: n });
+				};
+				const wantNear = (setCode: string, n: string, rarity: string) => {
+					if (!setCode || !n || nearCache.has(nearKey(setCode, n, rarity))) return;
+					nearCache.set(nearKey(setCode, n, rarity), []);
+					near.push({ setCode, collectorNumber: n, rarity });
 				};
 				for (const c of cards) {
 					for (const cand of c.nameCandidates) if (cand.score >= NAME_LIKELY && !printingsCache.has(cand.name)) names.add(cand.name);
 					for (const r of c.readings) {
 						if (r.setCode) want(r.setCode, r.collectorNumber);
 						if (majoritySet && r.collectorNumber) want(majoritySet, r.collectorNumber);
+						// Suggestions for unreadable names: numbers one OCR error away.
+						if (structural(r)) {
+							if (r.setCode) wantNear(r.setCode, r.collectorNumber, r.rarity);
+							if (majoritySet) wantNear(majoritySet, r.collectorNumber, r.rarity);
+						}
 					}
 				}
 				try {
@@ -1461,7 +1527,13 @@
 							knownSets.set(String(entry.setCode).toLowerCase(), !!entry.setKnown);
 						}
 					}
-					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s)`);
+					for (let start = 0; start < near.length; start += 100) {
+						const chunk = near.slice(start, start + 100);
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ near: chunk }) });
+						const data = await res.json();
+						for (const entry of Array.isArray(data?.batch) ? data.batch : []) nearCache.set(nearKey(entry.setCode, entry.collectorNumber, entry.rarity ?? ''), entry.results ?? []);
+					}
+					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s)`);
 				} catch (err) {
 					log(`Phase 3 prefetch error: ${err}`);
 				}
@@ -1474,6 +1546,7 @@
 					majoritySet,
 					printingsByName: (n) => printingsCache.get(n) ?? [],
 					lookup: (setCode, n) => lookupCache.get(lookupKey(setCode, n)) ?? [],
+					nearLookup: (setCode, n, rarity) => nearCache.get(nearKey(setCode, n, rarity)) ?? [],
 					isKnownSet: (setCode) => (majoritySet !== null && setCode.toLowerCase() === majoritySet) || (knownSets.get(setCode.toLowerCase()) ?? false)
 				});
 				for (const r of d.reasons) log(`Card ${cardIdx}: ${r}`);
@@ -1481,7 +1554,7 @@
 				card.finish = d.finish;
 				card.foil = d.finish === 'foil';
 				card.language = d.language;
-				card.suggestion = null;
+				card.suggestions = [];
 				const row = d.printing.row;
 				const cands = d.printing.candidates;
 				switch (d.identity.state) {
@@ -1505,7 +1578,7 @@
 						card.status = 'not_found';
 						card.results = [];
 						card.printingState = 'unknown';
-						card.suggestion = cands[0] ?? null;
+						card.suggestions = cands.slice(0, 3);
 				}
 				card.selectedResultIdx = 0;
 				log(`Card ${cardIdx}: identity ${d.identity.state}${d.identity.name ? ` "${d.identity.name}"` : ''}, printing ${d.printing.state}${row ? ` ${row.set_code}#${row.collector_number}` : ''}, finish ${d.finish}`);
@@ -1552,10 +1625,11 @@
 			detectedCards = [...detectedCards];
 
 			// Phase 3b: Optional Google Vision retry. If the user has stored a personal
-			// API key in /settings AND the toggle on this page is enabled, re-OCR the
-			// collector strip of every card that is not settled (identity or printing)
-			// and run the fusion again with the Vision text as one more reading —
-			// the only reading whose foil hint (★ vs •) is trusted.
+			// API key in /settings AND the toggle on this page is enabled, send the
+			// name band and the collector strip of every card that is not settled
+			// (identity or printing) to Vision: the name text becomes one more name
+			// candidate, the strip one more reading — the only reading whose foil
+			// hint (★ vs •) is trusted — and the fusion runs again.
 			if (superseded()) return;
 			const userHasVisionKey = !!data.user?.hasVisionApiKey;
 			if (userHasVisionKey && visionRetryEnabled) {
@@ -1567,30 +1641,39 @@
 				if (failed.length > 0) {
 					log(`Phase 3b: Vision retry for ${failed.length} card(s) [${failed.map(f => `Card ${f.index + 1}`).join(', ')}]`);
 					const retried: typeof failed = [];
-					// /api/ocr accepts up to 16 images per request — chunk if needed.
-					for (let batchStart = 0; batchStart < failed.length; batchStart += 16) {
-						const batch = failed.slice(batchStart, batchStart + 16);
+					const visionNames: Array<{ i: number; cleanName: string }> = [];
+					// /api/ocr accepts up to 16 images per request: two per card
+					// (name band, collector strip), so eight cards per request.
+					for (let batchStart = 0; batchStart < failed.length; batchStart += 8) {
+						const batch = failed.slice(batchStart, batchStart + 8);
 						scanProgress = `Retrying ${batch.length} card${batch.length === 1 ? '' : 's'} with Google Vision...`;
 						try {
 							const res = await fetch('/api/ocr', {
 								method: 'POST',
 								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ images: batch.map(({ card }) => card.bottomUrl) })
+								body: JSON.stringify({ images: batch.flatMap(({ card }) => [card.nameUrl, card.bottomUrl]) })
 							});
 							if (res.ok) {
 								const visionData = await res.json();
 								for (let j = 0; j < batch.length; j++) {
-									const newText = cleanOcr((visionData.results?.[j] ?? '').toString());
-									if (!newText) continue;
 									const { card, index: cardIdx } = batch[j];
-									log(`Card ${cardIdx + 1}: Vision text="${newText}" (Tesseract was="${card.ocrText}")`);
-									card.readings.push(readingOf(newText, 'vision', true));
+									const nameText = cleanOcr((visionData.results?.[2 * j] ?? '').toString());
+									const stripText = cleanOcr((visionData.results?.[2 * j + 1] ?? '').toString());
+									if (!nameText && !stripText) continue;
+									log(`Card ${cardIdx + 1}: Vision name="${nameText}" strip="${stripText}" (Tesseract strip was="${card.ocrText}")`);
+									if (stripText) card.readings.push(readingOf(stripText, 'vision', true));
+									const cleanName = cleanNameOf(nameText);
+									if (cleanName.length >= 2) {
+										visionNames.push({ i: cardIdx - firstIdx, cleanName });
+										if (realWordCount(cleanName) > realWordCount(card.nameText)) card.nameText = cleanName;
+									}
 									retried.push(batch[j]);
 									visionRetriedCount++;
 								}
 							}
 						} catch { /* keep Tesseract result for this batch */ }
 					}
+					if (visionNames.length > 0 && !superseded()) await acceptNameMatches(visionNames, 'vision');
 					if (retried.length > 0 && !superseded()) {
 						await prefetch(retried.map((f) => f.card), majoritySet);
 						for (const { card, index } of retried) {
@@ -1653,7 +1736,7 @@
 		card.results = [row];
 		card.selectedResultIdx = 0;
 		card.printingState = 'confirmed';
-		card.suggestion = null;
+		card.suggestions = [];
 		card.matchType = 'accepted';
 		log(`Card ${cardIndex + 1}: accepted by user -> ${row.set_code}#${row.collector_number} "${row.name}"`);
 		detectedCards = [...detectedCards];
@@ -1664,7 +1747,7 @@
 		const card = detectedCards[cardIndex];
 		card.status = 'not_found';
 		card.results = [];
-		card.suggestion = null;
+		card.suggestions = [];
 		card.printingState = 'unknown';
 		detectedCards = [...detectedCards];
 		openManualSearch(cardIndex);
@@ -2151,21 +2234,22 @@
 								{/if}
 							{:else}
 								<p class="text-sm text-[var(--color-text-muted)] mb-2">Not identified automatically.</p>
-								{#if card.suggestion}
-									{@const sug = card.suggestion}
-									{@const sugImg = getImageSrc(sug)}
-									<div class="flex items-center gap-3 p-2 mb-2 rounded-lg border border-yellow-500/30 bg-[var(--color-bg)]">
-										{#if sugImg}
-											<img src={sugImg} alt={sug.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
-										{/if}
-										<div class="flex-1 min-w-0">
-											<p class="text-xs text-yellow-300">Could be (collector number only, no name evidence):</p>
-											<p class="text-sm font-medium truncate">{sug.name}</p>
-											<p class="text-xs text-[var(--color-text-muted)]">{sug.set_name} ({(sug.set_code as string).toUpperCase()}) #{sug.collector_number}</p>
+								{#if card.suggestions.length > 0}
+									<p class="text-xs text-yellow-300 mb-1">Could be (collector number only, no name evidence):</p>
+									{#each card.suggestions as sug}
+										{@const sugImg = getImageSrc(sug)}
+										<div class="flex items-center gap-3 p-2 mb-2 rounded-lg border border-yellow-500/30 bg-[var(--color-bg)]">
+											{#if sugImg}
+												<img src={sugImg} alt={sug.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
+											{/if}
+											<div class="flex-1 min-w-0">
+												<p class="text-sm font-medium truncate">{sug.name}</p>
+												<p class="text-xs text-[var(--color-text-muted)]">{sug.set_name} ({(sug.set_code as string).toUpperCase()}) #{sug.collector_number}</p>
+											</div>
+											<button onclick={() => acceptCandidate(origIdx, sug)}
+												class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1 rounded-lg text-sm transition-colors">Accept</button>
 										</div>
-										<button onclick={() => acceptCandidate(origIdx, sug)}
-											class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1 rounded-lg text-sm transition-colors">Accept</button>
-									</div>
+									{/each}
 								{/if}
 								{#if manualCardIndex === origIdx}
 									<!-- Manual search form -->

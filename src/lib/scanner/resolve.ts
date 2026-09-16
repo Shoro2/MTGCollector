@@ -39,6 +39,8 @@ export type ResolveInput = {
 	printingsByName: (name: string) => PrintingRow[];
 	/** Set+number lookup incl. the server's one-substitution set correction; [] when unknown. */
 	lookup: (setCode: string, collectorNumber: string) => PrintingRow[];
+	/** Printings one OCR error away from the read number (rarity-filtered when a letter was read); optional. */
+	nearLookup?: (setCode: string, collectorNumber: string, rarity: string) => PrintingRow[];
 	isKnownSet: (setCode: string) => boolean;
 };
 export type Decision = {
@@ -90,7 +92,7 @@ export function numberCompatible(read: string, actual: string): boolean {
 	return false;
 }
 
-const isStructural = (s: CollectorInfo['numberSource']) => s === 'fraction' || s === 'pair' || s === 'rarity';
+const isStructural = (s: CollectorInfo['numberSource']) => s === 'fraction' || s === 'pair' || s === 'rarity' || s === 'padded';
 
 export function resolveCard(input: ResolveInput): Decision {
 	const reasons: string[] = [];
@@ -223,8 +225,43 @@ export function resolveCard(input: ResolveInput): Decision {
 			reasons.push(`[${r.variant}] ${strength} reading${via} + name agreement -> ${row.set_code}#${row.collector_number} "${row.name}"`);
 			return done(String(row.name), 'likely', row, [row], 'likely');
 		}
-		reasons.push(`[${r.variant}] ${strength} reading${via} without name agreement -> suggestion "${row.name}"`);
-		return done(null, 'unknown', null, [row], 'unknown');
+		// A structural number is worth showing as a suggestion; a weak one only
+		// when the name OCR at least faintly agrees — otherwise it is noise.
+		if (strength !== 'weak' || nameScore(input.nameText, String(row.name)) >= NAME_CONTRADICT) {
+			reasons.push(`[${r.variant}] ${strength} reading${via} without name agreement -> suggestion "${row.name}"`);
+			return done(null, 'unknown', null, [row], 'unknown');
+		}
+		reasons.push(`[${r.variant}] weak reading${via} without any name agreement -> no suggestion ("${row.name}")`);
+	}
+	// 4. Nothing resolved: a structural number one OCR error away from exactly
+	// one printing of the read or majority set with the printed rarity letter
+	// becomes a suggestion ("U 0223 THT" for #323 uncommon) — never more.
+	if (input.nearLookup) {
+		for (const { r, strength } of ranked) {
+			if (strength === 'none' || !isStructural(r.numberSource)) continue;
+			const setCode = r.setCode && input.isKnownSet(r.setCode) ? r.setCode : input.majoritySet;
+			if (!setCode) continue;
+			const rows = input.nearLookup(setCode, r.collectorNumber, r.rarity);
+			if (rows.length >= 1 && rows.length <= 3) {
+				const ranked = [...rows].sort((a, b) => nameScore(input.nameText, String(b.name)) - nameScore(input.nameText, String(a.name)));
+				reasons.push(`[${r.variant}] ${setCode}#${r.collectorNumber} one digit off ${ranked.map((x) => `${x.set_code}#${x.collector_number} "${x.name}"`).join(', ')} (rarity ${r.rarity ? r.rarity.toUpperCase() + ' agrees' : 'not read'}) -> suggestion(s)`);
+				return done(null, 'unknown', null, ranked, 'unknown');
+			}
+		}
+	}
+	// 5. A partial name that nothing corroborates is still worth one tap when
+	// it has few printings (or few in the read / majority set).
+	if (best && best.score >= NAME_LIKELY) {
+		const printings = input.printingsByName(best.name);
+		const setHints = new Set<string>();
+		for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());
+		if (input.majoritySet) setHints.add(input.majoritySet.toLowerCase());
+		const preferred = printings.filter((row) => setHints.has(String(row.set_code).toLowerCase()));
+		const pick = (preferred.length > 0 ? preferred : printings).slice(0, 3);
+		if (pick.length > 0) {
+			reasons.push(`name candidate "${best.name}" ${best.score.toFixed(2)} (${best.pass}) without corroboration -> suggestion(s) ${pick.map((x) => `${x.set_code}#${x.collector_number}`).join(', ')}`);
+			return done(null, 'unknown', null, pick, 'unknown');
+		}
 	}
 	if (best) reasons.push(`best name candidate "${best.name}" ${best.score.toFixed(2)} below ${NAME_LIKELY}, no usable footer`);
 	return done(null, 'unknown', null, [], 'unknown');

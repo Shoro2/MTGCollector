@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { searchByName, searchBySetNumber, printingsByName, isKnownSet } from '$lib/server/card-search';
+import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySetNumber } from '$lib/server/card-search';
 
 type Lookup = { setCode: string; collectorNumber: string };
 
@@ -40,6 +40,19 @@ export async function POST({ request }) {
 			collectorNumber: l.collectorNumber,
 			setKnown: isKnownSet(l.setCode),
 			...(l.collectorNumber ? searchBySetNumber(l.setCode, l.collectorNumber) : { results: [], matchType: 'none' })
+		}));
+		return json({ batch });
+	}
+
+	// Batch near-number form: { near: [{setCode, collectorNumber, rarity}, ...] }
+	// -> printings one OCR error away from the read number, rarity-filtered.
+	if (Array.isArray(body.near)) {
+		const near = (body.near as unknown[]).filter(isLookup).slice(0, 100) as Array<Lookup & { rarity?: unknown }>;
+		const batch = near.map((l) => ({
+			setCode: l.setCode,
+			collectorNumber: l.collectorNumber,
+			rarity: typeof l.rarity === 'string' ? l.rarity : '',
+			results: nearBySetNumber(l.setCode, l.collectorNumber, typeof l.rarity === 'string' ? l.rarity : '')
 		}));
 		return json({ batch });
 	}

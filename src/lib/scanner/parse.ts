@@ -16,6 +16,11 @@ export function fixOcrDigits(s: string): string {
 		.replace(/[^0-9]/g, '');
 }
 
+/** A token with at least one digit whose letters are all OCR digit lookalikes ("O08S", "1T", "8B2"). */
+export function looksLikeDigits(token: string): boolean {
+	return /\d/.test(token) && /^[0-9OoIlSBZ]+$/.test(token);
+}
+
 export function stripLeadingZeros(s: string): string {
 	const stripped = s.replace(/^0+/, '');
 	return stripped || '0';
@@ -26,12 +31,14 @@ export interface CollectorInfo {
 	collectorNumber: string;
 	foilFromText: boolean;
 	/**
-	 * How the collector number was found. 'fraction' (123/277) and 'rarity'
-	 * (C 0123) are reliable; 'weak' means "the last digits before the set
-	 * code", which can be the set total or any other number — callers should
-	 * treat a weak number as a hint and sanity-check the result.
+	 * How the collector number was found. 'fraction' (123/277), 'rarity'
+	 * (C 0123), 'pair' (123 277 C) and 'padded' (a standalone zero-padded
+	 * four-digit token, the modern format without a rarity letter) are
+	 * reliable; 'weak' means "the last digits before the set code", which can
+	 * be the set total or any other number — callers should treat a weak
+	 * number as a hint and sanity-check the result.
 	 */
-	numberSource: 'fraction' | 'pair' | 'rarity' | 'weak' | 'none';
+	numberSource: 'fraction' | 'pair' | 'rarity' | 'padded' | 'weak' | 'none';
 	/**
 	 * Rarity letter printed next to the collector number (c/u/r/m/l/s/t,
 	 * lower-case), '' when none was read. Lets callers reject a set+number hit
@@ -59,8 +66,10 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		// Set codes are not always 3 letters: many are alphanumeric (M21, 2X2,
 		// 40K, MH2, 10E). Require at least one letter so a pure-number candidate
 		// (e.g. a collector total sitting before a language code) is skipped and
-		// we keep scanning for the real lettered set code.
-		if (/[A-Z]/i.test(m[1])) {
+		// we keep scanning for the real lettered set code. A mixed token whose
+		// letters are all digit lookalikes ("O08S" for 0085) is the collector
+		// number, not a set code.
+		if (/[A-Z]/i.test(m[1]) && !looksLikeDigits(m[1])) {
 			anchorMatch = m;
 			break;
 		}
@@ -137,6 +146,17 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 				}
 			}
 
+			// Zero-padded four-digit token without a rarity letter ("0085 TMT EN")
+			// is the modern collector-number format and reliable on its own.
+			if (!result.collectorNumber) {
+				const padded = tail.match(/(?:^|\s)([0O][\dOoIlSB]{3})(?![\dOoIlSB/])/);
+				if (padded) {
+					result.collectorNumber = stripLeadingZeros(fixOcrDigits(padded[1]));
+					result.numberSource = 'padded';
+					dbg?.(`padded number: "${padded[1]}" -> num="${result.collectorNumber}"`);
+				}
+			}
+
 			// Fallback: just find the last digit sequence
 			if (!result.collectorNumber) {
 				const allDigits = [...before.matchAll(/\d{1,4}/g)];
@@ -179,7 +199,7 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		// while an 'i' flag would also match lowercase flavor/artist words. Allow
 		// digits but require an uppercase letter, skipping pure-number tokens.
 		for (const m of text.matchAll(/\b([A-Z0-9]{3,4})\b/g)) {
-			if (/[A-Z]/.test(m[1])) {
+			if (/[A-Z]/.test(m[1]) && !looksLikeDigits(m[1])) {
 				result.setCode = m[1].toLowerCase();
 				break;
 			}
@@ -197,6 +217,10 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			result.collectorNumber = stripLeadingZeros(rarityMatch[2]);
 			result.numberSource = rarityMatch[2].length < 3 ? 'weak' : 'rarity';
 			result.rarity = rarityMatch[1][0].toLowerCase();
+		} else if (text.match(/(?:^|\s)([0O][\dOoIlSB]{3})(?![\dOoIlSB/])/)) {
+			const padded = text.match(/(?:^|\s)([0O][\dOoIlSB]{3})(?![\dOoIlSB/])/)!;
+			result.collectorNumber = stripLeadingZeros(fixOcrDigits(padded[1]));
+			result.numberSource = 'padded';
 		} else {
 			const numMatch = text.match(/(\d{1,4})/);
 			if (numMatch) {

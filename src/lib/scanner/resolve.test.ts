@@ -100,13 +100,25 @@ describe('resolveCard', () => {
 		expect(d.printing.candidates).toHaveLength(0);
 	});
 
-	it('turns a weak number without name evidence into a suggestion, not an identification', () => {
+	it('neither identifies nor suggests from a weak number without any name agreement', () => {
 		const d = resolveCard(base({
 			nameText: 'TT TE a. -',
 			footer: [reading({ setCode: 'mid', collectorNumber: '7', numberSource: 'weak', rarity: 'c', text: 'WosZ7 C MID EN' })]
 		}));
 		expect(d.identity.state).toBe('unknown');
-		expect(d.printing.candidates).toEqual([tmt.d7]);
+		expect(d.printing.candidates).toEqual([]);
+		expect(d.reasons.join(' ')).toContain('no suggestion');
+	});
+
+	it('suggests a structural number-only hit even without name agreement', () => {
+		const d = resolveCard(base({
+			nameText: 'd',
+			footer: [reading({ collectorNumber: '85', numberSource: 'padded', text: '0085 1T EN' }), reading({ collectorNumber: '85', numberSource: 'padded', text: '0085 IT EN', variant: 'rotated small' })],
+			majoritySet: 'tmt',
+			lookup: (s, n) => (s === 'tmt' && n === '85' ? [row('Bot Bashing Time', 'tmt', '85')] : [])
+		}));
+		expect(d.identity.state).toBe('unknown');
+		expect(d.printing.candidates.map((r) => r.name)).toEqual(['Bot Bashing Time']);
 	});
 
 	it('lets a name candidate veto a number-only hit of a different card', () => {
@@ -150,5 +162,33 @@ describe('resolveCard — exact agreement confirms', () => {
 		});
 		expect(d.identity).toMatchObject({ name: 'Negate', state: 'confirmed' });
 		expect(d.printing).toMatchObject({ row: negate[0], state: 'confirmed' });
+	});
+});
+
+describe('resolveCard — near-number suggestion', () => {
+	it('suggests the single rarity-consistent printing one digit away when nothing else resolves', () => {
+		const ronin = row("The Last Ronin's Technique", 'tmt', '323', 'uncommon');
+		const d = resolveCard(base({
+			nameText: '- on Bt',
+			footer: [reading({ setCode: 'tht', collectorNumber: '223', numberSource: 'rarity', rarity: 'u', text: 'U 0223 THT EN' })],
+			majoritySet: 'tmt',
+			lookup: () => [],
+			nearLookup: (s, n, rar) => (s === 'tmt' && n === '223' && rar === 'u' ? [ronin] : [])
+		}));
+		expect(d.identity.state).toBe('unknown');
+		expect(d.printing.candidates).toEqual([ronin]);
+	});
+});
+
+describe('resolveCard — partial name suggestion', () => {
+	it('offers the printings of an uncorroborated partial name as suggestions', () => {
+		const immolation = row('Immolation', 'mid', '144');
+		const d = resolveCard(base({
+			nameCandidates: [{ name: 'Immolation', score: 0.5, pass: 'binarized' }], nameText: 'wmotorion',
+			footer: [reading({ text: 'S85 F777 junk' })],
+			printingsByName: (n) => (n === 'Immolation' ? [immolation] : [])
+		}));
+		expect(d.identity.state).toBe('unknown');
+		expect(d.printing.candidates).toEqual([immolation]);
 	});
 });

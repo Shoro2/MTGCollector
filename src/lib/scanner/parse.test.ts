@@ -176,6 +176,7 @@ describe('parseCollectorInfo — rarity letter', () => {
 
 	it('reports no letter for a weak number or when the set code follows the fraction', () => {
 		expect(parse('0098 . aa mt').rarity).toBe('');
+		expect(parse('0098 . aa mt').numberSource).toBe('padded');
 		expect(parse('24/277 MID EN').rarity).toBe('');
 	});
 });
@@ -225,5 +226,21 @@ describe('parseCollectorInfo — rarity letter glued to the digits', () => {
 		expect(r.collectorNumber).toBe('47');
 		expect(r.numberSource).toBe('rarity');
 		expect(r.rarity).toBe('c');
+	});
+});
+
+describe('parseCollectorInfo — padded number and lookalike set codes', () => {
+	it('treats a zero-padded four-digit token as a reliable number', () => {
+		const r = parse('0085 1T EN & Xavita Ringo');
+		expect(r.collectorNumber).toBe('85');
+		expect(r.numberSource).toBe('padded');
+		expect(parse('vv 0323 rT EN Lute').numberSource).toBe('padded');
+	});
+
+	it('does not take a digit-lookalike token as the set code', () => {
+		const r = parse('O08S IT EN Xavita Rint');
+		expect(r.setCode).toBe('');
+		expect(r.collectorNumber).toBe('85');
+		expect(r.numberSource).toBe('padded');
 	});
 });

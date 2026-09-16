@@ -11,7 +11,7 @@ export function normalizeCollectorNumber(n: string): string {
 	return String(n).trim().toLowerCase().replace(/^0+(?=\d)/, '');
 }
 
-const STRONG_SOURCES: ReadonlyArray<CollectorInfo['numberSource']> = ['fraction', 'pair', 'rarity'];
+const STRONG_SOURCES: ReadonlyArray<CollectorInfo['numberSource']> = ['fraction', 'pair', 'rarity', 'padded'];
 
 /**
  * Given several reprints that all share a name, pick the single printing the

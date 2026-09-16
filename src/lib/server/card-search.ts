@@ -1,6 +1,7 @@
 import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
+import { nameAliases, normalizeName, similarity } from '../scanner/similarity.js';
 
 const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity`;
 
@@ -115,12 +116,96 @@ export function searchByName(query: string): SearchResult {
 		}
 	}
 
+	// Last resort: edit-distance search over every distinct name (and face).
+	// Several misread letters inside one word ("wmotorion" for Immolation)
+	// defeat every index-based path above; a scan of ~30k names with a bigram
+	// prefilter takes a few tens of milliseconds.
+	const fuzzy = fuzzyNames(cleaned);
+	if (fuzzy.length > 0) {
+		const rows = fuzzy.flatMap((f) => exactStmt().all(f.name, `${f.name} //%`, f.name) as CardRow[]);
+		if (rows.length > 0) return { results: rows, matchType: 'fuzzy' };
+	}
+
 	return { results: [], matchType: 'none' };
+}
+
+type NameEntry = { name: string; norm: string; bigrams: Set<string> };
+let nameIndex: { cardCount: number; entries: NameEntry[] } | null = null;
+
+function bigramsOf(norm: string): Set<string> {
+	const out = new Set<string>();
+	const compact = norm.replace(/\s+/g, ' ');
+	for (let i = 0; i < compact.length - 1; i++) out.add(compact.slice(i, i + 2));
+	return out;
+}
+
+/** Distinct canonical names with their aliases, rebuilt when the card count changes (imports). */
+function nameEntries(): NameEntry[] {
+	const cardCount = (sqlite.prepare('SELECT COUNT(*) AS c FROM cards').get() as { c: number }).c;
+	if (nameIndex && nameIndex.cardCount === cardCount) return nameIndex.entries;
+	const entries: NameEntry[] = [];
+	for (const { name } of sqlite.prepare('SELECT DISTINCT name FROM cards').all() as Array<{ name: string }>) {
+		for (const alias of nameAliases(name)) {
+			const norm = normalizeName(alias);
+			if (norm.length >= 3) entries.push({ name, norm, bigrams: bigramsOf(norm) });
+		}
+	}
+	nameIndex = { cardCount, entries };
+	return entries;
+}
+
+/**
+ * Canonical names whose normalised form (or a face) is within edit-distance
+ * similarity >= 0.5 of the query, best first, at most `limit`. Queries with
+ * fewer than six letters are too short for this to mean anything.
+ */
+export function fuzzyNames(query: string, limit = 5): Array<{ name: string; score: number }> {
+	const norm = normalizeName(query);
+	if (norm.replace(/\s/g, '').length < 6) return [];
+	const qb = bigramsOf(norm);
+	const best = new Map<string, number>();
+	for (const e of nameEntries()) {
+		let inter = 0;
+		for (const b of qb) if (e.bigrams.has(b)) inter++;
+		if ((2 * inter) / (qb.size + e.bigrams.size) < 0.25) continue;
+		const score = similarity(norm, e.norm);
+		if (score >= 0.5 && score > (best.get(e.name) ?? 0)) best.set(e.name, score);
+	}
+	return [...best.entries()].map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 /** Every printing of a canonical card name, newest first (no date cut-off). */
 export function printingsByName(name: string): CardRow[] {
 	return printingsStmt().all(name) as CardRow[];
+}
+
+/**
+ * Printings of a set whose collector number is one OCR error away from the
+ * read one — one substituted digit, one dropped digit, one inserted digit —
+ * restricted to the printed rarity letter when one was read. Feeds the
+ * scanner's "could be …" suggestion for cards whose name is unreadable;
+ * never an identification on its own.
+ */
+export function nearBySetNumber(setCode: string, collectorNumber: string, rarityLetter = ''): CardRow[] {
+	const lc = setCode.trim().toLowerCase();
+	const n = collectorNumber.trim().toLowerCase().replace(/^0+(?=\d)/, '');
+	const m = /^(\d{1,4})([a-z]?)$/.exec(n);
+	if (!lc || !m) return [];
+	const [, digits, suffix] = m;
+	const variants = new Set<string>();
+	for (let i = 0; i < digits.length; i++) {
+		for (const d of '0123456789') if (d !== digits[i]) variants.add(digits.slice(0, i) + d + digits.slice(i + 1));
+		if (digits.length > 1) variants.add(digits.slice(0, i) + digits.slice(i + 1));
+	}
+	for (let i = 0; i <= digits.length; i++) for (const d of '0123456789') variants.add(digits.slice(0, i) + d + digits.slice(i));
+	const numbers = [...variants].map((v) => v.replace(/^0+(?=\d)/, '')).filter((v) => v !== digits).map((v) => v + suffix);
+	if (numbers.length === 0) return [];
+	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number IN (${numbers.map(() => '?').join(',')})`).all(lc, ...numbers) as CardRow[];
+	const letter = rarityLetter.trim().toLowerCase();
+	if (!letter) return rows;
+	const wanted: Record<string, string[]> = { c: ['common'], u: ['uncommon'], r: ['rare'], m: ['mythic'], l: ['common'], s: ['special', 'bonus'] };
+	const ok = wanted[letter];
+	return ok ? rows.filter((r) => ok.includes(String(r.rarity ?? '').toLowerCase())) : rows;
 }
 
 /** Whether a set code exists in the database (used to weigh footer readings). */
