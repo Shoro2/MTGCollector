@@ -290,7 +290,7 @@ Keep this section current when you change the scanner. It has three parts: the i
 
 **Findings that drive the order** (all reproduced):
 
-- The harness scores a bag of names; the printing is not checked (Bot Bashing Time is the PTMT #85p promo in the photos, a TMT #85 hit counts as correct) and nothing fails the run.
+- The harness scores a bag of names; the printing is not checked (Bot Bashing Time exists as TMT #85 and as the PTMT #85p promo; a card left with both candidates counts as identified) and nothing fails the run.
 - `disambiguateReprints()` matches arbitrary digit sequences before the exact set+number: `C 0085p PTMT EN` with set `ptmt`/number `85p` returns `tmt#85`; a copyright year `2009` selects a printing numbered 2009.
 - Double-faced cards: production stores Scryfall's canonical name (`Beloved Beggar // Generous Soul`), the search and `bestNameMatch()` ignore `card_faces`, so a *perfect* read of the front face scores 0.50/0.44 and fails the 0.6 threshold. The harness seed uses simplified names and hides this. Name queries are also capped at the 10 newest printings (exact) / 20 rows, so the right printing of a much-reprinted card may not be among the candidates.
 - `found` does not mean "printing confirmed": unresolved reprint lists are `found`, and "Import all" writes `results[0]` (the newest printing) into the collection; the Tesseract path stores finish `nonfoil` although it has no evidence.
@@ -320,7 +320,7 @@ photo / live frame -> EXIF-normalised -> detection (quads, orientation, quality)
 
 #### Phase 0 — Measurement foundation (~4 h)
 
-- **WP0.1 Printing-level harness metric.** `expectations-real-photos.json` lists expected printings (`name`, `set`, `number`, optional `finish`) per photo; `harness.mjs` reports the metrics above, compares against a committed `baseline.json` and exits non-zero on any regression. Acceptance: the PTMT #85p promo returned as TMT #85 counts as a wrong printing; a missing card is a miss even when it is correctly `unknown`.
+- **WP0.1 Printing-level harness metric.** `expectations-real-photos.json` lists expected printings (`name`, `set`, `number`, optional `finish`) per photo; `harness.mjs` reports the metrics above, compares against a committed `baseline.json` and exits non-zero on any regression. Acceptance: a card left with several candidate printings counts as unresolved, a unique but different printing as wrong; a missing card is a miss even when it is correctly `unknown`.
 - **WP0.2 Reference-data fidelity.** Harness seed from canonical data: names with ` // `, `card_faces` rows, real layouts; `seed-cards.json` regenerated from a full DB export (`export-seed.mjs`) instead of hand-typed rows; distractors extended cross-set (the same number in every other seeded set, so a misread set code like `YOW` for `MID` shows up as WRONG); `photo-inventory.json` (hashes, sizes, instance counts) committed.
 - **WP0.3 Review regression tests.** Add the six tests as `src/lib/scanner/review-regressions.test.ts`, the five failing ones as `it.fails` until WP1.1/WP1.2 land, then flip them.
 - **WP0.4 Hold-out photos (owner).** 5–10 new photos not used for tuning: double-faced cards, showcase/borderless frames, foils under glare, a 2×3 phone spread, single-card live captures, a mixed-set pile, an empty table (negative case). Expected printings verified by the owner.

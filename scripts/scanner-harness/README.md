@@ -22,7 +22,7 @@ unnecessary; the harness then runs against the real card pool.
 
 ```bash
 # Upload path: single or multiple mode, one result block per file
-node scripts/scanner-harness/harness.mjs --mode multiple photos/*.jpg
+node scripts/scanner-harness/harness.mjs --mode multiple --expect scripts/scanner-harness/expectations-real-photos.json --baseline scripts/scanner-harness/baseline.json photos/*.jpg
 node scripts/scanner-harness/harness.mjs --mode single --expect scripts/scanner-harness/expectations.json fixtures/synth-single.jpg
 
 # Synthetic fixtures (no photos needed)
@@ -33,12 +33,30 @@ node scripts/scanner-harness/make-live-y4m.mjs fixtures/live-scene.y4m
 node scripts/scanner-harness/live-harness.mjs fixtures/live-scene.y4m live-result.png
 ```
 
-`--expect` takes a JSON map `{ "<file name>": ["Card Name", ...] }` and prints
-matched / wrong / missing names per photo. `--out results.json` stores every
-card's OCR text, chosen printing and the full debug log for later analysis.
-`expectations-real-photos.json` lists the eight real phone/camera spreads used
-during development (the photos themselves are not in the repository); their
-printings are part of `seed-cards.json`.
+`--expect` takes a JSON map from file name to the card instances in the photo,
+each either a printing `{ "name", "set", "number" }` or a plain name (identity
+only). The harness then scores every photo at two levels — *identity* (the
+accepted name matches an expected instance) and *printing* (its unique set +
+number is the expected one) — and reports unresolved printings, wrong
+identities, wrong printings, missing and extra cards, and cards offered as
+`likely` for one-tap confirmation (not counted as identified). `--out
+results.json` stores every card's OCR text, chosen printing, state and the
+full debug log for later analysis. `expectations-real-photos.json` lists the
+eight real phone/camera spreads used during development (the photos themselves
+are not in the repository; `photo-inventory.json` records their SHA-256, sizes
+and instance counts); their printings are part of `seed-cards.json`.
+
+`--write-baseline baseline.json` stores the per-photo metrics;
+`--baseline baseline.json` compares a later run against them and exits 1 when
+identity or printing drops or wrong identities/printings rise for any photo.
+`baseline.json` in this directory is the committed reference for the eight
+photos.
+
+`export-seed.mjs` regenerates `seed-cards.json` from a fully imported
+database (canonical "Front // Back" names, `card_faces`, layouts, rarities) for
+the printings listed in an expectations file, so the harness seed stays
+production-faithful. Double-faced cards must carry the canonical name and their
+faces: the scanner reads the face name, the database stores the canonical one.
 
 ```bash
 # Diagnostics: detection overlay + every card's warp / name crop / bottom crop as one PNG montage

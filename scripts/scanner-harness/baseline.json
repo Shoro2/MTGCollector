@@ -1,0 +1,101 @@
+{
+ "written": "2026-09-16T13:13:47.894Z",
+ "photos": {
+  "20260403_114602(1).jpg": {
+   "detected": 4,
+   "identity": 4,
+   "printing": 4,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 5.3
+  },
+  "20260403_120150(1).jpg": {
+   "detected": 15,
+   "identity": 11,
+   "printing": 11,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 4,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 10
+  },
+  "20260403_121351(1).jpg": {
+   "detected": 10,
+   "identity": 8,
+   "printing": 7,
+   "unresolvedPrinting": 1,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 2,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 7.7
+  },
+  "20260405_154748.jpg": {
+   "detected": 15,
+   "identity": 12,
+   "printing": 12,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 3,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 10.8
+  },
+  "DSC00847.JPG": {
+   "detected": 15,
+   "identity": 14,
+   "printing": 14,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 1,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 8.3
+  },
+  "DSC00853.JPG": {
+   "detected": 15,
+   "identity": 12,
+   "printing": 12,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 3,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 8.2
+  },
+  "DSC00854.JPG": {
+   "detected": 15,
+   "identity": 12,
+   "printing": 12,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 3,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 8.1
+  },
+  "DSC00855(1).JPG": {
+   "detected": 15,
+   "identity": 13,
+   "printing": 13,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 2,
+   "extra": 0,
+   "likely": 0,
+   "wallSeconds": 8
+  }
+ }
+}
