@@ -1588,7 +1588,8 @@
 			<div class="w-5 h-5 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin"></div>
 			<span class="text-sm">{scanProgress}</span>
 		</div>
-	{:else if scanProgress && imagePreview}
+	{:else if scanProgress && (imagePreview || scanMode === 'live')}
+		<!-- Live captures have no imagePreview; still show the final "Done! x of y identified." line. -->
 		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-sm text-[var(--color-text-muted)]">
 			{scanProgress}
 		</div>

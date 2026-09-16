@@ -187,13 +187,14 @@ src/
 3. Corner ordering via `orderCornersForCard()`: the short edge becomes the top of the warp, so sideways cards come out upright without a separate rotation step
 4. Corner expansion (~5% outward from the quad centre) + perspective transform to 488×680. The expansion is deliberately **not clamped** to the frame: `warpPerspective` pads out-of-frame samples with black, so a card that touches the image edge (typical for hand-held live captures) keeps the same ~3.5% margin as any other and the fixed crop windows below still line up. Clamping used to make such warps tight on the card and pushed the collector line out of its crop window.
 5. **Name OCR**: Tesseract.js (PSM 7) on the name band — x 6–74%, y 5.5–13.5% of the warp (tall enough for both outer-border and inner-frame detections; ends before a three-symbol mana cost, which otherwise becomes junk letters glued to the name) → batched API search by name → FTS fallback. `bestNameMatch()` scores the whole OCR string and, when only trailing junk (mana symbols, frame edge: "…Bolt A SSSERRY") drags the score down, the matching word-prefix — but only if every remaining word looks like OCR junk (`looksLikeOcrJunk`), so "Fire Ball" never collapses to the card "Fire".
-6. **Bottom OCR**: Tesseract.js (PSM 6) runs locally on every card's collector strip first (left half, y 89–99% of the warp; the collector line sits at ~96–99% of the physical card and lands between ~91% and ~98% of the warp depending on the detected quad's margin). If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
-7. **Foil detection**: text-based detection from the separator char between set code and language on the bottom line (`*` = foil, `.` = non-foil), parsed from the Tesseract bottom OCR.
-8. API search with fallbacks: set+number → name → FTS
-9. Manual search fallback for unidentified cards
-10. Select all / import all buttons for bulk adding (auth required)
-11. **Copy for Moxfield**: generates text in `1 Name (SET) number` format, appends `*F*` for foils
-12. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing.
+6. **Upside-down retry (Phase 2b)**: `orderCornersForCard()` cannot tell a card's top from its bottom when the card lies sideways or upside down (both short edges are geometrically identical), so about half of such cards leave the warp rotated 180° with garbage name OCR. Every card the name search didn't resolve is re-cropped from the 180°-rotated warp (`extractOcrCrops`, the same helper the main loop uses), OCR'd and searched again; on success the rotated crops replace the originals for the bottom-line phase. Costs one extra name-OCR pass for the failed cards only.
+7. **Bottom OCR**: Tesseract.js (PSM 6) runs locally on every card's collector strip first (left half, y 89–99% of the warp; the collector line sits at ~96–99% of the physical card and lands between ~91% and ~98% of the warp depending on the detected quad's margin). If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
+8. **Foil detection**: text-based detection from the separator char between set code and language on the bottom line (`*` = foil, `.` = non-foil), parsed from the Tesseract bottom OCR.
+9. API search with fallbacks: set+number → name → FTS
+10. Manual search fallback for unidentified cards
+11. Select all / import all buttons for bulk adding (auth required)
+12. **Copy for Moxfield**: generates text in `1 Name (SET) number` format, appends `*F*` for foils
+13. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing.
 
 ### Live Scanner (camera mode, `/scan` → "Live camera")
 
@@ -224,8 +225,8 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 
 - `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, scene stability, overlay geometry, price display/divergence helpers. Anything touching OpenCV/Tesseract/DOM or SQLite is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable.
 - `npm run check` — svelte-check (TypeScript + Svelte). CI runs `check`, `test` and `build` on every PR (`.github/workflows/ci.yml`).
-- **Live scanner smoke test (manual):** run `npm run dev`, then drive headless Chromium with Playwright using `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` (add `--use-file-for-fake-video-capture=<clip.y4m>` for a portrait stream; a Y4M file is trivial to synthesise with a few lines of Python). Assert the viewfinder's `aspect-ratio` equals the stream's and that no `pageerror` fires. Without CDN access (OpenCV/Tesseract) this only exercises the UI and stream handling, not detection.
-- There are no image fixtures for the OCR pipeline yet — see Roadmap.
+- **Scanner harness** (`scripts/scanner-harness/`, see its README): drives the real `/scan` pipeline headlessly with Playwright — upload path (`harness.mjs --mode single|multiple photos/*.jpg`, optional `--expect` name lists per file, `--out` JSON with OCR texts and the full debug log) and live path (`live-harness.mjs` plays a Y4M clip as the fake camera). `make-synthetic.mjs` renders synthetic MTG-like cards (single, 2×2 grid, sideways) so the whole chain (detection → warp → crops → OCR → matching → reprint disambiguation) runs offline with the self-hosted libraries and a DB seeded by `seed-test-db.mjs`. Reference results on the sandbox: single 1/1 in ~3 s, grid 4/4 in ~4.4 s, sideways 1/1 in ~4 s (Phase 2b), live 2/2 about a second after the scene settles. Chromium's fake camera crops portrait clips when the app asks for 1920×1080, so render live scenes in landscape.
+- Real-photo fixtures are still missing (photos supplied in chat did not arrive as files in the sandbox); `seed-cards.json` already contains the printings of the first batch so they can be run as soon as the files exist.
 
 ## Coding Conventions
 
@@ -244,8 +245,9 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 - **Scryfall API** (`api.scryfall.com`) — Card data, bulk downloads, price data. Rate limit: 200ms between image downloads.
 - **Google OAuth** — User authentication (PKCE flow via `arctic`)
 - **Google Cloud Vision API** (`vision.googleapis.com`) — Optional batch OCR (TEXT_DETECTION) for card scanning. Each user supplies their own personal API key in `/settings` (stored in `users.google_vision_api_key`). The server has no shared key. Usage is still tracked per user in the `api_usage` table.
-- **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`), card rectangle detection + foil detection (HSV analysis)
-- **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`), OCR fallback for collector numbers/names
+- **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`) by default, card rectangle detection + foil detection (HSV analysis)
+- **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`) by default, OCR for names and collector numbers
+- **Self-hosting both** (`PUBLIC_SCANNER_ASSETS_URL`, see `src/lib/scanner/assets.ts`): `node scripts/scanner-harness/vendor-assets.mjs` fetches the same versions from npm (`@techstark/opencv-js@4.9.0-release.3`, `tesseract.js@5`, `@tesseract.js-data/eng`) into the gitignored `static/vendor/`; set the variable to `/vendor`. Needed for offline development and sandboxed CI, optional for production (no CDN calls, ~50 MB of static files). The CSP allows `connect-src data:` because OpenCV.js fetches its embedded WASM from a data: URL.
 - **Frankfurter API** (`api.frankfurter.dev/v1/latest`) — USD/EUR exchange rate, cached 6 hours
 - **Plausible Analytics** (`analytics.mtg-collector.com`) — Self-hosted, cookieless reach measurement (Plausible Community Edition). Snippet embedded in `src/routes/+layout.svelte` inside `<svelte:head>`. Tracks pageviews, referrer, browser, OS, device type, and country — only aggregated stats, no personally identifiable raw data, no cookies. Domain is hardcoded in the served JS file, so no env vars are required.
 
@@ -283,6 +285,10 @@ Status of the scanner work (most recent first). Keep this list current when you 
 
 ### Done
 
+- Scanner libraries can be self-hosted (`PUBLIC_SCANNER_ASSETS_URL` + `vendor-assets.mjs`), which makes the pipeline runnable offline and in CI.
+- Headless scanner harness with synthetic fixtures (upload single/grid/sideways + live mode) — the first end-to-end verification of detection, OCR and matching outside a browser session.
+- Upside-down retry (Phase 2b): sideways/upside-down cards that came out of the warp rotated 180° are recovered (synthetic sideways fixture 0/1 → 1/1).
+- Live mode shows the final "Done! x of y identified." line like the upload modes.
 - Foil-only printings show their foil price (marked) in `/cards`, reprints, wishlist and scan results instead of "-"; `/cards` price sort includes them.
 - Card detail page flags EUR prices that contradict the USD price by more than 5× ("Check this price") — Cardmarket trend anomalies are visible instead of silently wrong.
 - Upload scans run detection on a ≤1600 px copy and warp from the full-resolution photo (several seconds faster on phone photos).
@@ -299,12 +305,12 @@ Status of the scanner work (most recent first). Keep this list current when you 
 
 1. **Real-device verification** on Android Chrome and iOS Safari: portrait preview, auto-capture within ~1 s of holding still, red edge warning, a card filling the frame gets identified, upload scan of a 12 MP photo is noticeably faster. Tune `minStableMs` / `driftFrac` in `LiveScanner.svelte` if auto-capture fires too eagerly or too late.
 2. **Price data quality (decision needed)**: when `priceDivergence()` flags an EUR value, collection value and profit/loss still use it. Options: (a) keep as is and only flag; (b) fall back to USD×rate for flagged printings in `/collection`, `/prices` and the homepage KPI; (c) let the user pin a manual price per printing. (b) changes reported totals based on a heuristic, so it should be an explicit product decision.
-3. **Regression fixtures for the OCR pipeline**: a handful of real photos (upload and live captures, incl. a card filling the frame and a 3×3 grid) with expected name/set/number, run in headless Chromium. Needs CDN access for OpenCV/Tesseract in CI or vendored builds.
+3. **Real-photo regression fixtures**: the harness and synthetic fixtures exist; what is missing are real phone photos (upload and live captures, incl. a card filling the frame, a 3×3 grid, sideways spreads, foils under glare) with expected name/set/number. Then wire `harness.mjs --expect` into CI with `vendor-assets.mjs` run in the job.
 4. **Move `detectCardsQuick` into a Web Worker** (OpenCV.js loaded in the worker) so the ~50–100 ms per frame on phones stops blocking the main thread; the overlay would then stay smooth during detection.
 5. **Sharpness gate before auto-capture** (variance of the Laplacian over the card ROI) to reject motion-blurred frames that pass the stability check.
 6. **Derive crop windows from the warp itself** (locate the black border via row/column intensity profiles) instead of fixed percentages — would also make single-photo uploads robust to varying margins.
 7. **Consolidate `/collection/scan` onto the shared pipeline**: it still has its own simpler detection (single Canny pass at full resolution, no name OCR, 92–100% bottom crop, 4× upscale) and none of the scanner fixes above. Its bottom crop is tolerant of tight warps, so it was left untouched rather than half-ported.
-8. **Vendor OpenCV.js / Tesseract.js** instead of loading from CDNs (offline dev, sandboxed CI, privacy) — check licence/attribution requirements first.
+8. **Decide whether production should self-host the scanner libraries** (`PUBLIC_SCANNER_ASSETS_URL=/vendor`, ~50 MB static files, no CDN calls, Apache-2.0 licences with attribution). The mechanism exists; this is a deployment/privacy decision.
 
 ### Known limitations
 
