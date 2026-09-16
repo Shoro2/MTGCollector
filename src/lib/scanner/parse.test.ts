@@ -141,3 +141,72 @@ describe('parseCollectorInfo without a set anchor', () => {
 		expect(r.numberSource).toBe('rarity');
 	});
 });
+
+describe('parseCollectorInfo — rarity letter', () => {
+	it('reads the letter after a fraction', () => {
+		const r = parse('180/277 C MID EN');
+		expect(r.collectorNumber).toBe('180');
+		expect(r.rarity).toBe('c');
+	});
+
+	it('reads the letter of a number/total pair', () => {
+		const r = parse('040 277 U MID EN');
+		expect(r.numberSource).toBe('pair');
+		expect(r.rarity).toBe('u');
+	});
+
+	it('reads the letter before a padded number', () => {
+		const r = parse('R 0156 TMT EN');
+		expect(r.collectorNumber).toBe('156');
+		expect(r.numberSource).toBe('rarity');
+		expect(r.rarity).toBe('r');
+	});
+
+	it('reads a doubled letter in the generic fallback', () => {
+		const r = parse('Cc 0150');
+		expect(r.numberSource).toBe('rarity');
+		expect(r.rarity).toBe('c');
+	});
+
+	it('reads the letter after a fraction without a language anchor', () => {
+		const r = parse('118/277 C Story Spotlight');
+		expect(r.collectorNumber).toBe('118');
+		expect(r.rarity).toBe('c');
+	});
+
+	it('reports no letter for a weak number or when the set code follows the fraction', () => {
+		expect(parse('0098 . aa mt').rarity).toBe('');
+		expect(parse('24/277 MID EN').rarity).toBe('');
+	});
+});
+
+describe('parseCollectorInfo — dropped digits', () => {
+	it('downgrades a fraction whose numerator is shorter than the total', () => {
+		const r = parse('4/277 C MID EN');
+		expect(r.collectorNumber).toBe('4');
+		expect(r.numberSource).toBe('weak');
+		expect(parse('24/7277 MID EN').numberSource).toBe('weak');
+		expect(parse('040/277 C MID EN').numberSource).toBe('fraction');
+	});
+
+	it('downgrades a rarity-prefixed number with fewer than three digits', () => {
+		expect(parse('C 7 TMT EN').numberSource).toBe('weak');
+		expect(parse('C 0156 TMT EN').numberSource).toBe('rarity');
+	});
+
+	it('applies the same rules without a language anchor', () => {
+		expect(parse('40/277 C Story').numberSource).toBe('weak');
+		expect(parse('118/277 C Story').numberSource).toBe('fraction');
+		expect(parse('Cc 0150').numberSource).toBe('rarity');
+		expect(parse('C 15').numberSource).toBe('weak');
+	});
+});
+
+describe('parseCollectorInfo — land rarity letter', () => {
+	it('accepts the L printed on basic lands as the rarity prefix', () => {
+		const r = parse('axter Stockman L 0187 TMT EN');
+		expect(r.collectorNumber).toBe('187');
+		expect(r.numberSource).toBe('rarity');
+		expect(r.rarity).toBe('l');
+	});
+});

@@ -8,6 +8,7 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
+	import type { CollectorInfo } from '$lib/scanner/parse';
 	import { bestNameMatch, looksLikeOcrJunk, similarity } from '$lib/scanner/similarity';
 	import { disambiguateReprints } from '$lib/scanner/pipeline';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
@@ -45,6 +46,13 @@
 		altNameUrl?: string;
 		altBottomUrl?: string;
 		altCroppedUrl?: string;
+		/** Secondary OCR inputs: name band at NAME_OCR_SCALE_ALT (raw-line pass), collector strip at BOTTOM_OCR_SCALE_ALT. */
+		nameUrl2?: string;
+		bottomUrl2?: string;
+		altNameUrl2?: string;
+		altBottomUrl2?: string;
+		/** Best (unaccepted, score < 0.6) name-search candidate: positive evidence for what the name OCR says. */
+		nameBest?: { name: string; score: number };
 	}>>([]);
 	let debugCanvasUrl = $state('');
 	let debugLog = $state<string[]>([]);
@@ -65,6 +73,50 @@
 	// resolution took several seconds on a phone — while the perspective warp
 	// still samples the full-resolution frame, so OCR quality is unchanged.
 	const DETECT_MAX_EDGE = 1600;
+	// Base size of the perspective warp every card is flattened to. A card that
+	// covers more source pixels than this (a 2x2 phone spread, a card filling a
+	// live frame, camera photos) is warped at up to WARP_MAX_SCALE times the base
+	// size, so the ~1.5 mm collector line keeps its native pixels instead of
+	// being downsampled to ~12 px before OCR. The OCR crops are upscaled by a
+	// factor that compensates for the warp scale, so the Tesseract input has the
+	// same pixel size (and cost) either way. The UI thumbnails stay at base size.
+	const WARP_BASE_W = 488;
+	const WARP_BASE_H = 680;
+	const WARP_MAX_SCALE = 2;
+	// OCR input scale relative to the base warp. Tesseract's LSTM reads a name
+	// bar best when the letters are ~30-50 px tall; the old 6x upscale produced
+	// ~140 px letters and made the line finder fail on perfectly legible names.
+	// Measured on 75 real-photo cards: 41 names read at 6x, 51 at 1.5x, 58 with
+	// a second raw-line (PSM 13) pass at 2x; collector strips 18 at 6x, 24 at
+	// 4x, 27 with a second pass at 2x.
+	const NAME_OCR_SCALE = 1.5;
+	const NAME_OCR_SCALE_ALT = 2;
+	const BOTTOM_OCR_SCALE = 4;
+	const BOTTOM_OCR_SCALE_ALT = 2;
+	const NAME_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.";
+	const BOTTOM_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&';
+
+	/** Number of >=5-letter words that don't look like OCR junk: does this name OCR say anything about the card? */
+	function realWordCount(text: string): number {
+		return text.split(/\s+/).filter((w) => w.replace(/[^a-z]/gi, '').length >= 5 && !looksLikeOcrJunk(w)).length;
+	}
+
+	/** Remember the strongest name-search candidate of a card that no pass accepted. */
+	function noteNameCandidate(card: { nameBest?: { name: string; score: number } }, best: { name: string; score: number }) {
+		if (best.name && best.score > (card.nameBest?.score ?? 0)) card.nameBest = { name: best.name, score: best.score };
+	}
+
+	/** Base-size PNG data URL of a warped card canvas for the result list and debug views. */
+	function cardThumbnailUrl(canvas: HTMLCanvasElement): string {
+		if (canvas.width === WARP_BASE_W && canvas.height === WARP_BASE_H) return canvas.toDataURL();
+		const thumb = document.createElement('canvas');
+		thumb.width = WARP_BASE_W;
+		thumb.height = WARP_BASE_H;
+		const ctx = thumb.getContext('2d');
+		if (!ctx) return canvas.toDataURL();
+		ctx.drawImage(canvas, 0, 0, WARP_BASE_W, WARP_BASE_H);
+		return thumb.toDataURL();
+	}
 
 	// Manual search fallback per card
 	let manualSetCode = $state('');
@@ -763,7 +815,7 @@
 				warpedMat: any,
 				synthetic: boolean,
 				label: string
-			): { nameUrl: string; bottomUrl: string; bottomCanvas: HTMLCanvasElement } {
+			): { nameUrl: string; nameUrl2: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement } {
 				const cardW = warpedMat.cols as number;
 				const cardH = warpedMat.rows as number;
 
@@ -801,45 +853,45 @@
 				grayCard.delete();
 				const { nameX, nameY, nameW, nameH } = win;
 				log(`${label}: crop windows (${win.source}, edges top=${win.edges.top} bottom=${win.edges.bottom} left=${win.edges.left}) name x=${nameX} y=${nameY} w=${nameW} h=${nameH}`);
-				const nameRoi = warpedMat.roi(new cv.Rect(nameX, nameY, nameW, nameH));
-				const grayName = new cv.Mat();
-				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
-				const nameScaled = new cv.Mat();
-				cv.resize(grayName, nameScaled, new cv.Size(nameW * 6, nameH * 6), 0, 0, cv.INTER_CUBIC);
-				const nameCanvas = document.createElement('canvas');
-				cv.imshow(nameCanvas, nameScaled);
-				const nameUrl = nameCanvas.toDataURL();
-				nameRoi.delete(); grayName.delete(); nameScaled.delete();
+				// Gray crop of a window, resized to `factor` x the base warp size (so a
+				// 2x warp is scaled by half the factor and the OCR input carries real
+				// detail at the same cost); the collector strip gets an unsharp mask.
+				const cropUrl = (x: number, y: number, w: number, h: number, factor: number, sharpen: boolean): { url: string; canvas: HTMLCanvasElement } => {
+					const roi = warpedMat.roi(new cv.Rect(x, y, w, h));
+					const gray = new cv.Mat();
+					cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+					const f = (factor * WARP_BASE_W) / cardW;
+					const scaled = new cv.Mat();
+					cv.resize(gray, scaled, new cv.Size(Math.max(1, Math.round(w * f)), Math.max(1, Math.round(h * f))), 0, 0, cv.INTER_CUBIC);
+					let out = scaled;
+					if (sharpen) {
+						const blurred = new cv.Mat();
+						cv.GaussianBlur(scaled, blurred, new cv.Size(0, 0), Math.max(1, factor / 2));
+						out = new cv.Mat();
+						cv.addWeighted(scaled, 1.5, blurred, -0.5, 0, out);
+						blurred.delete(); scaled.delete();
+					}
+					const canvas = document.createElement('canvas');
+					cv.imshow(canvas, out);
+					roi.delete(); gray.delete(); out.delete();
+					return { url: canvas.toDataURL(), canvas };
+				};
+				const nameUrl = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE, false).url;
+				const nameUrl2 = cropUrl(nameX, nameY, nameW, nameH, NAME_OCR_SCALE_ALT, false).url;
 
-				// Crop bottom strip for collector info (left half only, right has copyright).
+				// Collector strip (left half only, the right half has the copyright line).
 				const { bottomX, bottomY, bottomW: roiW, bottomH } = win;
 				log(`${label}: bottom crop x=${bottomX} y=${bottomY} h=${bottomH} w=${roiW}`);
-				const bottomRoi = warpedMat.roi(new cv.Rect(bottomX, bottomY, roiW, bottomH));
-
-				// Convert to grayscale, scale up 6x, and sharpen for better OCR
-				const grayBottom = new cv.Mat();
-				cv.cvtColor(bottomRoi, grayBottom, cv.COLOR_RGBA2GRAY);
-				const upscaled = new cv.Mat();
-				cv.resize(grayBottom, upscaled, new cv.Size(roiW * 6, bottomH * 6), 0, 0, cv.INTER_CUBIC);
-				// Unsharp mask: subtract blurred version to enhance edges
-				const blurredBottom = new cv.Mat();
-				cv.GaussianBlur(upscaled, blurredBottom, new cv.Size(0, 0), 3);
-				const scaled = new cv.Mat();
-				cv.addWeighted(upscaled, 1.5, blurredBottom, -0.5, 0, scaled);
-				grayBottom.delete(); upscaled.delete(); blurredBottom.delete();
-
-				const bottomCanvas = document.createElement('canvas');
-				cv.imshow(bottomCanvas, scaled);
-				const bottomUrl = bottomCanvas.toDataURL();
-				bottomRoi.delete(); scaled.delete();
-				return { nameUrl, bottomUrl, bottomCanvas };
+				const bottom = cropUrl(bottomX, bottomY, roiW, bottomH, BOTTOM_OCR_SCALE, true);
+				const bottomUrl2 = cropUrl(bottomX, bottomY, roiW, bottomH, BOTTOM_OCR_SCALE_ALT, true).url;
+				return { nameUrl, nameUrl2, bottomUrl: bottom.url, bottomUrl2, bottomCanvas: bottom.canvas };
 			}
 
 			// Process each detected card
 			const cards: typeof detectedCards = [];
 			// Canvases kept outside $state so Svelte doesn't try to proxy
 			// HTMLCanvasElement instances. `bottomCanvases` feeds pixel-based
-			// foil detection in single-card mode; `cardCanvases` (the 488x680
+			// foil detection in single-card mode; `cardCanvases` (the full-resolution
 			// warps) feed the upside-down retry in Phase 2b.
 			const bottomCanvases: HTMLCanvasElement[] = [];
 			const cardCanvases: HTMLCanvasElement[] = [];
@@ -895,29 +947,37 @@
 					}) as Array<[number, number]>;
 				}
 
-				// Perspective transform to flatten card
-				const cardW = 488;
-				const cardH = 680;
+				// Perspective transform to flatten the card, at the quad's native
+				// resolution up to WARP_MAX_SCALE x the base size (see WARP_BASE_W).
+				const quadLong = (Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1])
+					+ Math.hypot(ordered[2][0] - ordered[1][0], ordered[2][1] - ordered[1][1])) / 2;
+				const warpScale = Math.min(WARP_MAX_SCALE, Math.max(1, quadLong / WARP_BASE_H));
+				const cardW = Math.round(WARP_BASE_W * warpScale);
+				const cardH = Math.round(WARP_BASE_H * warpScale);
+				log(`Card ${i + 1}: warp ${cardW}x${cardH} (scale ${warpScale.toFixed(2)}, quad long edge ${quadLong.toFixed(0)} px)`);
 				const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, ordered.flat());
 				const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, cardW, 0, cardW, cardH, 0, cardH]);
 				const M = cv.getPerspectiveTransform(srcPts, dstPts);
 				const warped = new cv.Mat();
 				cv.warpPerspective(src, warped, M, new cv.Size(cardW, cardH));
 
-				// Get full card image
+				// Full-resolution warp for the OCR crops and the upside-down retry;
+				// the result list shows a base-size thumbnail.
 				const cardCanvas = document.createElement('canvas');
 				cv.imshow(cardCanvas, warped);
-				const croppedUrl = cardCanvas.toDataURL();
+				const croppedUrl = cardThumbnailUrl(cardCanvas);
 				cardCanvases.push(cardCanvas);
 
-				const { nameUrl, bottomUrl, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
+				const { nameUrl, nameUrl2, bottomUrl, bottomUrl2, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
 				bottomCanvases.push(bottomCanvas);
 
 				cards.push({
 					index: i,
 					croppedUrl,
 					nameUrl,
+					nameUrl2,
 					bottomUrl,
+					bottomUrl2,
 					nameText: '',
 					ocrText: '',
 					setCode: '',
@@ -953,7 +1013,7 @@
 			const pool = await getTesseractPool();
 			log(`Phase 1: Name OCR (Tesseract PSM 7, ${pool.length} workers in parallel)`);
 			await setPoolParameters(pool, {
-				tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.",
+				tessedit_char_whitelist: NAME_WHITELIST,
 				tessedit_pageseg_mode: '7' // single text line
 			});
 
@@ -1018,6 +1078,7 @@
 						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
 						continue;
 					}
+					noteNameCandidate(card, best);
 					log(`Card ${cardIdx + 1}: score below threshold, rejected`);
 				}
 
@@ -1056,6 +1117,7 @@
 					}
 					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
 					const best = bestNameMatch(wData.results, cleanName);
+					noteNameCandidate(card, best);
 					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
 					if (best.score >= 0.6) {
 						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
@@ -1064,100 +1126,183 @@
 					}
 				}
 			}
+			// Best rotated name OCR text / name candidate per card, adopted when
+			// Phase 3 switches a card to its rotated warp because the collector
+			// line reads better there.
+			const rotatedNameText = new Map<number, string>();
+			const rotatedNameBest = new Map<number, { name: string; score: number }>();
+
+			// Batch-search OCR name texts and accept the best match per card
+			// (score >= 0.6). Shared by the raw-line pass and the upside-down
+			// retry; returns the indices (relative to firstIdx) that resolved.
+			// Unaccepted candidates are remembered as name evidence for the
+			// plausibility check of set+number hits.
+			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string, rotated = false): Promise<number[]> {
+				const accepted: number[] = [];
+				if (items.length === 0 || superseded()) return accepted;
+				let batch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+				try {
+					const res = await fetch('/scan', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ queries: items.map((q) => q.cleanName) })
+					});
+					const data = await res.json();
+					batch = Array.isArray(data?.batch) ? data.batch : [];
+				} catch (err) {
+					log(`${tag}: batch search error: ${err}`);
+					return accepted;
+				}
+				items.forEach(({ i, cleanName }, qi) => {
+					const card = detectedCards[firstIdx + i];
+					const searchData = batch[qi];
+					if (!searchData || searchData.results.length === 0) return;
+					const best = bestNameMatch(searchData.results, cleanName);
+					log(`Card ${firstIdx + i + 1} ${tag}: best match "${best.name}" score=${best.score.toFixed(3)}`);
+					if (rotated) {
+						const prev = rotatedNameBest.get(i);
+						if (!prev || best.score > prev.score) rotatedNameBest.set(i, { name: best.name, score: best.score });
+					} else {
+						noteNameCandidate(card, best);
+					}
+					if (best.score < 0.6) return;
+					card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
+					card.matchType = searchData.matchType;
+					card.nameText = cleanName;
+					accepted.push(i);
+					log(`Card ${firstIdx + i + 1}: accepted (${tag}) -> "${best.name}" (${card.results.length} reprints)`);
+				});
+				return accepted;
+			}
+
+			// OCR name crops with the given page-segmentation mode; texts are
+			// index-aligned with `urls`.
+			async function ocrNames(urls: string[], psm: '7' | '13'): Promise<string[]> {
+				await setPoolParameters(pool, { tessedit_char_whitelist: NAME_WHITELIST, tessedit_pageseg_mode: psm });
+				const texts = await recognizeBatch(pool, urls);
+				return texts.map((t) => t.replace(/[\r\n]+/g, ' ').trim());
+			}
+			const cleanNameOf = (text: string) => text.replace(/^[^A-Za-z]+/, '').trim();
+			const unresolved = (): number[] => {
+				const out: number[] = [];
+				for (let i = 0; i < newCount; i++) if (detectedCards[firstIdx + i].results.length === 0) out.push(i);
+				return out;
+			};
+
+			// Phase 2a: raw-line name pass. Tesseract's line finder (PSM 7) fails
+			// on some perfectly legible name bars and returns nothing or a few
+			// stray letters; raw-line mode (PSM 13) on a slightly larger crop reads
+			// a different subset of cards, and the union is worth ~10% more names
+			// on real photos. Only the cards still unresolved pay for it.
+			{
+				const idx = unresolved();
+				if (idx.length > 0 && !superseded()) {
+					log(`Phase 2a: raw-line name OCR (Tesseract PSM 13) for ${idx.length} unresolved card(s)`);
+					scanProgress = `Re-reading ${idx.length} name${idx.length === 1 ? '' : 's'}...`;
+					const texts = await ocrNames(idx.map((i) => detectedCards[firstIdx + i].nameUrl2 ?? detectedCards[firstIdx + i].nameUrl), '13');
+					const items: Array<{ i: number; cleanName: string }> = [];
+					idx.forEach((i, k) => {
+						const card = detectedCards[firstIdx + i];
+						log(`Card ${firstIdx + i + 1} raw-line name OCR: "${texts[k]}"`);
+						const cleanName = cleanNameOf(texts[k]);
+						if (cleanName.length >= 2) items.push({ i, cleanName });
+						// Keep the more informative text for the plausibility checks later on.
+						if (realWordCount(cleanName) > realWordCount(card.nameText)) card.nameText = cleanName;
+					});
+					await acceptNameMatches(items, 'raw-line');
+				}
+			}
+
 			// Phase 2b: upside-down retry. orderCornersForCard() cannot tell a
 			// card's top from its bottom when the card lies sideways (or upside
 			// down): both short edges are geometrically identical, so about half
 			// of such cards leave the warp rotated 180° and their name OCR reads
 			// garbage. For every card the name search didn't resolve, re-crop the
-			// name band from the 180°-rotated warp, OCR it again and search again;
-			// when that yields a real name, the rotated crops replace the originals
-			// so the bottom-line phase reads the right strip as well.
-			const retryIdx: number[] = [];
-			for (let i = 0; i < newCount; i++) {
-				if (detectedCards[firstIdx + i].results.length === 0) retryIdx.push(i);
-			}
-			if (retryIdx.length > 0) {
-				if (superseded()) return;
-				log(`Phase 2b: upside-down retry for ${retryIdx.length} unresolved card(s) [${retryIdx.map((i) => `Card ${firstIdx + i + 1}`).join(', ')}]`);
-				scanProgress = `Retrying ${retryIdx.length} card${retryIdx.length === 1 ? '' : 's'} rotated...`;
-				const rotated: Array<{ i: number; canvas: HTMLCanvasElement; nameUrl: string; bottomUrl: string; bottomCanvas: HTMLCanvasElement }> = [];
-				for (const i of retryIdx) {
-					const original = cardCanvases[i];
-					const rot = document.createElement('canvas');
-					rot.width = original.width;
-					rot.height = original.height;
-					const rctx = rot.getContext('2d');
-					if (!rctx) continue;
-					rctx.translate(rot.width, rot.height);
-					rctx.rotate(Math.PI);
-					rctx.drawImage(original, 0, 0);
-					const rotMat = cv.imread(rot);
-					try {
-						const crops = extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`);
-						rotated.push({ i, canvas: rot, ...crops });
-					} finally {
-						rotMat.delete();
+			// name band from the 180°-rotated warp, OCR it again (single-line pass,
+			// then raw-line pass) and search again; when that yields a real name,
+			// the rotated crops replace the originals so the bottom-line phase
+			// reads the right strip as well.
+			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement };
+			{
+				const retryIdx = unresolved();
+				if (retryIdx.length > 0 && !superseded()) {
+					log(`Phase 2b: upside-down retry for ${retryIdx.length} unresolved card(s) [${retryIdx.map((i) => `Card ${firstIdx + i + 1}`).join(', ')}]`);
+					scanProgress = `Retrying ${retryIdx.length} card${retryIdx.length === 1 ? '' : 's'} rotated...`;
+					const rotated = new Map<number, RotCrops>();
+					for (const i of retryIdx) {
+						const original = cardCanvases[i];
+						const rot = document.createElement('canvas');
+						rot.width = original.width;
+						rot.height = original.height;
+						const rctx = rot.getContext('2d');
+						if (!rctx) continue;
+						rctx.translate(rot.width, rot.height);
+						rctx.rotate(Math.PI);
+						rctx.drawImage(original, 0, 0);
+						const rotMat = cv.imread(rot);
+						try {
+							const crops = extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`);
+							rotated.set(i, { canvas: rot, ...crops });
+						} finally {
+							rotMat.delete();
+						}
 					}
-				}
-				// Whether or not the rotated name resolves, keep the rotated crops:
-				// Phase 3 reads the collector line in both orientations for cards
-				// that are still unresolved, so an unreadable name doesn't waste a
-				// perfectly legible "C 0156 TMT EN" on the other side.
-				for (const r of rotated) {
-					const card = detectedCards[firstIdx + r.i];
-					card.altNameUrl = r.nameUrl;
-					card.altBottomUrl = r.bottomUrl;
-					card.altCroppedUrl = r.canvas.toDataURL();
-				}
-				const rotTexts = await recognizeBatch(pool, rotated.map((r) => r.nameUrl));
-				const rotQueries: Array<{ k: number; cleanName: string }> = [];
-				rotated.forEach((r, k) => {
-					const text = rotTexts[k].replace(/[\r\n]+/g, ' ').trim();
-					const cleanName = text.replace(/^[^A-Za-z]+/, '').trim();
-					log(`Card ${firstIdx + r.i + 1} rotated name OCR: "${text}"`);
-					if (cleanName.length >= 2) rotQueries.push({ k, cleanName });
-				});
-				if (rotQueries.length > 0 && !superseded()) {
-					let rotBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
-					try {
-						const res = await fetch('/scan', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ queries: rotQueries.map((q) => q.cleanName) })
-						});
-						const data = await res.json();
-						rotBatch = Array.isArray(data?.batch) ? data.batch : [];
-					} catch (err) {
-						log(`Phase 2b batch search error: ${err}`);
+					// Whether or not the rotated name resolves, keep the rotated crops:
+					// Phase 3 reads the collector line in both orientations for cards
+					// that are still unresolved, so an unreadable name doesn't waste a
+					// perfectly legible "C 0156 TMT EN" on the other side.
+					for (const [i, r] of rotated) {
+						const card = detectedCards[firstIdx + i];
+						card.altNameUrl = r.nameUrl;
+						card.altNameUrl2 = r.nameUrl2;
+						card.altBottomUrl = r.bottomUrl;
+						card.altBottomUrl2 = r.bottomUrl2;
+						card.altCroppedUrl = cardThumbnailUrl(r.canvas);
 					}
-					rotQueries.forEach(({ k, cleanName }, qi) => {
-						const r = rotated[k];
-						const card = detectedCards[firstIdx + r.i];
-						const searchData = rotBatch[qi];
-						if (!searchData || searchData.results.length === 0) return;
-						const best = bestNameMatch(searchData.results, cleanName);
-						log(`Card ${firstIdx + r.i + 1} rotated: best match "${best.name}" score=${best.score.toFixed(3)}`);
-						if (best.score < 0.6) return;
+					// Switch a card to its rotated warp once the rotated name matched.
+					const adopt = (i: number) => {
+						const r = rotated.get(i);
+						if (!r) return;
+						const card = detectedCards[firstIdx + i];
 						card.altNameUrl = undefined;
+						card.altNameUrl2 = undefined;
 						card.altBottomUrl = undefined;
+						card.altBottomUrl2 = undefined;
 						card.altCroppedUrl = undefined;
-						card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
-						card.matchType = searchData.matchType;
-						card.nameText = cleanName;
 						card.nameUrl = r.nameUrl;
+						card.nameUrl2 = r.nameUrl2;
 						card.bottomUrl = r.bottomUrl;
-						card.croppedUrl = r.canvas.toDataURL();
-						bottomCanvases[r.i] = r.bottomCanvas;
-						cardCanvases[r.i] = r.canvas;
-						log(`Card ${firstIdx + r.i + 1}: accepted after 180° rotation -> "${best.name}" (${card.results.length} reprints)`);
-					});
+						card.bottomUrl2 = r.bottomUrl2;
+						card.croppedUrl = cardThumbnailUrl(r.canvas);
+						bottomCanvases[i] = r.bottomCanvas;
+						cardCanvases[i] = r.canvas;
+						log(`Card ${firstIdx + i + 1}: accepted after 180° rotation`);
+					};
+					// Same two passes as upright: single line first, raw line for the rest.
+					const passes: Array<{ psm: '7' | '13'; pick: (r: RotCrops) => string; tag: string }> = [
+						{ psm: '7', pick: (r) => r.nameUrl, tag: 'rotated' },
+						{ psm: '13', pick: (r) => r.nameUrl2, tag: 'rotated raw-line' }
+					];
+					for (const pass of passes) {
+						const idx = [...rotated.keys()].filter((i) => detectedCards[firstIdx + i].results.length === 0);
+						if (idx.length === 0 || superseded()) break;
+						const texts = await ocrNames(idx.map((i) => pass.pick(rotated.get(i)!)), pass.psm);
+						const items: Array<{ i: number; cleanName: string }> = [];
+						idx.forEach((i, k) => {
+							log(`Card ${firstIdx + i + 1} ${pass.tag} name OCR: "${texts[k]}"`);
+							const cleanName = cleanNameOf(texts[k]);
+							if (cleanName.length >= 2) items.push({ i, cleanName });
+							if (!rotatedNameText.has(i) || realWordCount(cleanName) > realWordCount(rotatedNameText.get(i) ?? '')) rotatedNameText.set(i, cleanName);
+						});
+						for (const i of await acceptNameMatches(items, pass.tag, true)) adopt(i);
+					}
 				}
 			}
 			detectedCards = [...detectedCards];
 
 			// Phase 3: OCR bottom areas for disambiguation + foil detection
 			await setPoolParameters(pool, {
-				tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&',
+				tessedit_char_whitelist: BOTTOM_WHITELIST,
 				tessedit_pageseg_mode: '6'
 			});
 
@@ -1169,6 +1314,53 @@
 			// the per-card fetch inside applyBottomMatch.
 			const setNumCache = new Map<string, { results: Record<string, unknown>[]; matchType: string }>();
 			const setNumKey = (s: string, n: string) => `${s.toLowerCase()}|${n}`;
+
+			// Scryfall rarity -> letter printed on the card. Basic lands print "L"
+			// but carry rarity "common" in the data.
+			const RARITY_LETTER: Record<string, string> = { common: 'c', uncommon: 'u', rare: 'r', mythic: 'm', special: 's', bonus: 's' };
+			const rarityAgrees = (letter: string, rarity: unknown): boolean => {
+				const expected = RARITY_LETTER[String(rarity ?? '').toLowerCase()];
+				if (!letter || !expected || letter === expected) return true;
+				return letter === 'l' && expected === 'c';
+			};
+
+			// A set+number hit for a card whose name search failed rests on OCR
+			// digits alone, and one misread digit silently yields a wrong card
+			// ("23/277" read as "24/277"). Rules, measured against a test DB with a
+			// distractor printing at every plausible misread:
+			// - a weak number (bare digits, dropped digit) needs name evidence: no
+			//   readable word -> reject, readable words that contradict -> reject;
+			// - a full-length number is rejected only when the name OCR positively
+			//   points at a different card (best name candidate >= 0.45 and the hit
+			//   itself scores < 0.3), so a stray fake word can't veto a good read;
+			// - the rarity letter read next to the number must not contradict the
+			//   hit's rarity.
+			function numberOnlyHitPlausible(card: typeof detectedCards[number], parsed: CollectorInfo, hit: Record<string, unknown>, cardIdx: number): boolean {
+				const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '');
+				const label = `${card.setCode}#${card.collectorNumber} -> "${hit.name}"`;
+				if (parsed.numberSource === 'weak') {
+					if (realWordCount(cleanName) === 0) {
+						log(`Card ${cardIdx}: ${label} rests on a weak number without a readable name, rejected`);
+						return false;
+					}
+					const check = bestNameMatch([hit], cleanName);
+					if (check.score < 0.3) {
+						log(`Card ${cardIdx}: ${label} (weak number) contradicts name OCR "${cleanName}" (score ${check.score.toFixed(2)}), rejected`);
+						return false;
+					}
+				} else if (card.nameBest && card.nameBest.score >= 0.45 && card.nameBest.name !== hit.name) {
+					const check = bestNameMatch([hit], cleanName);
+					if (check.score < 0.3) {
+						log(`Card ${cardIdx}: ${label} rejected: name OCR "${cleanName}" points at "${card.nameBest.name}" (${card.nameBest.score.toFixed(2)}), hit scores ${check.score.toFixed(2)}`);
+						return false;
+					}
+				}
+				if (!rarityAgrees(parsed.rarity, hit.rarity)) {
+					log(`Card ${cardIdx}: ${label} is ${hit.rarity} but the collector line reads "${parsed.rarity.toUpperCase()}", rejected`);
+					return false;
+				}
+				return true;
+			}
 
 			async function prefetchSetNumberLookups(cards: typeof detectedCards) {
 				const seen = new Set<string>();
@@ -1281,22 +1473,9 @@
 							log(`Card ${cardIdx}: set+number fallback -> ${card.results.length} results, status=${card.status}`);
 						} catch { card.status = 'not_found'; }
 					}
-					// A "weak" number (bare digits before the set code) is often the
-					// set total or a mana value, and a wrong number silently yields a
-					// wrong card ("…/277" -> Forest). When the name OCR produced real
-					// text that has nothing in common with the hit, drop it.
-					if (card.status === 'found' && parsed.numberSource === 'weak') {
-						// Only when the name OCR contains at least one real-looking word;
-						// pure fragments ("f Sr wo TS") say nothing about the card.
-						const realWords = card.nameText.split(/\s+/).filter((w) => w.replace(/[^a-z]/gi, '').length >= 5 && !looksLikeOcrJunk(w));
-						if (realWords.length > 0) {
-							const check = bestNameMatch(card.results, card.nameText.replace(/^[^A-Za-z]+/, ''));
-							if (check.score < 0.3) {
-								log(`Card ${cardIdx}: weak number ${card.setCode}#${card.collectorNumber} -> "${check.name}" contradicts name OCR "${card.nameText}" (score ${check.score.toFixed(2)}), rejected`);
-								card.results = [];
-								card.status = 'not_found';
-							}
-						}
+					if (card.status === 'found') {
+						card.results = card.results.filter((hit) => numberOnlyHitPlausible(card, parsed, hit, cardIdx));
+						if (card.results.length === 0) card.status = 'not_found';
 					}
 				} else {
 					log(`Card ${cardIdx}: no match possible -> not_found`);
@@ -1309,16 +1488,19 @@
 			log(`Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6, ${pool.length} workers)`);
 			const newCards = detectedCards.slice(firstIdx);
 			const bottomUrls = newCards.map((c) => c.bottomUrl);
-			// Unresolved cards with a rotated alternative get both strips OCR'd.
-			const altIdx: number[] = [];
+			// Unresolved cards get their smaller strip and, when the upside-down
+			// retry produced one, both rotated strips OCR'd as well; the variant
+			// that parses best as a collector line wins below.
+			type StripVariant = { i: number; url: string; rotated: boolean; label: string };
+			const extra: StripVariant[] = [];
 			for (let i = 0; i < newCount; i++) {
 				const c = newCards[i];
-				if (c.results.length === 0 && c.altBottomUrl) {
-					altIdx.push(i);
-					bottomUrls.push(c.altBottomUrl);
-				}
+				if (c.results.length > 0) continue;
+				if (c.bottomUrl2) extra.push({ i, url: c.bottomUrl2, rotated: false, label: 'small' });
+				if (c.altBottomUrl) extra.push({ i, url: c.altBottomUrl, rotated: true, label: 'rotated' });
+				if (c.altBottomUrl2) extra.push({ i, url: c.altBottomUrl2, rotated: true, label: 'rotated small' });
 			}
-			const bottomTexts = await recognizeBatch(pool, bottomUrls, (done, total) => {
+			const bottomTexts = await recognizeBatch(pool, [...bottomUrls, ...extra.map((e) => e.url)], (done, total) => {
 				scanProgress = `OCR bottom ${done}/${total}...`;
 			});
 			const cleanOcr = (t: string) => t.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -1327,28 +1509,55 @@
 				detectedCards[absIdx].ocrText = cleanOcr(bottomTexts[i]);
 				log(`Card ${absIdx + 1} bottom OCR: "${detectedCards[absIdx].ocrText}"`);
 			}
-			// Pick the orientation whose strip parses as a collector line. A card
-			// that came out of the warp upside down and whose rotated name OCR was
-			// too poor to match still gets its set + number this way.
-			altIdx.forEach((i, k) => {
+			// Pick the strip that parses best as a collector line: a set code and a
+			// reliable number beat a bare number. A card that came out of the warp
+			// upside down and whose rotated name OCR was too poor to match still
+			// gets its set + number this way.
+			const stripScore = (p: { setCode: string; collectorNumber: string; numberSource: string }) =>
+				(p.setCode ? 2 : 0) + (p.collectorNumber ? (p.numberSource === 'weak' ? 1 : 2) : 0);
+			const variantsByCard = new Map<number, Array<StripVariant & { text: string }>>();
+			extra.forEach((e, k) => {
+				const text = cleanOcr(bottomTexts[newCount + k]);
+				log(`Card ${firstIdx + e.i + 1} bottom OCR (${e.label}): "${text}"`);
+				let list = variantsByCard.get(e.i);
+				if (!list) {
+					list = [];
+					variantsByCard.set(e.i, list);
+				}
+				list.push({ ...e, text });
+			});
+			for (const [i, variants] of variantsByCard) {
 				const card = detectedCards[firstIdx + i];
-				const altText = cleanOcr(bottomTexts[newCount + k]);
-				log(`Card ${firstIdx + i + 1} bottom OCR (rotated): "${altText}"`);
-				const primary = parseCollectorInfo(card.ocrText, langs);
-				const alt = parseCollectorInfo(altText, langs);
-				const score = (p: { setCode: string; collectorNumber: string; numberSource: string }) =>
-					(p.setCode ? 2 : 0) + (p.collectorNumber ? (p.numberSource === 'weak' ? 1 : 2) : 0);
-				if (score(alt) > score(primary) && card.altBottomUrl && card.altNameUrl && card.altCroppedUrl) {
-					log(`Card ${firstIdx + i + 1}: rotated strip reads better (${alt.setCode}#${alt.collectorNumber}), switching to the rotated warp`);
-					card.ocrText = altText;
-					card.bottomUrl = card.altBottomUrl;
-					card.nameUrl = card.altNameUrl;
-					card.croppedUrl = card.altCroppedUrl;
+				let bestScore = stripScore(parseCollectorInfo(card.ocrText, langs));
+				let best: (StripVariant & { text: string }) | null = null;
+				for (const v of variants) {
+					const score = stripScore(parseCollectorInfo(v.text, langs));
+					if (score > bestScore) {
+						bestScore = score;
+						best = v;
+					}
+				}
+				if (best) {
+					log(`Card ${firstIdx + i + 1}: ${best.label} strip reads better, using it`);
+					card.ocrText = best.text;
+					if (best.rotated && card.altBottomUrl && card.altNameUrl && card.altCroppedUrl) {
+						log(`Card ${firstIdx + i + 1}: switching to the rotated warp`);
+						card.bottomUrl = card.altBottomUrl;
+						card.bottomUrl2 = card.altBottomUrl2;
+						card.nameUrl = card.altNameUrl;
+						card.nameUrl2 = card.altNameUrl2;
+						card.croppedUrl = card.altCroppedUrl;
+						const rt = rotatedNameText.get(i);
+						if (rt !== undefined) card.nameText = rt;
+						card.nameBest = rotatedNameBest.get(i);
+					}
 				}
 				card.altNameUrl = undefined;
+				card.altNameUrl2 = undefined;
 				card.altBottomUrl = undefined;
+				card.altBottomUrl2 = undefined;
 				card.altCroppedUrl = undefined;
-			});
+			}
 			if (superseded()) return;
 			await prefetchSetNumberLookups(detectedCards.slice(firstIdx));
 			for (let i = 0; i < newCount; i++) {
@@ -1387,6 +1596,10 @@
 							const data = await res.json();
 							const rows: Array<Record<string, unknown>> = Array.isArray(data?.results) ? data.results : [];
 							if (rows.length !== 1) continue;
+							if (!rarityAgrees(parsed.rarity, rows[0].rarity)) {
+								log(`Card ${firstIdx + i + 1}: majority-set fallback ${majoritySet}#${card.collectorNumber} -> "${rows[0].name}" rejected (${rows[0].rarity} vs collector line "${parsed.rarity.toUpperCase()}")`);
+								continue;
+							}
 							const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
 							const sim = cleanName.length >= 3 ? similarity(cleanName, rows[0].name as string) : 0;
 							if (sim >= 0.4) {

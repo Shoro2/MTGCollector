@@ -32,6 +32,13 @@ export interface CollectorInfo {
 	 * treat a weak number as a hint and sanity-check the result.
 	 */
 	numberSource: 'fraction' | 'pair' | 'rarity' | 'weak' | 'none';
+	/**
+	 * Rarity letter printed next to the collector number (c/u/r/m/l/s/t,
+	 * lower-case), '' when none was read. Lets callers reject a set+number hit
+	 * whose rarity contradicts the printed letter (a misread digit otherwise
+	 * silently yields a wrong card).
+	 */
+	rarity: string;
 }
 
 /**
@@ -41,7 +48,7 @@ export interface CollectorInfo {
  * @param dbg optional per-step debug logger
  */
 export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: string) => void): CollectorInfo {
-	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false, numberSource: 'none' };
+	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false, numberSource: 'none', rarity: '' };
 
 	// Step 1: Find anchor — <SET code, 3-4 alphanumeric> followed by <LANG 2-letter> within a few chars
 	const anchor = new RegExp(`\\b([A-Z0-9]{3,4})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'gi');
@@ -76,10 +83,20 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		// rarity letter are collector number + set total; the first one counts,
 		// and a "number" larger than the total is an OCR merge ("1820 277 C"
 		// for 180/277) that must not be used at all.
-		const pairMatch = !fractionMatch ? before.match(/(\d{1,4})\s+(\d{2,4})\s*[CURMLST]?\s*$/) : null;
+		const pairMatch = !fractionMatch ? before.match(/(\d{1,4})\s+(\d{2,4})\s*([CURMLST])?\s*$/) : null;
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
 			result.numberSource = 'fraction';
+			// "180/277 C": the rarity letter follows the fraction.
+			const afterFraction = before.slice((fractionMatch.index ?? 0) + fractionMatch[0].length).match(/^\s*([CURMLST])(?![A-Za-z])/i);
+			if (afterFraction) result.rarity = afterFraction[1].toLowerCase();
+			// Printed numerators are zero-padded to the width of the total
+			// ("040/277"); a shorter numerator means the OCR dropped a digit and
+			// "4/277" may be 040 or 240 — a hint only, not an identification.
+			if (fixOcrDigits(fractionMatch[1]).length < fixOcrDigits(fractionMatch[2]).length) {
+				result.numberSource = 'weak';
+				dbg?.(`numerator shorter than the total ("${fractionMatch[0]}"): digit dropped, number downgraded to weak`);
+			}
 			dbg?.(`fraction format: "${fractionMatch[0]}" -> num="${result.collectorNumber}"`);
 		} else if (pairMatch) {
 			const num = stripLeadingZeros(pairMatch[1]);
@@ -87,6 +104,7 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			if (Number(num) <= total) {
 				result.collectorNumber = num;
 				result.numberSource = 'pair';
+				if (pairMatch[3]) result.rarity = pairMatch[3].toLowerCase();
 				dbg?.(`number/total pair: "${pairMatch[0]}" -> num="${result.collectorNumber}"`);
 			} else {
 				dbg?.(`number/total pair rejected: ${num} > total ${total} ("${pairMatch[0]}")`);
@@ -98,14 +116,21 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			const tail = before.slice(-20).trim();
 			dbg?.(`tail (last 20 chars): "${tail}"`);
 
-			// Try to find a rarity+number pattern: "C 0045", "R 024 J", "M0085"
-			const rarityNumMatch = tail.match(/[CURM]\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
+			// Try to find a rarity+number pattern: "C 0045", "R 024 J", "M0085", "L 0187" (basic lands print L)
+			const rarityNumMatch = tail.match(/([CURML])\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
 			if (rarityNumMatch) {
-				const fixed = fixOcrDigits(rarityNumMatch[1].replace(/\s/g, ''));
+				const fixed = fixOcrDigits(rarityNumMatch[2].replace(/\s/g, ''));
 				if (fixed.length > 0 && fixed.length <= 4) {
 					result.collectorNumber = stripLeadingZeros(fixed);
 					result.numberSource = 'rarity';
+					result.rarity = rarityNumMatch[1].toLowerCase();
 					dbg?.(`rarity+number: "${rarityNumMatch[0]}" -> num="${result.collectorNumber}"`);
+					// Printed numbers have at least three digits ("C 0156", "R 024");
+					// fewer means the OCR dropped one.
+					if (fixed.length < 3) {
+						result.numberSource = 'weak';
+						dbg?.(`only ${fixed.length} digit(s) after the rarity letter: number downgraded to weak`);
+					}
 				}
 			}
 
@@ -156,16 +181,19 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 				break;
 			}
 		}
-		const fractionMatch = text.match(/(\d{1,4})\/\d{1,4}/);
+		const fractionMatch = text.match(/(\d{1,4})\/(\d{1,4})(?:\s*([CURMLST])(?![A-Za-z]))?/i);
 		// "C 0150" / "Cc 0150" (OCR doubles letters): rarity + number is reliable
 		// even when the set code next to it was unreadable.
-		const rarityMatch = !fractionMatch ? text.match(/(?:^|\s)[curml]{1,2}\s+0*(\d{1,4})(?!\d)/i) : null;
+		const rarityMatch = !fractionMatch ? text.match(/(?:^|\s)([curml]{1,2})\s+(0*\d{1,4})(?!\d)/i) : null;
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
-			result.numberSource = 'fraction';
+			// Same padding rule as above: a numerator shorter than the total lost a digit.
+			result.numberSource = fractionMatch[1].length < fractionMatch[2].length ? 'weak' : 'fraction';
+			if (fractionMatch[3]) result.rarity = fractionMatch[3].toLowerCase();
 		} else if (rarityMatch) {
-			result.collectorNumber = stripLeadingZeros(rarityMatch[1]);
-			result.numberSource = 'rarity';
+			result.collectorNumber = stripLeadingZeros(rarityMatch[2]);
+			result.numberSource = rarityMatch[2].length < 3 ? 'weak' : 'rarity';
+			result.rarity = rarityMatch[1][0].toLowerCase();
 		} else {
 			const numMatch = text.match(/(\d{1,4})/);
 			if (numMatch) {
