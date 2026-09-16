@@ -17,6 +17,7 @@
 import type { CollectorInfo } from './parse';
 import { bestAlias, nameAliases, nameScore, normalizeName, realWordCount, similarity } from './similarity';
 import { disambiguateReprints, normalizeCollectorNumber } from './pipeline';
+import { hammingDistance } from './phash';
 
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
 export type NameCandidate = { name: string; score: number; pass: string };
@@ -42,7 +43,14 @@ export type ResolveInput = {
 	/** Printings one OCR error away from the read number (rarity-filtered when a letter was read); optional. */
 	nearLookup?: (setCode: string, collectorNumber: string, rarity: string) => PrintingRow[];
 	isKnownSet: (setCode: string) => boolean;
+	/** Printings whose reference art hash lies within ART_LIKELY bits of the warped card's art (Phase 3); optional. */
+	artMatches?: ArtMatch[];
+	/** The warped card's own art hashes (upright and 180°-rotated), to measure every printing of a name against; optional. */
+	artHash?: string;
+	artHashAlt?: string;
 };
+/** One art-hash hit: a printing (or a back face of it) and its Hamming distance to the scanned art. */
+export type ArtMatch = { row: PrintingRow; distance: number; rotated?: boolean; face?: number };
 export type Decision = {
 	identity: { name: string | null; state: DecisionState; score: number };
 	printing: { row: PrintingRow | null; candidates: PrintingRow[]; state: DecisionState };
@@ -69,6 +77,58 @@ export const NAME_MARGIN = 0.1;
 export const NAME_EVIDENCE = 0.45;
 /** ... when the hit itself scores below this against the OCR text. */
 export const NAME_CONTRADICT = 0.3;
+/** An art hash this close (bits) is the same artwork: the same picture across printings measured 0-12, different pictures 26+. */
+export const ART_CONFIRM = 10;
+/**
+ * Up to this distance the artwork counts as evidence that a name candidate can
+ * corroborate (and the server's search radius). Measured against 8.5k hashes:
+ * the nearest artwork was the right card at 2–12 bits in every case and a
+ * different card in 7 of 12 cases at 14 bits, so 14 is out.
+ */
+export const ART_LIKELY = 12;
+/** A second artwork within this many bits of the best makes the art channel ambiguous. */
+export const ART_MARGIN = 4;
+/**
+ * Printings of a name whose reference art lies this many bits further from
+ * the scan than the name's nearest printing carry a different artwork and
+ * leave the printing candidates (`artPool`). Measured on the eight photos:
+ * same-artwork reprints and variants sit 0–8 bits behind the nearest printing
+ * (MID vs Double Feature, regular vs extended frame), different artwork
+ * 20–36 bits behind.
+ */
+export const ART_SAME_GAP = 16;
+
+const HASH_HEX = /^[0-9a-f]{16}$/;
+
+/** Hamming distance from the scanned card (upright or rotated hash) to a printing's reference art; null without hashes on either side. */
+function artDistance(row: PrintingRow, hash?: string, alt?: string): number | null {
+	const ref = typeof row.art_hash === 'string' && HASH_HEX.test(row.art_hash) ? row.art_hash : null;
+	if (!ref) return null;
+	let best: number | null = null;
+	for (const h of [hash, alt]) {
+		if (!h || !HASH_HEX.test(h)) continue;
+		const d = hammingDistance(h, ref);
+		if (best === null || d < best) best = d;
+	}
+	return best;
+}
+
+/**
+ * The printings of a name that can be the scanned card by their artwork. When
+ * the nearest reference art is a close match (≤ ART_CONFIRM), printings more
+ * than ART_SAME_GAP bits further away show a different artwork and drop out;
+ * printings without a hash always stay (the index may be incomplete). Without
+ * a close match, or without hashes, every printing stays: the hash can only
+ * rule a printing *out* when it has clearly recognised the artwork.
+ */
+export function artPool(printings: PrintingRow[], hash?: string, alt?: string): PrintingRow[] {
+	const distances = printings.map((r) => artDistance(r, hash, alt));
+	let best: number | null = null;
+	for (const d of distances) if (d !== null && (best === null || d < best)) best = d;
+	if (best === null || best > ART_CONFIRM) return printings;
+	const limit = best + ART_SAME_GAP;
+	return printings.filter((_, i) => distances[i] === null || (distances[i] as number) <= limit);
+}
 
 type Strength = 'strong' | 'medium' | 'weak' | 'none';
 const STRENGTH_ORDER: Record<Strength, number> = { strong: 0, medium: 1, weak: 2, none: 3 };
@@ -125,6 +185,18 @@ export function nameIdentifies(candidate: { name: string; score: number }, nameT
 }
 
 export function resolveCard(input: ResolveInput): Decision {
+	// Every printings lookup of the fusion sees the name's printings narrowed
+	// by the scanned artwork (artPool); logged once per name.
+	const narrowedNames = new Set<string>();
+	const printingsOf = (name: string): PrintingRow[] => {
+		const all = input.printingsByName(name);
+		const pool = artPool(all, input.artHash, input.artHashAlt);
+		if (pool.length < all.length && !narrowedNames.has(name)) {
+			narrowedNames.add(name);
+			reasons.push(`art: "${name}" narrowed to ${pool.length} of ${all.length} printing(s) by artwork`);
+		}
+		return pool;
+	};
 	const reasons: string[] = [];
 	const readings = input.footer.filter((r) => r.setCode || r.collectorNumber);
 	const keyOf = (r: FooterReading) => `${r.setCode.toLowerCase()}|${normalizeCollectorNumber(r.collectorNumber)}`;
@@ -182,7 +254,7 @@ export function resolveCard(input: ResolveInput): Decision {
 	for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());
 	if (setHints.size === 0 && input.majoritySet) setHints.add(input.majoritySet.toLowerCase());
 	const joinHits = (name: string): PrintingRow[] =>
-		input.printingsByName(name).filter((row) => {
+		printingsOf(name).filter((row) => {
 			if (setHints.size > 0 && !setHints.has(String(row.set_code).toLowerCase())) return false;
 			const contributing = ranked.filter(({ r }) => r.collectorNumber && numberCompatible(r.collectorNumber, String(row.collector_number)));
 			return contributing.length > 0 && contributing.every(({ r }) => rarityAgrees(r.rarity, row.rarity));
@@ -199,7 +271,7 @@ export function resolveCard(input: ResolveInput): Decision {
 		if (hits.length !== 1) return null;
 		const row = hits[0];
 		const exact = ranked.find(({ r }) => sameNumber(r, row) && isStructural(r.numberSource));
-		const singleSet = new Set(input.printingsByName(cand.name).map((p) => String(p.set_code).toLowerCase())).size === 1;
+		const singleSet = new Set(printingsOf(cand.name).map((p) => String(p.set_code).toLowerCase())).size === 1;
 		const setRead = exact !== undefined && exact.r.setCode !== '' && input.isKnownSet(exact.r.setCode) && exact.r.setCode.toLowerCase() === String(row.set_code).toLowerCase();
 		if (exact && (setRead || singleSet)) {
 			reasons.push(`join: name "${cand.name}" ${cand.score.toFixed(2)} + exact number from [${exact.r.variant}] -> ${row.set_code}#${row.collector_number}, confirmed`);
@@ -211,7 +283,7 @@ export function resolveCard(input: ResolveInput): Decision {
 	// Readings with a real set code that a name has no printing in — or, for a
 	// structural number, no printing within one edit of it there.
 	const contradictingReadings = (name: string): FooterReading[] => {
-		const printings = input.printingsByName(name);
+		const printings = printingsOf(name);
 		return ranked
 			.filter(({ r, strength }) => {
 				if (!r.setCode || !input.isKnownSet(r.setCode)) return false;
@@ -241,9 +313,67 @@ export function resolveCard(input: ResolveInput): Decision {
 	};
 	const byScore = [...input.nameCandidates].sort((a, b) => b.score - a.score);
 
+	// 0. Art-hash evidence (Phase 3): the artwork of the warped card against the
+	// reference hashes. Independent of OCR and the strongest identity signal
+	// when one artwork stands out; useless for the printing among reprints of
+	// the same picture, which stays the footer's job.
+	const artByName = new Map<string, { name: string; distance: number; rows: PrintingRow[] }>();
+	for (const m of [...(input.artMatches ?? [])].sort((a, b) => a.distance - b.distance)) {
+		if (m.distance > ART_LIKELY) continue;
+		const name = String(m.row.name);
+		const g = artByName.get(name);
+		if (g) g.rows.push(m.row);
+		else artByName.set(name, { name, distance: m.distance, rows: [m.row] });
+	}
+	const artRanked = [...artByName.values()];
+	const artBest = artRanked[0] ?? null;
+	const artRunnerUp = artRanked[1] ?? null;
+	const artUnambiguous = artBest !== null && (artRunnerUp === null || artRunnerUp.distance - artBest.distance >= ART_MARGIN);
+	const artStrong = artBest !== null && artBest.distance <= ART_CONFIRM && artUnambiguous;
+	// The printing of an art-identified card: the footer picks among the
+	// name's printings (narrowed by artwork like every lookup, see artPool); a
+	// single printing left needs no footer. The server's hits alone never
+	// settle a printing — they are the printings within the search radius,
+	// not every printing with this artwork (a same-art reprint can sit just
+	// outside it: Lantern Flare VOW #23 was confirmed as the extended-art
+	// #351 that way), so without the name's printings the printing stays open.
+	const artPrinting = (g: { name: string; rows: PrintingRow[] }): { row: PrintingRow | null; candidates: PrintingRow[]; state: DecisionState } => {
+		const pool = printingsOf(g.name);
+		if (pool.length === 0) return { row: null, candidates: g.rows, state: 'unknown' };
+		for (const { r, strength } of ranked) {
+			if (strength === 'none') continue;
+			const { match, log } = disambiguateReprints(pool, r.text, r.setCode, r.collectorNumber, r.numberSource);
+			for (const l of log) reasons.push(`[${r.variant}] ${l}`);
+			if (match) return { row: match, candidates: pool, state: 'confirmed' };
+		}
+		if (pool.length === 1) return { row: pool[0], candidates: pool, state: 'confirmed' };
+		return { row: null, candidates: pool, state: 'unknown' };
+	};
+	if (artBest) reasons.push(`art: "${artBest.name}" ${artBest.distance} bits (${artBest.rows.length} printing(s) with this artwork)${artRunnerUp ? `, next "${artRunnerUp.name}" ${artRunnerUp.distance} bits` : ''}`);
+	if (artStrong && artBest) {
+		if (best && best.score >= NAME_CERTAIN && nameIdentifies(best, input.nameText) && best.name !== artBest.name) {
+			reasons.push(`conflict: name says "${best.name}" ${best.score.toFixed(2)}, artwork says "${artBest.name}"`);
+			return done(best.name, 'conflict', null, [...artBest.rows, ...printingsOf(best.name)], 'conflict');
+		}
+		const p = artPrinting(artBest);
+		reasons.push(`art identifies "${artBest.name}"${best && best.name === artBest.name ? ` (name agrees ${best.score.toFixed(2)})` : ''}`);
+		return done(artBest.name, 'confirmed', p.row, p.candidates, p.state);
+	}
+	// 0b. A looser or ambiguous artwork plus a name candidate naming the same
+	// card: two independent channels agree.
+	if (artBest) {
+		const agreeing = byScore.find((c) => c.score >= NAME_LIKELY && artByName.has(c.name));
+		if (agreeing) {
+			const g = artByName.get(agreeing.name)!;
+			const p = artPrinting(g);
+			reasons.push(`art "${g.name}" ${g.distance} bits + name ${agreeing.score.toFixed(2)} (${agreeing.pass}) agree -> confirmed`);
+			return done(g.name, 'confirmed', p.row, p.candidates, p.state);
+		}
+	}
+
 	// 1. A name with enough evidence identifies the card; the footer picks the printing.
 	if (best && nameIdentifies(best, input.nameText)) {
-		const printings = input.printingsByName(best.name);
+		const printings = printingsOf(best.name);
 		reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${best.pass}), ${printings.length} printing(s)`);
 		const certain = best.score >= NAME_CERTAIN;
 		if (certain && printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
@@ -310,7 +440,7 @@ export function resolveCard(input: ResolveInput): Decision {
 			const runnerUp = byScore.map((c) => ({ ...c, plain: plainScore(c.name) })).find((c) => c.name !== best.name && c.plain >= NAME_LIKELY && c.plain >= bestPlain - NAME_MARGIN);
 			if (runnerUp) {
 				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${bestPlain.toFixed(2)} on the whole text) vs "${runnerUp.name}" ${runnerUp.plain.toFixed(2)}: too close to call -> likely`);
-				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, [...printings, ...input.printingsByName(runnerUp.name)], 'likely');
+				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, [...printings, ...printingsOf(runnerUp.name)], 'likely');
 			}
 			if (printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
 		}
@@ -367,6 +497,14 @@ export function resolveCard(input: ResolveInput): Decision {
 		}
 		reasons.push(`[${r.variant}] weak reading${via} without any name agreement -> no suggestion ("${row.name}")`);
 	}
+	// 3d. Artwork alone, without a name or a footer to confirm it: one tap, the
+	// printings with that picture (and the next artwork when it was close).
+	// Only a close match: a looser one names a different card too often.
+	if (artBest && artBest.distance <= ART_CONFIRM) {
+		const candidates = artUnambiguous ? artBest.rows : artRanked.flatMap((g) => g.rows);
+		reasons.push(`art "${artBest.name}" ${artBest.distance} bits${artUnambiguous || !artRunnerUp ? '' : ` vs "${artRunnerUp.name}" ${artRunnerUp.distance}`} without other evidence -> likely`);
+		return done(artBest.name, 'likely', artBest.rows.length === 1 && artUnambiguous ? artBest.rows[0] : null, candidates, 'likely');
+	}
 	// 4. Nothing resolved: a structural number one OCR error away from exactly
 	// one printing of the read or majority set with the printed rarity letter
 	// becomes a suggestion ("U 0223 THT" for #323 uncommon) — never more.
@@ -386,7 +524,7 @@ export function resolveCard(input: ResolveInput): Decision {
 	// 5. A partial name that nothing corroborates is still worth one tap when
 	// it has few printings (or few in the read / majority set).
 	if (best && best.score >= NAME_LIKELY) {
-		const printings = input.printingsByName(best.name);
+		const printings = printingsOf(best.name);
 		const setHints = new Set<string>();
 		for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());
 		if (input.majoritySet) setHints.add(input.majoritySet.toLowerCase());

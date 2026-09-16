@@ -10,9 +10,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { bestAlias, bestNameMatch, rankNameMatches } from './similarity';
-import { nameIdentifies, resolveCard, type FooterReading, type ResolveInput } from './resolve';
+import { artPool, nameIdentifies, resolveCard, type FooterReading, type ResolveInput } from './resolve';
 
-const row = (name: string, set: string, num: string, rarity = 'common') => ({ id: `${set}-${num}`, name, set_code: set, collector_number: num, rarity });
+const row = (name: string, set: string, num: string, rarity = 'common', art_hash?: string) => ({ id: `${set}-${num}`, name, set_code: set, collector_number: num, rarity, ...(art_hash ? { art_hash } : {}) });
 const reading = (o: Partial<FooterReading>): FooterReading => ({
 	setCode: '', collectorNumber: '', numberSource: 'none', rarity: '', language: 'EN', foilFromText: false,
 	variant: 'primary', trustFoil: false, text: '', ...o
@@ -22,8 +22,8 @@ const pool = [
 	row('Llanowar Cavalry', 'inv', '195'),
 	row("Shredder's Revenge", 'tmt', '76', 'rare'),
 	row('Shredder, Unrelenting', 'tmt', '74', 'uncommon'),
-	row('Dawnhart Rejuvenator', 'mid', '180'),
-	row('Dawnhart Rejuvenator', 'dbl', '180'),
+	row('Dawnhart Rejuvenator', 'mid', '180', 'common', '0000000000000000'),
+	row('Dawnhart Rejuvenator', 'dbl', '180', 'common', '00000000000000ff'), // the Double Feature reprint: same artwork, 8 bits off
 	row('Dawnhart Geist', 'vow', '8', 'uncommon'),
 	row('Dawnhart Geist', 'dbl', '275', 'uncommon'),
 	row('Rainveil Rejuvenator', 'tdm', '152'),
@@ -211,5 +211,131 @@ describe('rankNameMatches / bestAlias', () => {
 	it('reports which alias of a double-faced name matched', () => {
 		expect(bestAlias('Cal', 'Beck // Call')).toEqual({ alias: 'Call', score: 0.75 });
 		expect(bestAlias('Beloved Beggar', 'Beloved Beggar // Generous Soul').alias).toBe('Beloved Beggar');
+	});
+});
+
+describe('resolveCard — art-hash evidence (Phase 3)', () => {
+	const art = (r: ReturnType<typeof row>, distance: number, rotated = false) => ({ row: r, distance, rotated });
+
+	it('identifies a card from an unambiguous close art match when the name channel has nothing', () => {
+		const d = resolveCard(base({
+			nameText: 'W Courier of Cotesiiis',
+			artMatches: [art(pool[0], 6)]
+		}));
+		expect(d.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });
+		expect(d.printing).toMatchObject({ row: pool[0], state: 'confirmed' });
+		expect(d.reasons.join(' ')).toContain('art');
+	});
+
+	// A third Dawnhart Rejuvenator with its own artwork (a showcase frame), 63 bits from the scan below.
+	const showcase = row('Dawnhart Rejuvenator', 'mid', '301', 'common', 'ffffffffffffffff');
+	const withShowcase = (n: string) => (n === 'Dawnhart Rejuvenator' ? [pool[4], pool[5], showcase] : pool.filter((r) => r.name === n));
+
+	it('narrows the printings to the ones sharing the artwork and lets the footer pick among them', () => {
+		const d = resolveCard(base({
+			artMatches: [art(pool[4], 1), art(pool[5], 7)], // Dawnhart Rejuvenator mid#180 and dbl#180
+			artHash: '0000000000000004', printingsByName: withShowcase,
+			footer: [reading({ setCode: 'mid', collectorNumber: '180', numberSource: 'fraction', rarity: 'c', text: '180/277 C MID EN' })]
+		}));
+		expect(d.identity).toMatchObject({ name: 'Dawnhart Rejuvenator', state: 'confirmed' });
+		expect(d.printing).toMatchObject({ row: pool[4], state: 'confirmed' });
+		expect(d.reasons.join(' ')).toContain('narrowed to 2 of 3');
+		// without a footer the same-artwork reprint stays a candidate, the showcase with its own artwork does not
+		const open = resolveCard(base({ artMatches: [art(pool[4], 1), art(pool[5], 7)], artHash: '0000000000000004', printingsByName: withShowcase }));
+		expect(open.printing.state).toBe('unknown');
+		expect(open.printing.candidates).toEqual([pool[4], pool[5]]);
+	});
+
+	it('never settles a printing from the hits alone: the search radius is not the set of printings with this artwork', () => {
+		const d = resolveCard(base({ artMatches: [art(pool[4], 1)], artHash: '0000000000000004', printingsByName: () => [] }));
+		expect(d.identity).toMatchObject({ name: 'Dawnhart Rejuvenator', state: 'confirmed' });
+		expect(d.printing.state).toBe('unknown');
+		expect(d.printing.candidates).toEqual([pool[4]]);
+		// the name's printings known, only one hit within the radius: the reprint stays a candidate
+		const known = resolveCard(base({ artMatches: [art(pool[4], 1)], artHash: '0000000000000004', printingsByName: withShowcase }));
+		expect(known.printing.state).toBe('unknown');
+		expect(known.printing.candidates).toEqual([pool[4], pool[5]]);
+	});
+
+	it('narrows the printings of a name-identified card by artwork as well', () => {
+		const d = resolveCard(base({
+			nameCandidates: [{ name: 'Dawnhart Rejuvenator', score: 0.95, pass: 'primary' }], nameText: 'Dawnhart Rejuvenator',
+			artHash: '0000000000000004', printingsByName: withShowcase
+		}));
+		expect(d.identity).toMatchObject({ name: 'Dawnhart Rejuvenator', state: 'confirmed' });
+		expect(d.printing.candidates).toEqual([pool[4], pool[5]]);
+		// no scan hash: every printing stays
+		const all = resolveCard(base({
+			nameCandidates: [{ name: 'Dawnhart Rejuvenator', score: 0.95, pass: 'primary' }], nameText: 'Dawnhart Rejuvenator',
+			printingsByName: withShowcase
+		}));
+		expect(all.printing.candidates).toEqual([pool[4], pool[5], showcase]);
+	});
+
+	it('beats an uncertain name that reads differently', () => {
+		const d = resolveCard(base({
+			nameCandidates: [{ name: 'Llanowar Cavalry', score: 0.63, pass: 'rotated binarized' }], nameText: 'pean Zia Cavalry',
+			artMatches: [art(pool[0], 7)]
+		}));
+		expect(d.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });
+	});
+
+	it('raises a conflict against a certain name that reads differently', () => {
+		const d = resolveCard(base({
+			nameCandidates: [{ name: 'Lightning Bolt', score: 0.95, pass: 'primary' }], nameText: 'Lightning Bolt',
+			artMatches: [art(pool[0], 5)]
+		}));
+		expect(d.identity.state).toBe('conflict');
+		expect(d.printing.candidates.map((r) => r.name)).toEqual(expect.arrayContaining(['Mechanized Ninja Cavalry', 'Lightning Bolt']));
+	});
+
+	it('turns a looser match into a confirmation when a partial name agrees, but never into one tap on its own', () => {
+		const agree = resolveCard(base({
+			nameCandidates: [{ name: 'Dawnhart Rejuvenator', score: 0.5, pass: 'primary' }], nameText: 'Dawnhart r',
+			artMatches: [art(pool[4], 12), art(pool[5], 12)]
+		}));
+		expect(agree.identity).toMatchObject({ name: 'Dawnhart Rejuvenator', state: 'confirmed' });
+		// Against 8.5k hashes the nearest artwork at 12–14 bits was a different card in 7 of 15 cases
+		// without a name to check it against: no suggestion from the artwork alone.
+		const alone = resolveCard(base({ artMatches: [art(pool[0], 12)] }));
+		expect(alone.identity.state).toBe('unknown');
+		expect(alone.printing.candidates).toEqual([]);
+	});
+
+	it('offers ambiguous close matches of different cards for one tap, name channel deciding when it can', () => {
+		const ambiguous = resolveCard(base({ artMatches: [art(pool[0], 6), art(pool[1], 8)] }));
+		expect(ambiguous.identity.state).toBe('likely');
+		expect(ambiguous.printing.candidates.map((r) => r.name)).toEqual(['Mechanized Ninja Cavalry', 'Llanowar Cavalry']);
+		const decided = resolveCard(base({
+			nameCandidates: [{ name: 'Llanowar Cavalry', score: 0.63, pass: 'primary' }], nameText: 'Llanowar Cavalry',
+			artMatches: [art(pool[0], 6), art(pool[1], 8)]
+		}));
+		expect(decided.identity).toMatchObject({ name: 'Llanowar Cavalry', state: 'confirmed' });
+	});
+
+	it('ignores matches beyond the likely distance', () => {
+		const d = resolveCard(base({ artMatches: [art(pool[0], 20)] }));
+		expect(d.identity.state).toBe('unknown');
+		expect(d.printing.candidates).toEqual([]);
+	});
+});
+
+describe('artPool', () => {
+	const a = row('X', 'aaa', '1', 'common', '0000000000000000');
+	const b = row('X', 'bbb', '1', 'common', '00000000000000ff'); // the same artwork, 8 bits off
+	const c = row('X', 'ccc', '1', 'common', 'ffffffffffffffff'); // a different artwork
+	const n = row('X', 'ddd', '1'); // not hashed yet
+
+	it('keeps every printing without a scan hash, without reference hashes, or when the nearest is not a close match', () => {
+		expect(artPool([a, b, c, n])).toEqual([a, b, c, n]);
+		expect(artPool([n], '0000000000000000')).toEqual([n]);
+		expect(artPool([a, b, c, n], 'ffffffff00000000')).toEqual([a, b, c, n]); // nearest 32 bits away: nothing recognised
+		expect(artPool([a, b, c, n], 'not a hash')).toEqual([a, b, c, n]);
+	});
+
+	it('drops the printings whose artwork is clearly further away than the nearest and keeps the hash-less ones', () => {
+		expect(artPool([a, b, c, n], '0000000000000001')).toEqual([a, b, n]);
+		expect(artPool([a, b, c, n], '0f0f0f0f0f0f0f0f', '0000000000000001')).toEqual([a, b, n]); // the rotated hash counts too
+		expect(artPool([c, a], '0000000000000001')).toEqual([a]);
 	});
 });

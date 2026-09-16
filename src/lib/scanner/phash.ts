@@ -20,6 +20,24 @@ const LOW = 8;
  */
 export const ART_BOX = { x: 0.08, y: 0.115, w: 0.84, h: 0.415 } as const;
 
+/**
+ * The scanner's warp is not the card image: the detected quad is expanded by
+ * 5% before the perspective transform, so the warp keeps ~3.45% of background
+ * on every side, and the quad itself often sits a little inside the card's
+ * edge. The art box on a warp therefore shrinks towards the centre by this
+ * fraction of the warp. Measured on 102 warped cards of the eight development
+ * photos against the reference hashes (`art-box-experiment.mjs`): 0 → mean
+ * 12.3 bits, 51 cards within 10; 0.02 → 9.2 bits, 78 within 10; 0.0345 (the
+ * geometric value) → 9.8 bits, 70 within 10.
+ */
+export const WARP_ART_MARGIN = 0.02;
+
+/** ART_BOX shrunk towards the centre by `margin` on every side (fractions of the warp). */
+export function artBoxOnWarp(margin: number = WARP_ART_MARGIN): { x: number; y: number; w: number; h: number } {
+	const k = 1 - 2 * margin;
+	return { x: margin + ART_BOX.x * k, y: margin + ART_BOX.y * k, w: ART_BOX.w * k, h: ART_BOX.h * k };
+}
+
 /** cos((2i + 1) u pi / 2N) for the separable DCT-II, computed once. */
 const COS: Float64Array = (() => {
 	const t = new Float64Array(HASH_SIZE * HASH_SIZE);
@@ -75,11 +93,21 @@ export function hammingDistance(a: string, b: string): number {
 	return d;
 }
 
-/** Rec. 601 luminance of an RGBA buffer (canvas ImageData or a raw decode). */
-export function grayFromRgba(data: ArrayLike<number>, width: number, height: number): Float32Array {
+/** Rec. 601 luminance of an RGB(A) buffer (canvas ImageData, or a raw decode with 3 or 4 channels). */
+export function grayFromRgba(data: ArrayLike<number>, width: number, height: number, channels = 4): Float32Array {
 	const out = new Float32Array(width * height);
-	for (let i = 0, p = 0; i < out.length; i++, p += 4) out[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+	for (let i = 0, p = 0; i < out.length; i++, p += channels) out[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
 	return out;
+}
+
+/**
+ * The whole client/server pipeline after the art box has been cut: luminance
+ * at the source resolution, box-filter resize to HASH_SIZE, DCT hash. Both
+ * sides call exactly this so a reference hash and a scan hash differ only by
+ * what the camera did to the picture, never by the resampling.
+ */
+export function hashArtPixels(data: ArrayLike<number>, width: number, height: number, channels = 4): string {
+	return dctHash(resizeGray(grayFromRgba(data, width, height, channels), width, height, HASH_SIZE, HASH_SIZE));
 }
 
 /** Area-averaging downscale of a gray image (box filter), the same on server and client. */
