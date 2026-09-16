@@ -61,7 +61,13 @@ export function looksLikeOcrJunk(word: string): boolean {
 	return upper / word.length >= 0.6;
 }
 
-/** Number of 5+-letter words that don't look like OCR junk: does this OCR text say anything about the card? */
+/**
+ * Number of 5+-letter words that don't look like OCR junk: does this OCR text
+ * say anything about the card? Capitalised words count as junk here too —
+ * a showcase frame that prints its name in capitals ("LAST RONIN'S
+ * TECHNIQUE") is read well enough to clear NAME_CERTAIN instead, while a
+ * capitalised fragment such as "HEASTCE" is what mana symbols turn into.
+ */
 export function realWordCount(text: string): number {
 	return text.split(/\s+/).filter((w) => w.replace(/[^a-z]/gi, '').length >= 5 && !looksLikeOcrJunk(w)).length;
 }
@@ -102,13 +108,24 @@ export function nameAliases(name: string): string[] {
 	return faces.length > 1 ? [name, ...faces] : [name];
 }
 
-/** Best similarity of the OCR text to any alias of `name` (whole string or junk-tolerant prefix). */
-export function nameScore(query: string, name: string): number {
-	let best = 0;
+/**
+ * Best similarity of the OCR text to any alias of `name` (whole string or
+ * junk-tolerant prefix), together with the alias that produced it — the
+ * caller needs the alias to judge how much text actually matched ("Cal" is
+ * three letters of the face "Call", not of "Beck // Call").
+ */
+export function bestAlias(query: string, name: string): { alias: string; score: number } {
+	let best = { alias: name, score: 0 };
 	for (const alias of nameAliases(name)) {
-		best = Math.max(best, similarity(query, alias), prefixSimilarity(query, alias) * PREFIX_MATCH_WEIGHT);
+		const score = Math.max(similarity(query, alias), prefixSimilarity(query, alias) * PREFIX_MATCH_WEIGHT);
+		if (score > best.score) best = { alias, score };
 	}
 	return best;
+}
+
+/** Best similarity of the OCR text to any alias of `name` (whole string or junk-tolerant prefix). */
+export function nameScore(query: string, name: string): number {
+	return bestAlias(query, name).score;
 }
 
 /**
@@ -122,18 +139,30 @@ export function bestNameMatch(
 	results: Array<Record<string, unknown>>,
 	query: string
 ): { name: string; score: number } {
-	let bestName = '';
-	let bestScore = 0;
+	return rankNameMatches(results, query, 1)[0] ?? { name: '', score: 0 };
+}
+
+/**
+ * Distinct names of a result list ranked by similarity to the OCR text, best
+ * first, at most `limit`; names scoring 0 are dropped. On a tie the record
+ * whose *canonical* string produced the score outranks one matched only
+ * through a face alias ("Negate" before "Negate // Negate"); otherwise the
+ * input order (the server's relevance) decides.
+ */
+export function rankNameMatches(
+	results: Array<Record<string, unknown>>,
+	query: string,
+	limit = 3
+): Array<{ name: string; score: number }> {
 	const seen = new Set<string>();
+	const ranked: Array<{ name: string; score: number; canonical: boolean; order: number }> = [];
 	for (const r of results) {
 		const name = r.name as string;
 		if (seen.has(name)) continue;
 		seen.add(name);
-		const score = nameScore(query, name);
-		if (score > bestScore) {
-			bestScore = score;
-			bestName = name;
-		}
+		const { alias, score } = bestAlias(query, name);
+		if (score > 0) ranked.push({ name, score, canonical: alias === name, order: ranked.length });
 	}
-	return { name: bestName, score: bestScore };
+	ranked.sort((a, b) => b.score - a.score || Number(b.canonical) - Number(a.canonical) || a.order - b.order);
+	return ranked.slice(0, limit).map(({ name, score }) => ({ name, score }));
 }

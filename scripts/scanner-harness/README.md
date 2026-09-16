@@ -9,21 +9,50 @@ identified. Works fully offline once the browser libraries are self-hosted.
 ```bash
 npm install                                   # playwright is a devDependency
 npx playwright install chromium               # browser binary; or point PLAYWRIGHT_CHROMIUM_PATH at an existing Chromium
-node scripts/scanner-harness/vendor-assets.mjs   # OpenCV.js + Tesseract.js + eng data + onnxruntime-web + PaddleOCR model -> static/vendor/ (gitignored)
-echo 'PUBLIC_SCANNER_ASSETS_URL=/vendor' >> .env
-npm run dev                                   # in a second terminal
-node scripts/scanner-harness/seed-test-db.mjs --distractors # only on an empty DB: inserts the printings from seed-cards.json (+ distractor printings, see below)
+node scripts/scanner-harness/vendor-assets.mjs   # optional offline mode: OpenCV.js + Tesseract.js + eng data + onnxruntime-web + PaddleOCR model -> static/vendor/ (gitignored)
+echo 'PUBLIC_SCANNER_ASSETS_URL=/vendor' >> .env  # only with the vendored assets; otherwise the CDN copies are used
 ```
 
-With a fully imported card database (`npm run import-cards`) the seed step is
-unnecessary; the harness then runs against the real card pool.
+The harness needs a dev server per database. **Two databases matter**: the
+full Scryfall catalogue (`npm run import-cards`, ~115k printings — what
+production sees) and the small *seeded* catalogue with distractor printings
+(the regression baseline). Run them side by side from one checkout — the DB
+path and the background jobs are configurable, so no worktree is needed:
+
+```bash
+# Full catalogue on :5173. DISABLE_PRICE_UPDATES=1 keeps the catalogue frozen
+# during a measurement (the boot-time catch-up otherwise updates prices and
+# inserts new cards).
+DISABLE_PRICE_UPDATES=1 npm run dev
+
+# Seeded catalogue on :5174, in its own file. Without DISABLE_PRICE_UPDATES the
+# catch-up job would import every Scryfall card into the empty seed database.
+MTG_DB_PATH=/tmp/seed-db/mtg.db DISABLE_PRICE_UPDATES=1 npx vite dev --port 5174 --strictPort
+curl -s -H 'Accept: text/html' -o /dev/null http://localhost:5174/scan   # first request creates the schema
+MTG_DB_PATH=/tmp/seed-db/mtg.db node scripts/scanner-harness/seed-test-db.mjs --distractors
+```
+
+> **Never run `seed-test-db.mjs` against the full database**: it writes with
+> `INSERT OR REPLACE` into whatever `MTG_DB_PATH` (default `data/mtg.db`)
+> points at and would plant ~770 synthetic "Distractor" printings in the real
+> catalogue.
+
+`HARNESS_URL` (default `http://localhost:5173`) tells every script below which
+server to drive. Vite binds `localhost`, which may resolve to `::1` only;
+Chromium tries both address families, so keep the host name rather than
+`127.0.0.1`.
 
 ## Running
 
 ```bash
 # Upload path: single or multiple mode, one result block per file
-node scripts/scanner-harness/harness.mjs --mode multiple --expect scripts/scanner-harness/expectations-real-photos.json --baseline scripts/scanner-harness/baseline.json photos/*.jpg
+# Seeded catalogue (:5174) against the committed seed baseline:
+HARNESS_URL=http://localhost:5174 node scripts/scanner-harness/harness.mjs --mode multiple --expect scripts/scanner-harness/expectations-real-photos.json --baseline scripts/scanner-harness/baseline.json photos/*.jpg
+# Full catalogue (:5173) against its own baseline (the primary number: wrong identities/printings in production conditions):
+node scripts/scanner-harness/harness.mjs --mode multiple --expect scripts/scanner-harness/expectations-real-photos.json --baseline scripts/scanner-harness/baseline-fulldb.json --out results-fulldb.json photos/*.jpg
 node scripts/scanner-harness/harness.mjs --mode single --expect scripts/scanner-harness/expectations.json fixtures/synth-single.jpg
+# Re-score a saved --out file against (corrected) expectations without scanning again:
+node scripts/scanner-harness/rescore.mjs results-fulldb.json scripts/scanner-harness/expectations-real-photos.json
 
 # Synthetic fixtures (no photos needed)
 node scripts/scanner-harness/make-synthetic.mjs fixtures/
@@ -39,12 +68,28 @@ only). The harness then scores every photo at two levels — *identity* (the
 accepted name matches an expected instance) and *printing* (its unique set +
 number is the expected one) — and reports unresolved printings, wrong
 identities, wrong printings, missing and extra cards, and cards offered as
-`likely` for one-tap confirmation (not counted as identified). `--out
-results.json` stores every card's OCR text, chosen printing, state and the
-full debug log for later analysis. `expectations-real-photos.json` lists the
-eight real phone/camera spreads used during development (the photos themselves
-are not in the repository; `photo-inventory.json` records their SHA-256, sizes
-and instance counts); their printings are part of `seed-cards.json`.
+`likely` (one-tap confirmation) or `conflict` (both readings shown), neither
+counted as identified nor as wrong. `--out results.json` stores every card's
+OCR text, chosen printing, state and the full debug log for later analysis.
+`expectations-real-photos.json` lists the eight real phone/camera spreads used
+during development (the photos themselves are not in the repository;
+`photo-inventory.json` records their SHA-256, sizes and instance counts);
+their printings are part of `seed-cards.json`.
+
+**Ground truth is verified against the catalogue.** Every expected printing
+must exist in the database under that name, set and number. Round 10 found
+eleven of the 104 instances wrong in the hand-written list (Tenderize TMT
+#133, not #123; The Last Ronin's Technique #223, not #323; Lantern Flare VOW
+#23, not MID; Renet #202, Casey Jones #207, Michelangelo #118, Persistent
+Specimen VOW #125, Daybreak Combatants VOW #153, Rotten Reunion MID #119,
+Hinterland Harbor TMC #69, Primordial Pachyderm #129, and TMT #70 is spelled
+"Paramecia Coloniex" on Scryfall) — the seeded catalogue had been typed from
+the same list, so those errors were invisible until the full database was
+used. Check with:
+
+```bash
+node -e "const D=require('better-sqlite3');const db=new D('data/mtg.db',{readonly:true});const e=require('./scripts/scanner-harness/expectations-real-photos.json');const q=db.prepare(\"SELECT name FROM cards WHERE set_code=? AND collector_number=? AND layout<>'art_series'\");for(const rows of Object.values(e))for(const r of rows){const row=q.get(r.set,r.number);if(!row||row.name!==r.name)console.log('MISMATCH',r.name,r.set,r.number,'->',row?row.name:'none')}"
+```
 
 `--write-baseline baseline.json` stores the per-photo metrics;
 `--baseline baseline.json` compares a later run against them and exits 1 when
@@ -53,40 +98,80 @@ identity or printing drops or wrong identities/printings rise for any photo.
 photos.
 
 `export-seed.mjs` regenerates `seed-cards.json` from a fully imported
-database (canonical "Front // Back" names, `card_faces`, layouts, rarities) for
-the printings listed in an expectations file, so the harness seed stays
-production-faithful. Double-faced cards must carry the canonical name and their
-faces: the scanner reads the face name, the database stores the canonical one.
+database (real Scryfall ids, canonical "Front // Back" names, `card_faces`,
+layouts, rarities) for the printings listed in the real-photo and the
+synthetic expectations (`--out` and explicit expectation files are optional).
+Run it after every change to an expectations file; the synthetic fixtures
+print real M10/MH2/RVR collector numbers so they resolve to real printings.
+Double-faced cards must carry the canonical name and their faces: the scanner
+reads the face name, the database stores the canonical one.
 
 ```bash
 # Diagnostics: detection overlay + every card's warp / name crop / bottom crop as one PNG montage
 node scripts/scanner-harness/dump-debug.mjs photos/spread.jpg out/ multiple
 ```
 
-## Reference results (September 2026, seeded DB, self-hosted libraries)
+## Reference results (September 2026)
 
 Columns: state before the scanner work, after spread-aware detection and
-adaptive crop windows, and after the OCR input-size fix plus the plausibility
-check for number-only hits (current code).
+adaptive crop windows, after the OCR input-size fix plus the plausibility
+check for number-only hits, the fusion phases (all against the seeded DB with
+distractors) — and finally **Round 10, the same photos against the full
+Scryfall catalogue** (115,459 printings, 38k distinct names, tokens and
+The List / Double Feature reprints included), which is what production sees.
 
-| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis |
-|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|-------------------------|
-| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 | 4 / 4 |
-| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 | 15 / 15 |
-| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 | 10 / 10 |
-| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 |
-| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 |
-| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 |
-| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely |
-| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 |
-| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s |
+| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis | Round 10, seeded DB | **Round 10, full DB** (identity / printing) |
+|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|-------------------------|---------------------|---------------------------------------------|
+| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 |
+| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 | 15 / 15 | 15 / 15 | 14 / 11, 3 printings open, 1 likely |
+| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 | 10 / 10 | 10 / 10 | 10 / 10 |
+| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 | 15 / 15 | 14 / 12, 2 open, 1 likely |
+| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 15 / 12, 3 open |
+| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 | 15 / 15 | 13 / 8, 5 open, 2 likely |
+| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 13 / 7, 6 open, 2 likely |
+| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 12 / 6, 6 open, 3 likely |
+| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s | **103 / 103 of 104, 1 likely, none wrong**, 33 s | **95 / 70 of 104, 25 printings open, 9 likely, none wrong**, 89 s |
 
-The last two columns are measured with the canonical seed (double-faced names)
+The fusion columns are measured with the canonical seed (double-faced names)
 and the printing-level metric; the earlier columns counted names only. The
 Phase 4 column differs from Phase 2 only in the detection stage (oriented
 dimension filter and the grid hypothesis of `src/lib/scanner/grid.ts`). The
 "87 names" run drops to 86 under those conditions (Beloved Beggar's front face
 no longer matched its canonical name), which the face-aware search fixed.
+Wall times up to Phase 4 are from the sandbox, the Round 10 ones from a
+desktop PC (the seeded run there takes 33 s), so only the identity columns
+compare across the two.
+
+**Round 10 — the full catalogue (2026-09-16).** Before Round 10 the same code
+scored **78 / 55 of 104 with 23 wrong identities** against the full database
+(after correcting the ground truth; 27 wrong and 6 wrong printings before,
+see above). Every wrong identity came from the name channel meeting a pool
+of 38k names instead of 70: eleven were Scryfall *art-series* records
+("Zog, Triceraton Castaway // Zog, Triceraton Castaway"), four were an
+uncertain name (0.60–0.75) overriding a strong collector-line reading of
+another card ("pean Zia Cavalry" → Llanowar Cavalry while the strip said
+`C 0156 TMT EN`, Mechanized Ninja Cavalry), four were two- or three-letter
+fragments matching short names or faces ("Boa" → the token Boar, "Cal" →
+Beck // Call, "fasten" → Fast // Furious), two were the right name missing
+from a truncated candidate list ("Escave Tunnel" → Ice Tunnel while Escape
+Tunnel sat beyond the 20-row cut), and the rest were junk texts or close
+siblings ("Easy Te" → Easy Prey, Dawnhart Geist for Dawnhart Rejuvenator).
+The fixes (`src/lib/scanner/full-pool.test.ts` pins every class): art-series
+records are excluded from every scanner query; fuzzy candidates are ranked
+server-side by the scanner's own similarity before the cut; a name alone
+identifies a card only with enough substance (`nameIdentifies()`: score ≥
+0.6, an exact read for names or faces under six characters, a real word in
+the text below 0.8); below 0.8 the footer gets a say (an exact structural
+reading that names a card fitting the text beats the name, a real set code
+the name was never printed in demotes it to `likely`), and a runner-up
+within 0.1 on the whole text makes the identity a one-tap choice; the best
+few names of every pass are recorded as evidence. Result: **0 wrong**, 95
+identities, 9 one-tap offers. The 25 open printings are genuine catalogue
+ambiguity with an unreadable footer: same-set variants (TMT #126 / #240),
+Innistrad: Double Feature reprints with the *same* collector numbers as MID /
+VOW, The List, promos, and Forest with 200 printings; the seeded DB had made
+them unique by construction. Two intermittent 15-minute hangs traced to a
+stalled CDN download got the PaddleOCR and Tesseract loads a 90 s deadline.
 
 \* measured against the distractor database (see below); without it those two
 digit misreads were "not found" because the test DB had no card at the misread
@@ -114,10 +199,12 @@ node scripts/scanner-harness/ocr-scale-experiment.mjs --json out.json photos/*.j
 ```
 
 The remaining one after Phase 4: The Last Ronin's Technique on one camera
-photo (showcase frame; offered as `likely` from "LAST … Techmaue" + "223 THT").
-Retro-Mutation and Tunnel Rats were recovered by the grid hypothesis: the
-lattice-derived cells warp those cards a little differently and their name
-bars became legible to the existing passes.
+photo (showcase frame; offered as `likely` from "LAST … Techmaue" + "223 THT"
+— and #223 *is* the printed number; the seed said #323 until Round 10
+verified the ground truth against the catalogue). Retro-Mutation and Tunnel
+Rats were recovered by the grid hypothesis: the lattice-derived cells warp
+those cards a little differently and their name bars became legible to the
+existing passes.
 
 **Name-band experiments.** `ocr-preprocess-experiment.mjs` re-OCRs every name
 crop with canvas-only preprocessings (Otsu binarisation, inversion, contrast

@@ -1,9 +1,20 @@
 import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
-import { nameAliases, normalizeName, similarity } from '../scanner/similarity.js';
+import { nameAliases, normalizeName, rankNameMatches, similarity } from '../scanner/similarity.js';
 
 const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity`;
+// Art-series records are not playable cards: Scryfall lists them as
+// "Name // Name" with the artwork of a real card, so a scanned name matched
+// them as often as the card itself (11 of 23 wrong identities on the eight
+// development photos against the full pool). The scanner never returns them.
+const NOT_ART_SERIES = `layout <> 'art_series'`;
+/** Rows a fuzzy path may contribute before the names are ranked; the old 20 cut the right name from common-word queries ("Escave Tunnel"). */
+const FUZZY_ROWS = 200;
+/** Distinct names a fuzzy search returns, best similarity first. */
+const FUZZY_NAMES = 20;
+/** Printings per returned name in a fuzzy result (the fusion fetches the complete list separately). */
+const ROWS_PER_NAME = 10;
 
 export type CardRow = Record<string, unknown>;
 export type SearchResult = { results: CardRow[]; matchType: 'exact' | 'like' | 'fts' | 'fuzzy' | 'none' };
@@ -23,11 +34,11 @@ let _printings: Statement | undefined;
 // scanner reads the face printed on the card, the database stores the
 // canonical string.
 const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM cards
-	WHERE name = ? OR name LIKE ? OR id IN (SELECT card_id FROM card_faces WHERE name = ?)
+	WHERE (name = ? OR name LIKE ? OR id IN (SELECT card_id FROM card_faces WHERE name = ?)) AND ${NOT_ART_SERIES}
 	ORDER BY released_at DESC LIMIT 10`));
-const coreStmt = () => (_core ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`));
-const printingsStmt = () => (_printings ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? ORDER BY released_at DESC LIMIT 200`));
-const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`));
+const coreStmt = () => (_core ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${NOT_ART_SERIES} ORDER BY released_at DESC LIMIT ${FUZZY_ROWS}`));
+const printingsStmt = () => (_printings ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? AND ${NOT_ART_SERIES} ORDER BY released_at DESC LIMIT 200`));
+const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${NOT_ART_SERIES} ORDER BY released_at DESC LIMIT 20`));
 // cards_fts is an external-content FTS5 index (content='cards',
 // content_rowid='rowid'): it stores only name/type_line/oracle_text and reuses
 // cards.rowid as its own rowid — there is NO card_id column. So the join must be
@@ -46,15 +57,15 @@ const ftsStmt = () => (_fts ??= sqlite.prepare(
 	`SELECT ${ftsSelectFields}
 	FROM cards_fts
 	JOIN cards ON cards.rowid = cards_fts.rowid
-	WHERE cards_fts MATCH ?
+	WHERE cards_fts MATCH ? AND cards.${NOT_ART_SERIES}
 	ORDER BY bm25(cards_fts), cards.released_at DESC
-	LIMIT 20`
+	LIMIT ?`
 ));
-const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ?`));
+const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ? AND ${NOT_ART_SERIES}`));
 
-function runFts(query: string): CardRow[] {
+function runFts(query: string, limit = 20): CardRow[] {
 	try {
-		return ftsStmt().all(query) as CardRow[];
+		return ftsStmt().all(query, limit) as CardRow[];
 	} catch {
 		return []; // FTS syntax error on odd OCR input — treat as no match
 	}
@@ -93,17 +104,23 @@ export function searchByName(query: string): SearchResult {
 	const like = likeStmt().all(`%${cleaned}%`) as CardRow[];
 	if (like.length > 0) return { results: like, matchType: 'like' };
 
+	// OCR-tolerant fallbacks. Every index-based path contributes its rows to one
+	// pool; the distinct names in the pool are then ranked by the same
+	// similarity the scanner applies and the best few come back with their
+	// printings. Formerly the first path with any hit answered on its own, and
+	// its 20 newest rows could all be printings of the wrong names while the
+	// right one sat beyond the cut ("Escave Tunnel" -> Ice Tunnel, Escape Tunnel
+	// never in the list; "Lomsern flare" -> a scene-box record, Lantern Flare
+	// missing). The edit-distance scan over every name runs only when the
+	// pool has nothing convincing, because it costs tens of milliseconds.
+	const pool: CardRow[] = [];
 	// Words that can carry a name: 3+ letters with a vowel (drops "ol", "TT").
 	const strong = [...new Set(words.filter((w) => w.length >= 3 && /[aeiouy]/i.test(w)))];
 	if (strong.length > 0) {
-		const any = runFts(`name : (${strong.map(term).join(' OR ')})`);
-		if (any.length > 0) return { results: any, matchType: 'fuzzy' };
+		pool.push(...runFts(`name : (${strong.map(term).join(' OR ')})`, FUZZY_ROWS));
 
 		const stems = [...new Set(strong.filter((w) => w.length >= 5).map((w) => w.slice(0, 4)))];
-		if (stems.length > 0) {
-			const stemmed = runFts(`name : (${stems.map(term).join(' OR ')})`);
-			if (stemmed.length > 0) return { results: stemmed, matchType: 'fuzzy' };
-		}
+		if (stems.length > 0) pool.push(...runFts(`name : (${stems.map(term).join(' OR ')})`, FUZZY_ROWS));
 
 		// Word core: OCR glues the mana symbol or the frame edge to the first
 		// letter ("CTenderize") or misreads it ("Jrenderize"), which defeats
@@ -111,22 +128,24 @@ export function searchByName(query: string): SearchResult {
 		// and look for the remaining core inside a name.
 		for (const w of strong.filter((x) => x.length >= 7)) {
 			const core = w.length >= 8 ? w.slice(2, -1) : w.slice(1, -1);
-			const rows = coreStmt().all(`%${core}%`) as CardRow[];
-			if (rows.length > 0) return { results: rows, matchType: 'fuzzy' };
+			pool.push(...(coreStmt().all(`%${core}%`) as CardRow[]));
 		}
 	}
+	let ranked = rankNameMatches(pool, cleaned, FUZZY_NAMES);
 
-	// Last resort: edit-distance search over every distinct name (and face).
-	// Several misread letters inside one word ("wmotorion" for Immolation)
-	// defeat every index-based path above; a scan of ~30k names with a bigram
-	// prefilter takes a few tens of milliseconds.
-	const fuzzy = fuzzyNames(cleaned);
-	if (fuzzy.length > 0) {
-		const rows = fuzzy.flatMap((f) => exactStmt().all(f.name, `${f.name} //%`, f.name) as CardRow[]);
-		if (rows.length > 0) return { results: rows, matchType: 'fuzzy' };
+	// Edit-distance search over every distinct name (and face): several
+	// misread letters inside one word ("wmotorion" for Immolation) defeat the
+	// index-based paths; a scan of ~38k names with a bigram prefilter takes a
+	// few tens of milliseconds.
+	if (ranked.length === 0 || ranked[0].score < 0.6) {
+		const fuzzy = fuzzyNames(cleaned);
+		if (fuzzy.length > 0) {
+			pool.push(...fuzzy.flatMap((f) => exactStmt().all(f.name, `${f.name} //%`, f.name) as CardRow[]));
+			ranked = rankNameMatches(pool, cleaned, FUZZY_NAMES);
+		}
 	}
-
-	return { results: [], matchType: 'none' };
+	if (ranked.length === 0) return { results: [], matchType: 'none' };
+	return { results: ranked.flatMap((m) => printingsByName(m.name).slice(0, ROWS_PER_NAME)), matchType: 'fuzzy' };
 }
 
 type NameEntry = { name: string; norm: string; bigrams: Set<string> };
@@ -144,7 +163,7 @@ function nameEntries(): NameEntry[] {
 	const cardCount = (sqlite.prepare('SELECT COUNT(*) AS c FROM cards').get() as { c: number }).c;
 	if (nameIndex && nameIndex.cardCount === cardCount) return nameIndex.entries;
 	const entries: NameEntry[] = [];
-	for (const { name } of sqlite.prepare('SELECT DISTINCT name FROM cards').all() as Array<{ name: string }>) {
+	for (const { name } of sqlite.prepare(`SELECT DISTINCT name FROM cards WHERE ${NOT_ART_SERIES}`).all() as Array<{ name: string }>) {
 		for (const alias of nameAliases(name)) {
 			const norm = normalizeName(alias);
 			if (norm.length >= 3) entries.push({ name, norm, bigrams: bigramsOf(norm) });
@@ -200,7 +219,7 @@ export function nearBySetNumber(setCode: string, collectorNumber: string, rarity
 	for (let i = 0; i <= digits.length; i++) for (const d of '0123456789') variants.add(digits.slice(0, i) + d + digits.slice(i));
 	const numbers = [...variants].map((v) => v.replace(/^0+(?=\d)/, '')).filter((v) => v !== digits).map((v) => v + suffix);
 	if (numbers.length === 0) return [];
-	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number IN (${numbers.map(() => '?').join(',')})`).all(lc, ...numbers) as CardRow[];
+	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number IN (${numbers.map(() => '?').join(',')}) AND ${NOT_ART_SERIES}`).all(lc, ...numbers) as CardRow[];
 	const letter = rarityLetter.trim().toLowerCase();
 	if (!letter) return rows;
 	const wanted: Record<string, string[]> = { c: ['common'], u: ['uncommon'], r: ['rare'], m: ['mythic'], l: ['common'], s: ['special', 'bonus'] };

@@ -8,8 +8,8 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
-	import { bestNameMatch, realWordCount } from '$lib/scanner/similarity';
-	import { resolveCard, NAME_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState } from '$lib/scanner/resolve';
+	import { rankNameMatches, realWordCount } from '$lib/scanner/similarity';
+	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState } from '$lib/scanner/resolve';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
@@ -1076,10 +1076,11 @@
 				log(`Card ${cardIdx + 1}: searching "${cleanName}"`);
 				if (searchData && searchData.results.length > 0) {
 					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
-					const best = bestNameMatch(searchData.results, cleanName);
-					noteNameCandidate(card, best, 'primary');
+					const rankedNames = rankNameMatches(searchData.results, cleanName);
+					const best = rankedNames[0] ?? { name: '', score: 0 };
+					for (const m of rankedNames) noteNameCandidate(card, m, 'primary');
 					log(`Card ${cardIdx + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
-					if (best.score >= 0.6) {
+					if (nameIdentifies(best, cleanName)) {
 						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
 						card.matchType = searchData.matchType;
 						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
@@ -1122,10 +1123,11 @@
 						continue;
 					}
 					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
-					const best = bestNameMatch(wData.results, cleanName);
-					noteNameCandidate(card, best, 'word');
+					const rankedNames = rankNameMatches(wData.results, cleanName);
+					const best = rankedNames[0] ?? { name: '', score: 0 };
+					for (const m of rankedNames) noteNameCandidate(card, m, 'word');
 					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
-					if (best.score >= 0.6) {
+					if (nameIdentifies(best, cleanName)) {
 						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
 						card.matchType = 'similarity';
 						log(`Card ${cardIdx + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
@@ -1136,10 +1138,12 @@
 			// card to its rotated warp because the collector line reads better there.
 			const rotatedNameText = new Map<number, string>();
 
-			// Batch-search OCR name texts and accept the best match per card
-			// (score >= 0.6). Shared by the raw-line pass and the upside-down
-			// retry; returns the indices (relative to firstIdx) that resolved.
-			// Every candidate is recorded as name evidence for the fusion.
+			// Batch-search OCR name texts and accept the best match per card when
+			// it identifies the card on its own (nameIdentifies: score, name length,
+			// a real word in the text). Shared by the raw-line pass and the
+			// upside-down retry; returns the indices (relative to firstIdx) that
+			// resolved. The best few names of every pass are recorded as evidence
+			// for the fusion, so a close runner-up is never lost.
 			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string): Promise<number[]> {
 				const accepted: number[] = [];
 				if (items.length === 0 || superseded()) return accepted;
@@ -1160,10 +1164,11 @@
 					const card = detectedCards[firstIdx + i];
 					const searchData = batch[qi];
 					if (!searchData || searchData.results.length === 0) return;
-					const best = bestNameMatch(searchData.results, cleanName);
+					const rankedNames = rankNameMatches(searchData.results, cleanName);
+					const best = rankedNames[0] ?? { name: '', score: 0 };
 					log(`Card ${firstIdx + i + 1} ${tag}: best match "${best.name}" score=${best.score.toFixed(3)}`);
-					noteNameCandidate(card, best, tag);
-					if (best.score < 0.6) return;
+					for (const m of rankedNames) noteNameCandidate(card, m, tag);
+					if (!nameIdentifies(best, cleanName)) return;
 					card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
 					card.matchType = searchData.matchType;
 					card.nameText = cleanName;
@@ -1432,7 +1437,7 @@
 			const knownSets = new Map<string, boolean>();
 			const lookupKey = (setCode: string, n: string) => `${setCode.toLowerCase()}|${n}`;
 			const nearKey = (setCode: string, n: string, rarity: string) => `${setCode.toLowerCase()}|${n}|${rarity}`;
-			const structural = (r: FooterReading) => r.numberSource === 'fraction' || r.numberSource === 'pair' || r.numberSource === 'rarity';
+			const structural = (r: FooterReading) => isStructural(r.numberSource);
 			async function prefetch(cards: typeof detectedCards, majoritySet: string | null) {
 				const names = new Set<string>();
 				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];

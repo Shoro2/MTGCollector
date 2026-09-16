@@ -22,15 +22,21 @@ type TesseractWorker = {
 export type DetailedOcrResult = { text: string; words: WordBox[] };
 
 import { tesseractAssets } from './assets.js';
+import { withTimeout } from './timeout.js';
 
 let pool: TesseractWorker[] = [];
 let poolPromise: Promise<TesseractWorker[]> | null = null;
+/** Deadline for the bundle import, worker spawn and traineddata download of the whole pool. */
+const POOL_TIMEOUT_MS = 90_000;
 
 export async function getTesseractPool(): Promise<TesseractWorker[]> {
 	if (pool.length > 0) return pool;
 	if (poolPromise) return poolPromise;
 
-	poolPromise = (async () => {
+	// Bundle, worker, core and language data come from the CDN (or the
+	// self-hosted copies); a stalled download must fail the scan with an error
+	// instead of hanging it, hence the deadline.
+	poolPromise = withTimeout((async () => {
 		// CDN by default; PUBLIC_SCANNER_ASSETS_URL switches the bundle, worker,
 		// core and language data to self-hosted copies (see assets.ts).
 		const assets = tesseractAssets();
@@ -47,7 +53,7 @@ export async function getTesseractPool(): Promise<TesseractWorker[]> {
 			Array.from({ length: poolSize }, () => createWorker('eng', 1, assets.workerOptions) as Promise<TesseractWorker>)
 		);
 		return pool;
-	})();
+	})(), POOL_TIMEOUT_MS, 'Tesseract worker pool start');
 	// If pool creation fails (CDN import or worker spawn), clear the cached
 	// promise so a later call retries instead of returning the cached rejection
 	// forever.

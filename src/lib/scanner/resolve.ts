@@ -15,7 +15,7 @@
  * by the caller), so the rules are unit-testable without OCR or a browser.
  */
 import type { CollectorInfo } from './parse';
-import { nameScore, realWordCount } from './similarity';
+import { bestAlias, nameAliases, nameScore, normalizeName, realWordCount, similarity } from './similarity';
 import { disambiguateReprints, normalizeCollectorNumber } from './pipeline';
 
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
@@ -55,6 +55,16 @@ export type Decision = {
 export const NAME_CONFIRM = 0.6;
 /** From this score on a name candidate counts as evidence that can be joined with a footer reading. */
 export const NAME_LIKELY = 0.4;
+/**
+ * From this score on a name identifies the card regardless of what the footer
+ * says about other cards; below it the name is *uncertain* and the footer and
+ * close runner-up candidates get a say. Every wrong name the full card pool
+ * produced on the development photos scored 0.75 or less; a capitalised
+ * showcase name read at 0.85 needs no further evidence.
+ */
+export const NAME_CERTAIN = 0.8;
+/** A runner-up candidate within this distance of an uncertain best name makes the identity a one-tap choice. */
+export const NAME_MARGIN = 0.1;
 /** A candidate this strong that names a different card vetoes a number-only hit ... */
 export const NAME_EVIDENCE = 0.45;
 /** ... when the hit itself scores below this against the OCR text. */
@@ -92,7 +102,27 @@ export function numberCompatible(read: string, actual: string): boolean {
 	return false;
 }
 
-const isStructural = (s: CollectorInfo['numberSource']) => s === 'fraction' || s === 'pair' || s === 'rarity' || s === 'padded';
+/** Number sources that come from a parsed collector-line structure rather than a stray digit run. */
+export const isStructural = (s: CollectorInfo['numberSource']) => s === 'fraction' || s === 'pair' || s === 'rarity' || s === 'padded';
+
+/** Names (or faces) shorter than this, normalised, only identify a card when read exactly. */
+const SHORT_NAME = 6;
+
+/**
+ * Whether a name candidate identifies the card on its own. Measured against
+ * the full card pool (~38k names, tokens included), a bare score threshold
+ * confirmed "Boa" as the token Boar, "Cal" as Beck // Call and "Easy Te" as
+ * Easy Prey: a 40% edit budget is a single letter on a four-letter name, and
+ * an OCR text without one real word matches *something* in a pool that size.
+ * So the score must clear NAME_CONFIRM, a short name or face needs an exact
+ * read, and below NAME_CERTAIN the text must contain at least one real word.
+ */
+export function nameIdentifies(candidate: { name: string; score: number }, nameText: string): boolean {
+	if (candidate.score < NAME_CONFIRM) return false;
+	const { alias } = bestAlias(nameText, candidate.name);
+	if (normalizeName(alias).length < SHORT_NAME && candidate.score < 0.999) return false;
+	return candidate.score >= NAME_CERTAIN || realWordCount(nameText) > 0;
+}
 
 export function resolveCard(input: ResolveInput): Decision {
 	const reasons: string[] = [];
@@ -145,16 +175,144 @@ export function resolveCard(input: ResolveInput): Decision {
 		return true;
 	};
 
-	// 1. A confident name identifies the card; the footer only picks the printing.
-	if (best && best.score >= NAME_CONFIRM) {
+	// Join: the printings of a candidate that the footer is compatible with —
+	// in the read set (or the majority set when no set was read), with a number
+	// within one edit of some reading whose rarity letter agrees.
+	const setHints = new Set<string>();
+	for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());
+	if (setHints.size === 0 && input.majoritySet) setHints.add(input.majoritySet.toLowerCase());
+	const joinHits = (name: string): PrintingRow[] =>
+		input.printingsByName(name).filter((row) => {
+			if (setHints.size > 0 && !setHints.has(String(row.set_code).toLowerCase())) return false;
+			const contributing = ranked.filter(({ r }) => r.collectorNumber && numberCompatible(r.collectorNumber, String(row.collector_number)));
+			return contributing.length > 0 && contributing.every(({ r }) => rarityAgrees(r.rarity, row.rarity));
+		});
+	const sameNumber = (r: FooterReading, row: PrintingRow) => r.collectorNumber !== '' && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number));
+	// A partial name and a partial number that agree on exactly one printing.
+	// Two independent signals that agree *exactly* — the number read as printed,
+	// from a strip whose set code is real or whose card exists in one set only —
+	// confirm the printing; a number that is merely compatible (one edit, dropped
+	// digit) stays a one-tap offer.
+	const joinDecision = (cand: NameCandidate): Decision | null => {
+		const hits = joinHits(cand.name);
+		if (hits.length > 1) reasons.push(`join: ${hits.length} printings of "${cand.name}" compatible, not unique`);
+		if (hits.length !== 1) return null;
+		const row = hits[0];
+		const exact = ranked.find(({ r }) => sameNumber(r, row) && isStructural(r.numberSource));
+		const singleSet = new Set(input.printingsByName(cand.name).map((p) => String(p.set_code).toLowerCase())).size === 1;
+		const setRead = exact !== undefined && exact.r.setCode !== '' && input.isKnownSet(exact.r.setCode) && exact.r.setCode.toLowerCase() === String(row.set_code).toLowerCase();
+		if (exact && (setRead || singleSet)) {
+			reasons.push(`join: name "${cand.name}" ${cand.score.toFixed(2)} + exact number from [${exact.r.variant}] -> ${row.set_code}#${row.collector_number}, confirmed`);
+			return done(cand.name, 'confirmed', row, hits, 'confirmed');
+		}
+		reasons.push(`join: name "${cand.name}" ${cand.score.toFixed(2)} + compatible number -> ${row.set_code}#${row.collector_number}`);
+		return done(cand.name, 'likely', row, hits, 'likely');
+	};
+	// Readings with a real set code that a name has no printing in — or, for a
+	// structural number, no printing within one edit of it there.
+	const contradictingReadings = (name: string): FooterReading[] => {
+		const printings = input.printingsByName(name);
+		return ranked
+			.filter(({ r, strength }) => {
+				if (!r.setCode || !input.isKnownSet(r.setCode)) return false;
+				const inSet = printings.filter((p) => String(p.set_code).toLowerCase() === r.setCode.toLowerCase());
+				if (inSet.length === 0) return true;
+				if (!r.collectorNumber || strength === 'weak' || strength === 'none') return false;
+				return !inSet.some((p) => numberCompatible(r.collectorNumber, String(p.collector_number)));
+			})
+			.map(({ r }) => r);
+	};
+	// Cards a structural reading points at exactly (read set, or the majority
+	// set when the set code was unreadable), plausible and not the best name.
+	const footerAlternatives = (): Array<{ row: PrintingRow; r: FooterReading; strength: Strength; viaMajority: boolean }> => {
+		const out: Array<{ row: PrintingRow; r: FooterReading; strength: Strength; viaMajority: boolean }> = [];
+		for (const { r, strength } of ranked) {
+			if (strength !== 'strong' && strength !== 'medium') continue;
+			let rows = r.setCode ? input.lookup(r.setCode, r.collectorNumber) : [];
+			let viaMajority = false;
+			if (rows.length === 0 && input.majoritySet && (!r.setCode || !input.isKnownSet(r.setCode))) {
+				rows = input.lookup(input.majoritySet, r.collectorNumber);
+				viaMajority = rows.length > 0;
+			}
+			const ok = rows.filter((row) => (best === null || String(row.name) !== best.name) && plausible(row, r));
+			if (ok.length === 1) out.push({ row: ok[0], r, strength, viaMajority });
+		}
+		return out;
+	};
+	const byScore = [...input.nameCandidates].sort((a, b) => b.score - a.score);
+
+	// 1. A name with enough evidence identifies the card; the footer picks the printing.
+	if (best && nameIdentifies(best, input.nameText)) {
 		const printings = input.printingsByName(best.name);
 		reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${best.pass}), ${printings.length} printing(s)`);
-		if (printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
-		for (const { r, strength } of ranked) {
-			if (strength === 'none') continue;
-			const { match, log } = disambiguateReprints(printings, r.text, r.setCode, r.collectorNumber, r.numberSource);
-			for (const l of log) reasons.push(`[${r.variant}] ${l}`);
-			if (match) return done(best.name, 'confirmed', match, printings, 'confirmed');
+		const certain = best.score >= NAME_CERTAIN;
+		if (certain && printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
+		// The footer corroborates the name when it picks one of its printings. For
+		// an uncertain name an *exact* structural number is required first; the
+		// looser matches (set only, near set code, one digit off) only count once
+		// no exact alternative fits the name text better — a footer that reads
+		// "0074" exactly and names a card resembling the OCR text beats a name
+		// at 0.63 whose printing is #76.
+		const corroborated = (exactOnly: boolean): Decision | null => {
+			for (const { r, strength } of ranked) {
+				if (strength === 'none') continue;
+				const { match, log } = disambiguateReprints(printings, r.text, r.setCode, r.collectorNumber, r.numberSource);
+				if (!exactOnly) for (const l of log) reasons.push(`[${r.variant}] ${l}`);
+				if (!match) continue;
+				if (exactOnly && !(isStructural(r.numberSource) && sameNumber(r, match))) continue;
+				if (exactOnly) reasons.push(`[${r.variant}] exact number ${r.setCode || '?'}#${r.collectorNumber} corroborates "${best.name}"`);
+				return done(best.name, 'confirmed', match, printings, 'confirmed');
+			}
+			return null;
+		};
+		if (!certain) {
+			const exact = corroborated(true);
+			if (exact) return exact;
+			// 1b. A structural reading that points exactly at another card which also
+			// fits the name text: two agreeing signals against one uncertain one.
+			for (const alt of footerAlternatives()) {
+				const fit = nameScore(input.nameText, String(alt.row.name));
+				if (fit < NAME_LIKELY) continue;
+				const label = `[${alt.r.variant}] ${alt.strength} reading${alt.viaMajority ? ' via majority set' : ''} -> ${alt.row.set_code}#${alt.row.collector_number} "${alt.row.name}" fits the name text (${fit.toFixed(2)}) and beats the uncertain name "${best.name}" ${best.score.toFixed(2)}`;
+				if (alt.strength === 'strong' && !alt.viaMajority) {
+					reasons.push(`${label}, confirmed`);
+					return done(String(alt.row.name), 'confirmed', alt.row, [alt.row], 'confirmed');
+				}
+				reasons.push(`${label}, likely`);
+				return done(String(alt.row.name), 'likely', alt.row, [alt.row, ...printings], 'likely');
+			}
+		}
+		const loose = corroborated(false);
+		if (loose) return loose;
+		if (!certain) {
+			// 1c. The footer contradicts the name (a real set code it was never
+			// printed in, or a structural number none of its printings match): a
+			// lesser candidate that joins with the footer wins, otherwise one tap.
+			const contradictions = contradictingReadings(best.name);
+			if (contradictions.length > 0) {
+				for (const cand of byScore) {
+					if (cand.name === best.name || cand.score < NAME_LIKELY) continue;
+					const joined = joinDecision(cand);
+					if (joined) return joined;
+				}
+				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} contradicted by ${contradictions.map((r) => `[${r.variant}] ${r.setCode}#${r.collectorNumber}`).join(', ')} -> likely`);
+				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, printings, 'likely');
+			}
+			// 1d. A runner-up candidate too close to call: offer both. Both are
+			// measured on the whole name text, without the junk-tolerant prefix
+			// rule: "W Courier of Cotesiiis" scores 0.65 against Aven Courier
+			// once "of Cotesiiis" is written off as junk, but that word is exactly
+			// the evidence for Courier of Comestibles; conversely "Ghoulish ro"
+			// reaches Ghoulflesh only through the prefix "Ghoulish" (0.46 on the
+			// whole text) while Ghoulish Procession reads 0.58 on the whole text.
+			const plainScore = (name: string) => Math.max(...nameAliases(name).map((alias) => similarity(input.nameText, alias)));
+			const bestPlain = Math.min(best.score, plainScore(best.name));
+			const runnerUp = byScore.map((c) => ({ ...c, plain: plainScore(c.name) })).find((c) => c.name !== best.name && c.plain >= NAME_LIKELY && c.plain >= bestPlain - NAME_MARGIN);
+			if (runnerUp) {
+				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${bestPlain.toFixed(2)} on the whole text) vs "${runnerUp.name}" ${runnerUp.plain.toFixed(2)}: too close to call -> likely`);
+				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, [...printings, ...input.printingsByName(runnerUp.name)], 'likely');
+			}
+			if (printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
 		}
 		// Two footer variants agreeing on a printing of a *different* card is a
 		// conflict the user has to settle, not a coin toss.
@@ -166,37 +324,13 @@ export function resolveCard(input: ResolveInput): Decision {
 				return done(best.name, 'conflict', null, [...printings, ...rows], 'conflict');
 			}
 		}
-		return done(best.name, 'confirmed', null, printings, printings.length > 0 ? 'unknown' : 'unknown');
+		return done(best.name, 'confirmed', null, printings, 'unknown');
 	}
 
 	// 2. Join: a partial name and a partial number that agree on exactly one printing.
 	if (best && best.score >= NAME_LIKELY) {
-		const printings = input.printingsByName(best.name);
-		const setHints = new Set<string>();
-		for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());
-		if (setHints.size === 0 && input.majoritySet) setHints.add(input.majoritySet.toLowerCase());
-		const hits = printings.filter((row) => {
-			if (setHints.size > 0 && !setHints.has(String(row.set_code).toLowerCase())) return false;
-			const contributing = ranked.filter(({ r }) => r.collectorNumber && numberCompatible(r.collectorNumber, String(row.collector_number)));
-			return contributing.length > 0 && contributing.every(({ r }) => rarityAgrees(r.rarity, row.rarity));
-		});
-		if (hits.length === 1) {
-			const row = hits[0];
-			// Two independent signals that agree *exactly* — the number read as
-			// printed, from a strip whose set code is real or whose card exists
-			// in one set only — confirm the printing; a number that is merely
-			// compatible (one edit, dropped digit) stays a one-tap offer.
-			const exact = ranked.find(({ r }) => r.collectorNumber && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number)) && isStructural(r.numberSource));
-			const singleSet = new Set(printings.map((p) => String(p.set_code).toLowerCase())).size === 1;
-			const setRead = exact !== undefined && exact.r.setCode !== '' && input.isKnownSet(exact.r.setCode) && exact.r.setCode.toLowerCase() === String(row.set_code).toLowerCase();
-			if (exact && (setRead || singleSet)) {
-				reasons.push(`join: name "${best.name}" ${best.score.toFixed(2)} + exact number from [${exact.r.variant}] -> ${row.set_code}#${row.collector_number}, confirmed`);
-				return done(best.name, 'confirmed', row, hits, 'confirmed');
-			}
-			reasons.push(`join: name "${best.name}" ${best.score.toFixed(2)} + compatible number -> ${row.set_code}#${row.collector_number}`);
-			return done(best.name, 'likely', row, hits, 'likely');
-		}
-		if (hits.length > 1) reasons.push(`join: ${hits.length} printings of "${best.name}" compatible, not unique`);
+		const joined = joinDecision(best);
+		if (joined) return joined;
 	}
 
 	// 3. Footer only, strongest reading first.

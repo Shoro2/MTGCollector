@@ -10,6 +10,7 @@
  */
 import { paddleAssets } from './assets.js';
 import { ctcDecode } from './ctc.js';
+import { withTimeout } from './timeout.js';
 
 export { ctcDecode };
 
@@ -33,6 +34,8 @@ export const REC_MAX_WIDTH = 1600;
 
 let loading: Promise<Paddle | null> | null = null;
 let lastFailure = 0;
+/** Deadline for runtime + model + dictionary; generous for slow mobile links, finite for a stalled CDN. */
+const LOAD_TIMEOUT_MS = 90_000;
 
 /** Load runtime, model and dictionary once; null when unavailable (retried after 30 s). */
 export async function loadPaddle(): Promise<Paddle | null> {
@@ -41,17 +44,20 @@ export async function loadPaddle(): Promise<Paddle | null> {
 	loading = (async () => {
 		try {
 			const assets = paddleAssets();
-			const ort = (await import(/* @vite-ignore */ assets.ortScript)) as OrtModule;
-			ort.env.wasm.wasmPaths = assets.ortWasmDir;
-			ort.env.wasm.numThreads = 1;
-			ort.env.wasm.proxy = false;
-			const [session, keysText] = await Promise.all([
-				ort.InferenceSession.create(assets.recModel, { executionProviders: ['wasm'] }),
-				fetch(assets.keys).then((r) => r.text())
-			]);
-			const keys = keysText.split('\n');
-			if (keys[keys.length - 1] === '') keys.pop();
-			return { ort, session, dict: ['', ...keys, ' '] };
+			// ~25 MB of runtime and model; a stalled download must not hang the scan.
+			return await withTimeout((async (): Promise<Paddle> => {
+				const ort = (await import(/* @vite-ignore */ assets.ortScript)) as OrtModule;
+				ort.env.wasm.wasmPaths = assets.ortWasmDir;
+				ort.env.wasm.numThreads = 1;
+				ort.env.wasm.proxy = false;
+				const [session, keysText] = await Promise.all([
+					ort.InferenceSession.create(assets.recModel, { executionProviders: ['wasm'] }),
+					fetch(assets.keys).then((r) => r.text())
+				]);
+				const keys = keysText.split('\n');
+				if (keys[keys.length - 1] === '') keys.pop();
+				return { ort, session, dict: ['', ...keys, ' '] };
+			})(), LOAD_TIMEOUT_MS, 'PaddleOCR engine load');
 		} catch (err) {
 			console.warn('PaddleOCR unavailable:', err);
 			lastFailure = Date.now();
