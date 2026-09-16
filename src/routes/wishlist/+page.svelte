@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { goto, invalidate } from '$app/navigation';
-	import { formatPrice, scryfallSrcset } from '$lib/utils';
+	import { scryfallSrcset, type PriceFields } from '$lib/utils';
+	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import ManaCost from '$lib/components/ManaCost.svelte';
 
@@ -176,7 +177,7 @@
 							<!-- Price -->
 							<div class="text-left sm:text-right flex-shrink-0">
 								<p class="text-[var(--color-accent)] font-medium">
-									{formatPrice(item.price_eur as number | null, item.price_usd as number | null)}
+									<PriceTag card={item as PriceFields} />
 								</p>
 							</div>
 

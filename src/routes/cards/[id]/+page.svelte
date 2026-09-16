@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatPrice, getRarityColor, conditionLabel, priceDate } from '$lib/utils';
+	import { formatPrice, getRarityColor, conditionLabel, priceDate, priceDivergence, isSuspiciousDivergence, type PriceFields } from '$lib/utils';
+	import PriceTag from '$lib/components/PriceTag.svelte';
 	import { invalidate } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { Chart } from 'chart.js';
@@ -18,6 +19,16 @@
 	let showAddForm = $state(false);
 
 	let card = $derived(data.card);
+
+	// Cardmarket's trend price (Scryfall `eur`) sometimes collapses for thinly
+	// traded printings while TCGplayer (`usd`) stays sane; flag a >5x gap.
+	const normalDivergence = $derived(priceDivergence(card.price_eur as number | null, card.price_usd as number | null, data.usdToEur));
+	const foilDivergence = $derived(priceDivergence(card.price_eur_foil as number | null, card.price_usd_foil as number | null, data.usdToEur));
+	const suspiciousDivergence = $derived(
+		isSuspiciousDivergence(normalDivergence) ? { label: 'Price', d: normalDivergence!, eur: card.price_eur as number }
+		: isSuspiciousDivergence(foilDivergence) ? { label: 'Price Foil', d: foilDivergence!, eur: card.price_eur_foil as number }
+		: null
+	);
 	let legalities = $derived(card.legalities ? JSON.parse(card.legalities as string) : {});
 	let colors: string[] = $derived(card.colors ? JSON.parse(card.colors as string) : []);
 
@@ -282,6 +293,15 @@
 				</div>
 			</div>
 
+			{#if suspiciousDivergence}
+				<p class="rounded border border-[var(--color-warning)]/40 bg-[var(--color-surface)] p-3 text-xs text-[var(--color-text-muted)]">
+					<span class="font-semibold text-[var(--color-warning)]">Check this price:</span>
+					the Cardmarket trend ({suspiciousDivergence.label}: {formatPrice(suspiciousDivergence.eur)}) is more than 5x away from the
+					TCGplayer price (${(suspiciousDivergence.d.usdAsEur / data.usdToEur).toFixed(2)}, about {formatPrice(suspiciousDivergence.d.usdAsEur)}).
+					Cardmarket's trend value is unreliable for rarely traded printings; the EUR figure is shown as delivered by Scryfall.
+				</p>
+			{/if}
+
 			<!-- Price History Chart -->
 			{#if data.priceHistory.length > 0}
 				<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
@@ -429,9 +449,7 @@
 								class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-3 py-1.5 text-sm hover:border-[var(--color-primary)] transition-colors"
 							>
 								{reprint.set_name} #{reprint.collector_number}
-								{#if reprint.price_eur || reprint.price_usd}
-									<span class="text-[var(--color-accent)] ml-1">{formatPrice(reprint.price_eur as number | null, reprint.price_usd as number | null)}</span>
-								{/if}
+								<PriceTag card={reprint as PriceFields} class="text-[var(--color-accent)] ml-1" hideEmpty />
 							</a>
 						{/each}
 					</div>

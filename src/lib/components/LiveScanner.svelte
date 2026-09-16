@@ -28,7 +28,8 @@
 	let analyzeCanvas: HTMLCanvasElement | null = null;
 	let captureCanvas: HTMLCanvasElement | null = null;
 
-	let status = $state<'idle' | 'requesting' | 'live' | 'error'>('idle');
+	let status = $state<'idle' | 'loading' | 'requesting' | 'live' | 'error'>('idle');
+	let errorTitle = $state('');
 	let errorMsg = $state('');
 	let cameras = $state<Array<{ deviceId: string; label: string }>>([]);
 	let activeDeviceId = $state<string>('');
@@ -69,15 +70,24 @@
 	const MAX_AUTO_CAPTURE_RECTS = 12;
 
 	async function start() {
-		status = 'requesting';
+		status = 'loading';
+		errorTitle = '';
 		errorMsg = '';
 		try {
-			// Pre-warm OpenCV so the first detect() doesn't stall the rAF loop.
-			await loadOpenCV();
+			// Load OpenCV before touching the camera: without it the preview
+			// would run but never detect anything, which used to fail silently
+			// (and re-inject the script tag on every frame). `force` bypasses the
+			// post-failure cooldown because this is a user-initiated attempt.
+			await loadOpenCV({ force: true });
 		} catch (err) {
-			log?.(`OpenCV preload failed: ${err}`);
+			status = 'error';
+			errorTitle = 'Card detection unavailable';
+			errorMsg = `OpenCV.js could not be loaded (${(err as Error).message}). Check your connection, then try again.`;
+			log?.(`OpenCV load failed: ${err}`);
+			return;
 		}
 
+		status = 'requesting';
 		try {
 			// width/height are matched against the sensor's native (landscape)
 			// modes; mobile browsers rotate the frames to the device orientation
@@ -92,6 +102,7 @@
 				stream = await navigator.mediaDevices.getUserMedia({ video: true });
 			} catch (err2) {
 				status = 'error';
+				errorTitle = 'Camera unavailable';
 				errorMsg = (err2 as Error).message || 'Camera permission denied.';
 				log?.(`getUserMedia failed: ${errorMsg}`);
 				return;
@@ -364,13 +375,13 @@
 			class="block w-full h-full object-contain"
 		></video>
 		<canvas bind:this={overlayEl} class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
-		{#if status === 'requesting'}
+		{#if status === 'loading' || status === 'requesting'}
 			<div class="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
-				Requesting camera...
+				{status === 'loading' ? 'Loading card detection...' : 'Requesting camera...'}
 			</div>
 		{:else if status === 'error'}
 			<div class="absolute inset-0 flex flex-col items-center justify-center text-white text-sm bg-black/70 p-4 text-center">
-				<p class="font-medium mb-2">Camera unavailable</p>
+				<p class="font-medium mb-2">{errorTitle}</p>
 				<p class="text-xs text-white/70 mb-3">{errorMsg}</p>
 				<button onclick={start} class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-3 py-1 rounded text-xs">
 					Try again

@@ -114,7 +114,9 @@ export async function load({ url, locals }) {
 	// Sort
 	const validSorts: Record<string, string> = {
 		name: 'cards.name',
-		price: 'cards.price_eur',
+		// Foil-only printings have no price_eur; sort them by their foil price
+		// instead of pushing them to the end with the priceless cards.
+		price: 'COALESCE(cards.price_eur, cards.price_eur_foil)',
 		cmc: 'cards.cmc',
 		rarity: "CASE cards.rarity WHEN 'mythic' THEN 4 WHEN 'rare' THEN 3 WHEN 'uncommon' THEN 2 ELSE 1 END",
 		set: 'cards.set_name',
@@ -127,7 +129,7 @@ export async function load({ url, locals }) {
 	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
 	// Get paginated results
-	const resultSql = `SELECT cards.id, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
+	const resultSql = `SELECT cards.id, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.price_eur_foil, cards.price_usd_foil, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get all unique sets for the filter dropdown (cached, changes only on import)

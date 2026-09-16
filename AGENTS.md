@@ -86,6 +86,8 @@ All `collection_cards` and `wishlist_cards` queries filter by `user_id`. Each us
 - **USD→EUR conversion**: For profit/loss calculations, USD prices are converted using a live exchange rate from `frankfurter.dev` (cached 6 hours, fallback 0.92). See `src/lib/server/exchange-rate.ts`
 - **Price history**: At most one entry per card per calendar day (enforced by `UNIQUE(card_id, snapshot_date)` on a dedicated `snapshot_date` column, independent of server timezone). A new row is only written when at least one of the four prices differs from the card's previous snapshot, so static prices don't produce daily duplicates.
 - **Price snapshots**: Include both EUR and USD prices (`price_eur`, `price_eur_foil`, `price_usd`, `price_usd_foil`)
+- **Foil-only printings**: some printings exist only in foil (The Hobbit extras, many promos) and have no `price_eur`/`price_usd`. List and tile contexts (`/cards`, card detail reprints, wishlist, scan results) render prices through `PriceTag.svelte` → `displayPrice()`, which falls back to the foil price and marks it with a small "Foil" chip. The `/cards` price sort uses `COALESCE(price_eur, price_eur_foil)`. Collection rows use the owned copy's own foil flag as before.
+- **Cardmarket trend anomalies**: Scryfall's `eur`/`eur_foil` is Cardmarket's *trend* price, which occasionally collapses for thinly traded printings (known case: Smaug the Magnificent, HOB #249 foil — trend €300 while the cheapest offer is ~€25k and the 30-day average ~€10k; the USD side stayed sane). The app never alters the value; `priceDivergence()` compares EUR with USD×rate and the card detail page shows a "Check this price" note when they differ by more than 5× (`PRICE_DIVERGENCE_LIMIT`). Collection/prices totals still use the EUR value as delivered — see Roadmap.
 
 ### Price Updates
 
@@ -101,7 +103,8 @@ src/
 ├── lib/
 │   ├── components/
 │   │   ├── CardPreview.svelte       # Hover zoom (portal to document.body)
-│   │   └── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, auto-capture)
+│   │   ├── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, auto-capture)
+│   │   └── PriceTag.svelte          # List price with foil-only fallback + "Foil" chip (displayPrice)
 │   ├── scanner/                     # Browser-side scanner library; pure modules are unit-tested (vitest)
 │   │   ├── detect.ts                # detectCardsQuick(): fast Canny rectangle detector for the live preview
 │   │   ├── stability.ts             # SceneStabilizer + sceneSignature(): time-based "scene holds still" logic
@@ -109,7 +112,7 @@ src/
 │   │   ├── opencv.ts                # Lazy OpenCV.js CDN loader
 │   │   ├── tesseract.ts             # Tesseract.js worker pool (recognizeBatch, recognizeDetailed)
 │   │   ├── parse.ts                 # parseCollectorInfo(): set code / collector number / foil hint
-│   │   ├── similarity.ts            # Name similarity + bestNameMatch()
+│   │   ├── similarity.ts            # Name similarity, OCR-junk heuristic, prefix-aware bestNameMatch()
 │   │   ├── foil.ts                  # Pixel-based foil detection from the separator glyph
 │   │   └── pipeline.ts              # disambiguateReprints()
 │   ├── server/
@@ -121,7 +124,7 @@ src/
 │   │   ├── schema.ts               # Drizzle ORM table definitions
 │   │   └── seed.ts                  # Scryfall import script
 │   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
-│   └── utils.ts                     # formatPrice, formatManaCost, conditionLabel, getColorName, getColorClass, getRarityColor, priceDate
+│   └── utils.ts                     # formatPrice, displayPrice, priceDivergence, formatManaCost, conditionLabel, getRarityColor, priceDate (+ utils.test.ts)
 └── routes/
     ├── +layout.svelte               # Nav bar, footer (Impressum/Datenschutz)
     ├── +layout.server.ts            # Passes user to all pages via layout data
@@ -173,7 +176,7 @@ src/
 
 ### Card Scanner Flow
 
-1. User uploads photo → OpenCV detects card rectangles via **6 detection strategies**:
+1. User uploads photo → the image is downscaled to at most 1600 px on the long edge (`DETECT_MAX_EDGE`) for detection only — the six strategies on a 12-megapixel phone photo took several seconds, and card edges don't need that resolution. Candidates are mapped back to full resolution before the warp, so OCR still samples the original pixels. OpenCV detects card rectangles via **6 detection strategies**:
    - Canny edge detection with multiple thresholds (3 parameter sets)
    - Adaptive threshold segmentation (for tightly packed cards)
    - Histogram equalization + Canny (for low-contrast cards)
@@ -183,7 +186,7 @@ src/
 2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9), IoU deduplication
 3. Corner ordering via `orderCornersForCard()`: the short edge becomes the top of the warp, so sideways cards come out upright without a separate rotation step
 4. Corner expansion (~5% outward from the quad centre) + perspective transform to 488×680. The expansion is deliberately **not clamped** to the frame: `warpPerspective` pads out-of-frame samples with black, so a card that touches the image edge (typical for hand-held live captures) keeps the same ~3.5% margin as any other and the fixed crop windows below still line up. Clamping used to make such warps tight on the card and pushed the collector line out of its crop window.
-5. **Name OCR**: Tesseract.js (PSM 7) on the name band — x 6–78%, y 5.5–13.5% of the warp (tall enough for both outer-border and inner-frame detections) → batched API search by name → FTS fallback
+5. **Name OCR**: Tesseract.js (PSM 7) on the name band — x 6–74%, y 5.5–13.5% of the warp (tall enough for both outer-border and inner-frame detections; ends before a three-symbol mana cost, which otherwise becomes junk letters glued to the name) → batched API search by name → FTS fallback. `bestNameMatch()` scores the whole OCR string and, when only trailing junk (mana symbols, frame edge: "…Bolt A SSSERRY") drags the score down, the matching word-prefix — but only if every remaining word looks like OCR junk (`looksLikeOcrJunk`), so "Fire Ball" never collapses to the card "Fire".
 6. **Bottom OCR**: Tesseract.js (PSM 6) runs locally on every card's collector strip first (left half, y 89–99% of the warp; the collector line sits at ~96–99% of the physical card and lands between ~91% and ~98% of the warp depending on the detected quad's margin). If a card cannot be uniquely identified (status `not_found` or multiple unresolved reprints), and the signed-in user has stored their own personal Google Vision API key in `/settings` AND enabled the on-page retry toggle, those failed cards are batch-OCR'd via `/api/ocr` (max 16 per request) and re-matched.
 7. **Foil detection**: text-based detection from the separator char between set code and language on the bottom line (`*` = foil, `.` = non-foil), parsed from the Tesseract bottom OCR.
 8. API search with fallbacks: set+number → name → FTS
@@ -202,7 +205,7 @@ src/
 - **Stability** (`SceneStabilizer`, pure + unit-tested): a rect is steady after 700 ms of continuous tracking with ≥3 detections and a centroid spread ≤5% of its long edge (floor 10 px). Time-based so slow phones don't wait longer than fast laptops; relative so hand jitter on a card filling the frame doesn't block forever. The "steady %" badge reaches 100% exactly when auto-capture becomes possible.
 - **Guards:** a rect within 1.5% of the frame edge is drawn red ("card cut off at the edge") and blocks auto-capture; more than 12 tracked rects also block it ("too many rectangles"). Manual "Capture now" always works.
 - **Capture hands the tracked rects to the pipeline.** `onCapture(canvas, rects)` → `processImage(canvas, presetRects)` builds the card candidates directly from them and skips the six full-resolution strategies (1–3 s on a phone). A manual capture while the scene is still moving passes no rects, so full detection runs as a fallback.
-- **Pre-warming:** OpenCV.js loads when the camera starts; the Tesseract worker pool is created as soon as live mode is selected (`$effect` in `/scan`), so the first capture doesn't pay worker spawn + traineddata download on top of the OCR.
+- **Pre-warming:** OpenCV.js loads *before* the camera is requested; if the CDN script fails, the component shows "Card detection unavailable" with a retry button instead of streaming a preview that can never detect anything. `loadOpenCV()` refuses re-attempts for 2 s after a failure (`force: true` for user-initiated retries) so no caller can re-inject the script tag several times a second. The Tesseract worker pool is created as soon as live mode is selected (`$effect` in `/scan`), so the first capture doesn't pay worker spawn + traineddata download on top of the OCR.
 - **Re-arm:** `sceneSignature()` (centroids quantised to ~1/64 of the frame) prevents capturing the same layout twice; moving the cards out of frame and back re-arms.
 
 ### Price Change Indicator
@@ -219,8 +222,8 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 
 ## Testing
 
-- `npm test` — vitest over `src/lib/scanner/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity, reprint disambiguation, scene stability, overlay geometry. Anything touching OpenCV/Tesseract/DOM is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable.
-- `npm run check` — svelte-check (TypeScript + Svelte). CI runs `check` and `build` on every PR (`.github/workflows/ci.yml`).
+- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, scene stability, overlay geometry, price display/divergence helpers. Anything touching OpenCV/Tesseract/DOM or SQLite is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable.
+- `npm run check` — svelte-check (TypeScript + Svelte). CI runs `check`, `test` and `build` on every PR (`.github/workflows/ci.yml`).
 - **Live scanner smoke test (manual):** run `npm run dev`, then drive headless Chromium with Playwright using `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` (add `--use-file-for-fake-video-capture=<clip.y4m>` for a portrait stream; a Y4M file is trivial to synthesise with a few lines of Python). Assert the viewfinder's `aspect-ratio` equals the stream's and that no `pageerror` fires. Without CDN access (OpenCV/Tesseract) this only exercises the UI and stream handling, not detection.
 - There are no image fixtures for the OCR pipeline yet — see Roadmap.
 
@@ -280,6 +283,12 @@ Status of the scanner work (most recent first). Keep this list current when you 
 
 ### Done
 
+- Foil-only printings show their foil price (marked) in `/cards`, reprints, wishlist and scan results instead of "-"; `/cards` price sort includes them.
+- Card detail page flags EUR prices that contradict the USD price by more than 5× ("Check this price") — Cardmarket trend anomalies are visible instead of silently wrong.
+- Upload scans run detection on a ≤1600 px copy and warp from the full-resolution photo (several seconds faster on phone photos).
+- OpenCV load failures are surfaced in the live scanner (error + retry) instead of a silent dead preview; `loadOpenCV()` has a post-failure cooldown.
+- Name OCR: crop ends before the mana cost; `bestNameMatch()` tolerates trailing OCR junk via prefix matching with a junk-word guard.
+- CI runs the vitest suite.
 - Live mode viewfinder follows the stream orientation; overlay mapping is letterbox-correct and DPR-aware (fixed the "scanner wants landscape" impression on phones).
 - Time-based, card-size-relative scene stability (`SceneStabilizer`) replaces the frame-count/absolute-pixel version that never turned green on hand-held phones.
 - Live captures skip the six-strategy detection and warp the tracked rectangles directly; Tesseract pool is pre-warmed in live mode.
@@ -288,13 +297,14 @@ Status of the scanner work (most recent first). Keep this list current when you 
 
 ### Next steps (in suggested order)
 
-1. **Real-device verification** on Android Chrome and iOS Safari: portrait preview, auto-capture within ~1 s of holding still, red edge warning. Tune `minStableMs` / `driftFrac` in `LiveScanner.svelte` if it fires too eagerly or too late.
-2. **Regression fixtures for the OCR pipeline**: a handful of real photos (upload and live captures, incl. a card filling the frame and a 3×3 grid) with expected name/set/number, run in headless Chromium. Needs CDN access for OpenCV/Tesseract in CI or vendored builds.
-3. **Move `detectCardsQuick` into a Web Worker** (OpenCV.js loaded in the worker) so the ~50–100 ms per frame on phones stops blocking the main thread; the overlay would then stay smooth during detection.
-4. **Sharpness gate before auto-capture** (variance of the Laplacian over the card ROI) to reject motion-blurred frames that pass the stability check.
-5. **Derive crop windows from the warp itself** (locate the black border via row/column intensity profiles) instead of fixed percentages — would also make single-photo uploads robust to varying margins.
-6. **Consolidate `/collection/scan` onto the shared pipeline**: it still has its own simpler detection (no name OCR, 92–100% bottom crop, 4× upscale) and none of the fixes above.
-7. **Vendor OpenCV.js / Tesseract.js** instead of loading from CDNs (offline dev, sandboxed CI, privacy) — check licence/attribution requirements first.
+1. **Real-device verification** on Android Chrome and iOS Safari: portrait preview, auto-capture within ~1 s of holding still, red edge warning, a card filling the frame gets identified, upload scan of a 12 MP photo is noticeably faster. Tune `minStableMs` / `driftFrac` in `LiveScanner.svelte` if auto-capture fires too eagerly or too late.
+2. **Price data quality (decision needed)**: when `priceDivergence()` flags an EUR value, collection value and profit/loss still use it. Options: (a) keep as is and only flag; (b) fall back to USD×rate for flagged printings in `/collection`, `/prices` and the homepage KPI; (c) let the user pin a manual price per printing. (b) changes reported totals based on a heuristic, so it should be an explicit product decision.
+3. **Regression fixtures for the OCR pipeline**: a handful of real photos (upload and live captures, incl. a card filling the frame and a 3×3 grid) with expected name/set/number, run in headless Chromium. Needs CDN access for OpenCV/Tesseract in CI or vendored builds.
+4. **Move `detectCardsQuick` into a Web Worker** (OpenCV.js loaded in the worker) so the ~50–100 ms per frame on phones stops blocking the main thread; the overlay would then stay smooth during detection.
+5. **Sharpness gate before auto-capture** (variance of the Laplacian over the card ROI) to reject motion-blurred frames that pass the stability check.
+6. **Derive crop windows from the warp itself** (locate the black border via row/column intensity profiles) instead of fixed percentages — would also make single-photo uploads robust to varying margins.
+7. **Consolidate `/collection/scan` onto the shared pipeline**: it still has its own simpler detection (single Canny pass at full resolution, no name OCR, 92–100% bottom crop, 4× upscale) and none of the scanner fixes above. Its bottom crop is tolerant of tight warps, so it was left untouched rather than half-ported.
+8. **Vendor OpenCV.js / Tesseract.js** instead of loading from CDNs (offline dev, sandboxed CI, privacy) — check licence/attribution requirements first.
 
 ### Known limitations
 

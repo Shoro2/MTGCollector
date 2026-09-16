@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatPrice } from '$lib/utils';
+	import { type PriceFields } from '$lib/utils';
+	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import LiveScanner from '$lib/components/LiveScanner.svelte';
 	import { onMount, onDestroy } from 'svelte';
@@ -53,6 +54,12 @@
 	// device camera and auto-captures when the scene stabilizes (multi-card).
 	let scanMode = $state<'single' | 'multiple' | 'live'>('single');
 	const expectedCardCount = $derived<number | null>(scanMode === 'single' ? 1 : null);
+
+	// Long edge of the image the detection strategies run on. Card edges don't
+	// need a 12-megapixel phone photo — running the six strategies at full
+	// resolution took several seconds on a phone — while the perspective warp
+	// still samples the full-resolution frame, so OCR quality is unchanged.
+	const DETECT_MAX_EDGE = 1600;
 
 	// Manual search fallback per card
 	let manualSetCode = $state('');
@@ -198,15 +205,34 @@
 			log(`Image loaded: ${img.width}x${img.height} (${(img.width * img.height).toLocaleString()}px)`);
 			log(`Mode: ${scanMode}, expectedCardCount: ${expectedCardCount ?? 'unlimited'}`);
 
-			// OpenCV processing
+			// Detection runs on a copy whose long edge is at most DETECT_MAX_EDGE.
+			// Coordinates are mapped back to full resolution before the warp. Live
+			// captures with preset rects skip detection, so they skip the copy too.
+			const detScale = presetRects.length > 0 ? 1 : Math.min(1, DETECT_MAX_EDGE / Math.max(img.width, img.height));
+			const det = {
+				width: Math.max(1, Math.round(img.width * detScale)),
+				height: Math.max(1, Math.round(img.height * detScale))
+			};
+			let detCanvas = canvas;
+			if (detScale < 1) {
+				detCanvas = document.createElement('canvas');
+				detCanvas.width = det.width;
+				detCanvas.height = det.height;
+				detCanvas.getContext('2d')!.drawImage(canvas, 0, 0, det.width, det.height);
+				log(`Detection image: ${det.width}x${det.height} (scale ${detScale.toFixed(3)})`);
+			}
+
+			// OpenCV processing. `src` is the full-resolution frame used by the
+			// perspective warps; `detSrc`/`gray` are the detection-resolution copies.
 			const src = cv.imread(canvas);
+			const detSrc = detScale < 1 ? cv.imread(detCanvas) : src;
 			const gray = new cv.Mat();
 
-			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+			cv.cvtColor(detSrc, gray, cv.COLOR_RGBA2GRAY);
 
 			type CardCandidate = { corners: any; area: number; rect: { x: number; y: number; width: number; height: number }; synthetic?: boolean };
 			let allCandidates: CardCandidate[] = [];
-			const imgArea = img.width * img.height;
+			const detArea = det.width * det.height;
 
 			let cardContours: CardCandidate[] = [];
 			if (presetRects.length > 0) {
@@ -308,8 +334,8 @@
 					{ blur: 3, low: 75, high: 200 },
 				];
 
-				const minArea = imgArea * 0.008;
-				const maxArea = imgArea * 0.5;
+				const minArea = detArea * 0.008;
+				const maxArea = detArea * 0.5;
 				log(`Area thresholds: min=${minArea.toFixed(0)} (0.8%), max=${maxArea.toFixed(0)} (50%)`);
 
 				// Pre-compute blur(gray, 5x5) once and share across strategies 1/2/4/6
@@ -393,7 +419,7 @@
 				const satCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
 				const satSepKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
 				try {
-					cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB);
+					cv.cvtColor(detSrc, rgb, cv.COLOR_RGBA2RGB);
 					cv.cvtColor(rgb, hsvMat, cv.COLOR_RGB2HSV);
 					cv.split(hsvMat, channels);
 					const saturation = channels.get(1);
@@ -456,7 +482,7 @@
 				// === Progressive relaxation if expected card count not met ===
 				if (expectedCardCount && cardContours.length < expectedCardCount) {
 					log(`Progressive relaxation triggered (have ${cardContours.length}, need ${expectedCardCount})`);
-					const relaxedMinArea = imgArea * 0.004;
+					const relaxedMinArea = detArea * 0.004;
 					const relaxedMinAspect = 0.4;
 					const relaxedMaxAspect = 0.95;
 
@@ -586,8 +612,8 @@
 								// Use median bounding rect dimensions (not corner edge lengths)
 								const x1 = Math.max(0, Math.round(inferX - medW / 2));
 								const y1 = Math.max(0, Math.round(inferY - medH / 2));
-								const x2 = Math.min(img.width - 1, x1 + medW);
-								const y2 = Math.min(img.height - 1, y1 + medH);
+								const x2 = Math.min(det.width - 1, x1 + medW);
+								const y2 = Math.min(det.height - 1, y1 + medH);
 								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
 								corners.data32S[0] = x1; corners.data32S[1] = y1;
 								corners.data32S[2] = x2; corners.data32S[3] = y1;
@@ -608,17 +634,22 @@
 				blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();
 			}
 
-			// Debug: draw detected rectangles on image
-			const debugMat = src.clone();
+			// Debug: draw detected rectangles on the detection-resolution image.
+			// Full-detection candidates are still in detection space here; live
+			// preset rects arrive in full-resolution coordinates and are scaled down.
+			const contoursInDetSpace = presetRects.length === 0;
+			const drawScale = contoursInDetSpace ? 1 : detScale;
+			const debugMat = detSrc.clone();
 			for (let i = 0; i < cardContours.length; i++) {
 				const pts = cardContours[i].corners;
+				const px = (k: number) => Math.round(pts.data32S[k] * drawScale);
 				for (let j = 0; j < 4; j++) {
-					const p1 = new cv.Point(pts.data32S[j * 2], pts.data32S[j * 2 + 1]);
-					const p2 = new cv.Point(pts.data32S[((j + 1) % 4) * 2], pts.data32S[((j + 1) % 4) * 2 + 1]);
+					const p1 = new cv.Point(px(j * 2), px(j * 2 + 1));
+					const p2 = new cv.Point(px(((j + 1) % 4) * 2), px(((j + 1) % 4) * 2 + 1));
 					cv.line(debugMat, p1, p2, new cv.Scalar(0, 255, 0, 255), 3);
 				}
 				// Label
-				const labelPt = new cv.Point(pts.data32S[0], pts.data32S[1] - 10);
+				const labelPt = new cv.Point(px(0), px(1) - 10);
 				cv.putText(debugMat, `Card ${i + 1}`, labelPt, cv.FONT_HERSHEY_SIMPLEX, 1.5, new cv.Scalar(0, 255, 0, 255), 3);
 			}
 
@@ -628,6 +659,7 @@
 			// second per live capture, and this image is only for eyeballing.
 			debugCanvasUrl = debugCanvas.toDataURL('image/jpeg', 0.8);
 			debugMat.delete();
+			if (detSrc !== src) detSrc.delete();
 
 			// In single-card mode, keep only the most prominent (largest-area)
 			// detection so the user doesn't get spurious extra crops from
@@ -656,6 +688,17 @@
 				scanning = false;
 				src.delete(); gray.delete();
 				return;
+			}
+
+			// Map the surviving candidates from detection space to full resolution
+			// so the perspective warp samples the original pixels.
+			if (contoursInDetSpace && detScale < 1) {
+				const inv = 1 / detScale;
+				for (const c of cardContours) {
+					for (let k = 0; k < 8; k++) c.corners.data32S[k] = Math.round(c.corners.data32S[k] * inv);
+					c.rect = { x: c.rect.x * inv, y: c.rect.y * inv, width: c.rect.width * inv, height: c.rect.height * inv };
+					c.area *= inv * inv;
+				}
 			}
 
 			log(`Detection complete: ${cardContours.length} card(s) found`);
@@ -742,7 +785,9 @@
 				const nameY = Math.floor(cardH * (cardContours[i].synthetic ? 0.03 : 0.055));
 				const nameH = Math.floor(cardH * 0.08);
 				const nameX = Math.floor(cardW * (cardContours[i].synthetic ? 0.08 : 0.06));
-				const nameW = Math.floor(cardW * 0.72);
+				// 68% wide: ends before a three-symbol mana cost, which otherwise
+				// turns into junk letters glued to the name ("...Augustin IV SSSERRY").
+				const nameW = Math.floor(cardW * 0.68);
 				log(`Card ${i + 1}: name crop x=${nameX} y=${nameY} h=${nameH} w=${nameW}`);
 				const nameRoi = warped.roi(new cv.Rect(nameX, nameY, nameW, nameH));
 				const grayName = new cv.Mat();
@@ -1606,7 +1651,7 @@
 												{result.set_name} ({(result.set_code as string).toUpperCase()}) #{result.collector_number}
 											</p>
 										</div>
-										<span class="text-sm text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null, result.price_usd as number | null)}</span>
+										<PriceTag card={result as PriceFields} class="text-sm text-[var(--color-accent)]" />
 										{#if loggedIn && isSelected}
 											{#if isAdded}
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
@@ -1667,7 +1712,7 @@
 															<p class="text-sm font-medium truncate">{result.name}</p>
 															<p class="text-xs text-[var(--color-text-muted)]">{result.set_name} #{result.collector_number}</p>
 														</div>
-														<span class="text-xs text-[var(--color-accent)]">{formatPrice(result.price_eur as number | null, result.price_usd as number | null)}</span>
+														<PriceTag card={result as PriceFields} class="text-xs text-[var(--color-accent)]" />
 														{#if loggedIn}
 															{#if isAdded}
 																<span class="text-green-400 text-xs">Added!</span>

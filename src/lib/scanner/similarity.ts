@@ -47,7 +47,50 @@ export function similarity(a: string, b: string): number {
 	return 1 - prev[bl.length] / maxLen;
 }
 
-/** Pick the best-matching card name from a result list by similarity to `query`. */
+/**
+ * Heuristic for OCR words that are noise rather than part of a card name: the
+ * name crop ends near the mana cost, and Tesseract (letters-only whitelist)
+ * turns the symbols and frame edge into fragments like "SSSERRY", "WU" or "i".
+ * Real name words have a vowel, no triple letters and are mostly lowercase.
+ */
+export function looksLikeOcrJunk(word: string): boolean {
+	if (word.length <= 2) return true;
+	if (!/[aeiouy]/i.test(word)) return true;
+	if (/(.)\1\1/i.test(word)) return true;
+	const upper = (word.match(/[A-Z]/g) ?? []).length;
+	return upper / word.length >= 0.6;
+}
+
+/**
+ * Similarity of `candidate` to a leading run of `ocr`'s words, for the case
+ * where the name was read fine but junk from the mana cost is glued to the end
+ * ("Lightning Bolt A SSSERRY"). A prefix only qualifies when its length is
+ * within ±25% of the candidate's and *every* remaining word looks like junk,
+ * so "Fire Ball" never collapses to the card "Fire". Returns 0 otherwise.
+ */
+export function prefixSimilarity(ocr: string, candidate: string): number {
+	const words = ocr.trim().split(/\s+/).filter(Boolean);
+	const target = candidate.trim().length;
+	if (target === 0) return 0;
+	let best = 0;
+	for (let k = 1; k < words.length; k++) {
+		const prefix = words.slice(0, k).join(' ');
+		if (prefix.length < target * 0.75) continue;
+		if (prefix.length > target * 1.25) break;
+		if (!words.slice(k).every(looksLikeOcrJunk)) continue;
+		best = Math.max(best, similarity(candidate, prefix));
+	}
+	return best;
+}
+
+/** Slight penalty so a clean full-string match always beats a prefix match. */
+const PREFIX_MATCH_WEIGHT = 0.97;
+
+/**
+ * Pick the best-matching card name from a result list by similarity to `query`
+ * (the OCR text). Scores the whole string and, when trailing OCR junk drags
+ * that down, the matching word-prefix — see prefixSimilarity.
+ */
 export function bestNameMatch(
 	results: Array<Record<string, unknown>>,
 	query: string
@@ -59,7 +102,7 @@ export function bestNameMatch(
 		const name = r.name as string;
 		if (seen.has(name)) continue;
 		seen.add(name);
-		const score = similarity(query, name);
+		const score = Math.max(similarity(query, name), prefixSimilarity(query, name) * PREFIX_MATCH_WEIGHT);
 		if (score > bestScore) {
 			bestScore = score;
 			bestName = name;

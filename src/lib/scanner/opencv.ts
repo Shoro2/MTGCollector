@@ -10,12 +10,22 @@ const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
 const LOAD_TIMEOUT_MS = 30_000;
 
 let loadPromise: Promise<void> | null = null;
+/**
+ * After a failed load, further attempts are refused for a short cooldown so a
+ * caller in a hot loop (the live preview runs several times per second) can't
+ * re-inject the script tag over and over. User-initiated retries pass `force`.
+ */
+const RETRY_COOLDOWN_MS = 2000;
+let lastFailure: { at: number; error: Error } | null = null;
 
-export function loadOpenCV(): Promise<void> {
+export function loadOpenCV(opts: { force?: boolean } = {}): Promise<void> {
 	if (typeof window !== 'undefined' && (window as any).cv?.Mat) {
 		return Promise.resolve();
 	}
 	if (loadPromise) return loadPromise;
+	if (!opts.force && lastFailure && Date.now() - lastFailure.at < RETRY_COOLDOWN_MS) {
+		return Promise.reject(lastFailure.error);
+	}
 
 	loadPromise = new Promise<void>((resolve, reject) => {
 		// A single settle-guard covers all three outcomes (ready / script error /
@@ -28,20 +38,26 @@ export function loadOpenCV(): Promise<void> {
 			settled = true;
 			fn();
 		};
+		const script = document.createElement('script');
 		const fail = (message: string) =>
 			finish(() => {
 				loadPromise = null;
-				reject(new Error(message));
+				// Drop the dead tag so a retry starts from a clean slate.
+				script.remove();
+				const error = new Error(message);
+				lastFailure = { at: Date.now(), error };
+				reject(error);
 			});
 
-		const script = document.createElement('script');
 		script.src = OPENCV_URL;
 		script.async = true;
 		script.onload = () => {
 			const check = () => {
 				if (settled) return;
-				if ((window as any).cv?.Mat) finish(() => resolve());
-				else setTimeout(check, 100);
+				if ((window as any).cv?.Mat) {
+					lastFailure = null;
+					finish(() => resolve());
+				} else setTimeout(check, 100);
 			};
 			check();
 		};

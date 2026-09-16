@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { similarity, bestNameMatch, normalizeName } from './similarity';
+import { similarity, bestNameMatch, normalizeName, prefixSimilarity, looksLikeOcrJunk } from './similarity';
 
 describe('similarity', () => {
 	it('returns 1 for identical strings', () => {
@@ -63,5 +63,53 @@ describe('similarity with normalization', () => {
 		expect(similarity('Jace, the Mind Sculptor', 'Jace the Mind Sculptor')).toBe(1);
 		expect(similarity("Lim-Dûl's Vault", "Lim-Dul's Vault")).toBe(1);
 		expect(similarity('Æther Vial', 'Aether Vial')).toBe(1);
+	});
+});
+
+
+describe('looksLikeOcrJunk', () => {
+	it('flags mana-symbol fragments and frame noise', () => {
+		for (const w of ['SSSERRY', 'WU', 'i', 'A', 'Rrr', 'GGB', 'xz']) expect(looksLikeOcrJunk(w), w).toBe(true);
+	});
+
+	it('keeps ordinary name words', () => {
+		for (const w of ['Ball', 'Bolt', 'the', 'Sculptor', 'Augustin', 'Fish']) expect(looksLikeOcrJunk(w), w).toBe(false);
+	});
+});
+
+describe('prefixSimilarity', () => {
+	it('matches a clean name followed by junk', () => {
+		expect(prefixSimilarity('Lightning Bolt A SSSERRY', 'Lightning Bolt')).toBe(1);
+	});
+
+	it('refuses when the remainder contains a real word', () => {
+		expect(prefixSimilarity('Fire Ball', 'Fire')).toBe(0);
+		expect(prefixSimilarity('Island Fish Jasconius', 'Island')).toBe(0);
+	});
+
+	it('refuses prefixes that are far shorter than the candidate', () => {
+		expect(prefixSimilarity('Bolt SSSERRY', 'Lightning Bolt')).toBe(0);
+	});
+
+	it('is 0 for a single-word OCR string', () => {
+		expect(prefixSimilarity('Opt', 'Opt')).toBe(0);
+	});
+});
+
+describe('bestNameMatch with OCR junk', () => {
+	it('accepts a name whose OCR carries mana-cost junk at the end', () => {
+		const best = bestNameMatch([{ name: 'Lightning Bolt' }, { name: 'Lightning Helix' }], 'Lightning Bolt A SSSERRY');
+		expect(best.name).toBe('Lightning Bolt');
+		expect(best.score).toBeGreaterThanOrEqual(0.9);
+	});
+
+	it('still prefers the full-string match over a shorter prefix candidate', () => {
+		const best = bestNameMatch([{ name: 'Fire' }, { name: 'Fireball' }], 'Fire Ball');
+		expect(best.name).toBe('Fireball');
+	});
+
+	it('does not raise the score when the tail is real text', () => {
+		const best = bestNameMatch([{ name: 'Island' }], 'Island Fish Jasconius');
+		expect(best.score).toBeLessThan(0.6);
 	});
 });
