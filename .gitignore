@@ -13,6 +13,8 @@ vite.config.ts.timestamp-*
 llm-council/
 # Self-hosted scanner libraries (OpenCV.js, Tesseract.js); see CLAUDE.md "Scanner assets"
 static/vendor/
+# Live-scanner detection worker, bundled by scripts/build-detect-worker.mjs (predev/prebuild)
+static/scanner/
 # Scanner harness outputs
 scripts/scanner-harness/fixtures/
 scripts/scanner-harness/results*.json

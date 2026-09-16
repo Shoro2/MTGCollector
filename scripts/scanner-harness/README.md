@@ -69,20 +69,22 @@ Columns: state before the scanner work, after spread-aware detection and
 adaptive crop windows, and after the OCR input-size fix plus the plausibility
 check for number-only hits (current code).
 
-| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR |
-|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|
-| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 |
-| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 |
-| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 |
-| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 |
-| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 |
-| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 |
-| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely |
-| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 |
-| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s |
+| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis |
+|-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|-------------------------|
+| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 | 4 / 4 |
+| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 | 15 / 15 |
+| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 | 10 / 10 |
+| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 |
+| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 |
+| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 |
+| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely |
+| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 |
+| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s |
 
-The last column is measured with the canonical seed (double-faced names) and
-the printing-level metric; the earlier columns counted names only. The
+The last two columns are measured with the canonical seed (double-faced names)
+and the printing-level metric; the earlier columns counted names only. The
+Phase 4 column differs from Phase 2 only in the detection stage (oriented
+dimension filter and the grid hypothesis of `src/lib/scanner/grid.ts`). The
 "87 names" run drops to 86 under those conditions (Beloved Beggar's front face
 no longer matched its canonical name), which the face-aware search fixed.
 
@@ -111,10 +113,11 @@ with a second pass at 2x.
 node scripts/scanner-harness/ocr-scale-experiment.mjs --json out.json photos/*.jpg
 ```
 
-The remaining three: Retro-Mutation (every name pass and both strips are
-junk on the 12 px phone crop), Tunnel Rats (the rotated strip reads the set
-but loses the number), and The Last Ronin's Technique on one camera photo
-(showcase frame; offered as `likely` from "LAST … Techmaue" + "223 THT").
+The remaining one after Phase 4: The Last Ronin's Technique on one camera
+photo (showcase frame; offered as `likely` from "LAST … Techmaue" + "223 THT").
+Retro-Mutation and Tunnel Rats were recovered by the grid hypothesis: the
+lattice-derived cells warp those cards a little differently and their name
+bars became legible to the existing passes.
 
 **Name-band experiments.** `ocr-preprocess-experiment.mjs` re-OCRs every name
 crop with canvas-only preprocessings (Otsu binarisation, inversion, contrast
@@ -127,3 +130,10 @@ engines 72. The scan page runs the passes in that order and PaddleOCR last.
 
 Notes: the fake camera crops portrait clips when the app asks for 1920x1080,
 so render live scenes in landscape; real phones deliver native portrait frames.
+The live harness's `[live]` lines show which detector ran (`detector: Web
+Worker (OpenCV.js off the main thread)` — the worker is bundled to
+`static/scanner/detect-worker.js` by `npm run build:worker`, which `npm run
+dev` runs automatically) and the best-frame line (`Best frame of the scene:
+sharpness …, glare …, … ms old`). The LiveScanner root carries
+`data-detector="worker|main"` and the badge `data-quality-hint="blurry|glare|"`
+for assertions.

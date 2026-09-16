@@ -13,6 +13,7 @@ npm install                  # Install dependencies
 npm run import-cards         # Download Scryfall bulk data (required first time, ~600MB)
 npm run dev                  # Start dev server at http://localhost:5173
 npm run build                # Production build (node adapter)
+npm run build:worker         # Bundle the live-scanner detection worker (runs automatically before dev/build)
 npm run check                # TypeScript + Svelte validation
 ```
 
@@ -103,10 +104,14 @@ src/
 ├── lib/
 │   ├── components/
 │   │   ├── CardPreview.svelte       # Hover zoom (portal to document.body)
-│   │   ├── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, auto-capture)
+│   │   ├── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, best-frame capture, blur/glare hints)
 │   │   └── PriceTag.svelte          # List price with foil-only fallback + "Foil" chip (displayPrice)
 │   ├── scanner/                     # Browser-side scanner library; pure modules are unit-tested (vitest)
-│   │   ├── detect.ts                # detectCardsQuick(): fast Canny rectangle detector for the live preview
+│   │   ├── detect.ts                # createQuickDetector(): live detector — Web Worker with its own OpenCV copy, main-thread fallback
+│   │   ├── quick-rects.ts           # Canny rectangle scan + frame quality on an RGBA buffer (shared by main thread and worker)
+│   │   ├── detect-worker.ts         # Detection Web Worker; bundled by scripts/build-detect-worker.mjs to static/scanner/ (gitignored)
+│   │   ├── quality.ts               # Laplacian sharpness, glare fraction, BestFrameSelector (live best-frame capture)
+│   │   ├── grid.ts                  # Spread geometry: oriented dimension filter, lattice indexing, affine/homography grid hypothesis
 │   │   ├── stability.ts             # SceneStabilizer + sceneSignature(): time-based "scene holds still" logic
 │   │   ├── geometry.ts              # orderCornersForCard(), fitContain(), touchesFrameEdge(), loadImage()
 │   │   ├── opencv.ts                # Lazy OpenCV.js CDN loader
@@ -142,8 +147,7 @@ src/
     │       └── data/+server.ts      # Bulk prices data API (stats, topCards, profitHistory)
     ├── auth/                        # Google OAuth flow
     ├── cards/                       # Public card browser + detail pages
-    ├── collection/                  # Collection CRUD, import, export, scan
-    │   └── scan/                    # Collection-specific card scanner
+    ├── collection/                  # Collection CRUD, import, export (the old /collection/scan redirects to /scan)
     ├── scan/                        # Card scanner (public, no auth required)
     ├── wishlist/                    # Wishlist CRUD with priority
     ├── prices/                      # Price charts, top cards, profit/loss
@@ -166,7 +170,7 @@ src/
 | `/wishlist` | Wishlist with priority, collect-to-collection with purchase price prompt |
 | `/prices` | Collection value over time (Chart.js), profit/loss chart, top cards with per-card price history popup. Data loaded async via `/api/prices/data` with skeleton loading state |
 | `/admin` | Admin dashboard — user management, DB statistics, API usage tracking (admin only) |
-| `/collection/scan` | Collection-specific card scanner |
+| `/collection/scan` | Retired in Phase 4 — redirects to `/scan` (hooks.server.ts) |
 | `/api/prices/data` | Bulk prices data (stats, topCards, profitHistory, usdToEur) — used by `/prices` for async loading |
 | `/api/ocr` | Google Vision batch OCR endpoint (TEXT_DETECTION, max 16 images) |
 | `/api/import` | Admin-only DB init trigger |
@@ -186,7 +190,7 @@ src/
    - Otsu global threshold
    - Color saturation mask (for colored card borders)
    - Inverted Otsu threshold (for light cards on light backgrounds)
-2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9), IoU deduplication, containment and size filters. **Multiple mode** adds spread-aware steps: a dimension-consistency filter (bounding boxes more than 15% off the median width/height are partial cards or two touching cards merged into one blob and are dropped), then grid inference fills every empty cell of the detected row/column grid, extrapolates one row/column beyond the detected extent at the median pitch, and keeps only cells with texture (grey-level std ≥ 20, so blank paper is ignored). Touching sideways cards in a phone photo went from 6/10 and 12/15 detected to 10/10 and 15/15.
+2. Filters for 4-corner contours with MTG aspect ratio (0.5–0.9), IoU deduplication, containment and size filters. **Multiple mode** adds spread-aware steps from `src/lib/scanner/grid.ts` (pure, unit-tested): a dimension-consistency filter on the *oriented* edge lengths (short and long side of the quad, so a tilted card keeps its true size while its bounding box would grow; candidates more than 15% off the median are partial cards or two touching cards merged into one blob and are dropped), then **grid inference as a hypothesis**: the surviving cards are indexed on a lattice two ways — neighbour links (nearest card to the right / below within half a card of the axis, gaps bridged by whole pitch steps; tolerant to rotation and perspective) and 1-D clustering of the centres (for sparse detections where hardly any card has a direct neighbour) — a mapping grid index → image is fitted to each (affine, or a homography when at least six cards are on the lattice and it fits clearly better), cards further than 25% of a pitch from their cell are off-grid, every card is re-indexed to its nearest cell under the fit, and the indexing that puts more cards on its lattice wins; a lattice with more than 20% off-grid cards or cards wider than their pitch is rejected and nothing is added. Every unoccupied cell, one row/column beyond the detected extent included, becomes a perspective-correct quad and is kept only with texture inside (grey-level std ≥ 20, so blank paper is ignored) and less than 30% overlap with a detected card; nothing is filled to an expected count. Touching sideways cards in a phone photo went from 6/10 and 12/15 detected to 10/10 and 15/15.
 3. Corner ordering via `orderCornersForCard()`: the short edge becomes the top of the warp, so sideways cards come out upright without a separate rotation step
 4. Corner expansion (~5% outward from the quad centre) + perspective transform to the base size 488×680, or up to 2× that when the quad covers more source pixels (`WARP_MAX_SCALE`: camera photos, a card filling a live frame), so the ~1.5 mm collector line keeps its native pixels instead of being downsampled before OCR. Result thumbnails stay at base size (`cardThumbnailUrl`). The expansion is deliberately **not clamped** to the frame: `warpPerspective` pads out-of-frame samples with black, so a card that touches the image edge (typical for hand-held live captures) keeps the same ~3.5% margin as any other and the fixed crop windows below still line up. Clamping used to make such warps tight on the card and pushed the collector line out of its crop window.
 5. **OCR windows from the warp itself** (`src/lib/scanner/crops.ts`): row/column mean-intensity profiles of the warped card locate the inner edges of the black border (leading/trailing dark runs with a per-profile adaptive threshold, 40% of the 5th→95th percentile range); the name band starts just below the top edge (8.5% tall) and the collector window just above the bottom edge (8% tall, covers the border). Loose, tight and grid-inferred warps therefore all read the right rows. Cards without a dark border (white-bordered, some showcase frames) fall back to the fixed windows (name x 6–74%, y 5.5–13.5%; collector strip left half, y 89–99%).
@@ -202,11 +206,12 @@ src/
 
 ### Live Scanner (camera mode, `/scan` → "Live camera")
 
-`src/lib/components/LiveScanner.svelte` streams the device camera and auto-captures when the scene holds still. Only `/scan` has this mode; `/collection/scan` is upload-only.
+`src/lib/components/LiveScanner.svelte` streams the device camera and auto-captures when the scene holds still. Only `/scan` has this mode (the old `/collection/scan` redirects here).
 
 - **Viewfinder follows the stream.** The container's `aspect-ratio` is bound to `videoWidth / videoHeight` (updated on `loadedmetadata` and `resize`, so it tracks device rotation), capped at `70vh`. A phone held upright therefore gets a portrait preview. Previously the box was hard-wired to 16:9 and the overlay scaled x and y independently, which squashed an upright card into a landscape outline — the scanner looked as if it wanted the card in landscape.
 - **Overlay mapping** goes through `fitContain()` (uniform scale + letterbox offset, same as CSS `object-fit: contain`) and renders at `devicePixelRatio`.
-- **Per-frame detection** (`detectCardsQuick`, ~6 fps): the frame is drawn straight into a 720-px analysis canvas, Canny + `findContours`, then strict filters — min area 3% of the frame, bounding-box aspect 0.55–0.88 (an MTG card is 0.716), candidates below 25% of the largest survivor dropped. The strictness is intentional: the live loop auto-captures whatever it tracks, and the looser full-pipeline thresholds let keyboard keys and other small rectangles qualify as "cards".
+- **Per-frame detection** (`createQuickDetector()` → `quick-rects.ts`, ~6 fps): the frame is drawn into a 720-px analysis canvas, its pixels are read back once and *transferred* to a Web Worker (`detect-worker.ts`) that runs its own OpenCV.js copy: Canny + `findContours`, then strict filters — min area 3% of the frame, bounding-box aspect 0.55–0.88 (an MTG card is 0.716), candidates below 25% of the largest survivor dropped. The strictness is intentional: the live loop auto-captures whatever it tracks, and the looser full-pipeline thresholds let keyboard keys and other small rectangles qualify as "cards". Because the OpenCV work is off the main thread, the preview and the UI stay smooth while a frame is analysed; when the worker cannot start (no Worker support, script or OpenCV load failure, 30 s timeout) or dies later, detection continues on the main thread with the same code and the debug log says so (`detector: …`). The worker is a *classic* worker bundled by `scripts/build-detect-worker.mjs` (esbuild, IIFE, runs automatically before `npm run dev` / `npm run build`, output `static/scanner/detect-worker.js`, gitignored), because a Vite module worker cannot `importScripts()` the UMD OpenCV build; it resolves the OpenCV URL on the page, so the self-hosted `/vendor` copy works too. Note for anyone touching the worker: the Emscripten module is a thenable whose `then` never settles — never `await` or resolve a promise with `cv` itself, poll `cv.Mat` instead.
+- **Best-frame capture** (`quality.ts`, pure + unit-tested): every analysed frame is scored — variance of the Laplacian over the tracked cards (sharpness) discounted by the fraction of blown-out pixels (glare, all channels ≥ 250; zero score at 10%) — and the full-resolution copy of the best frame of the *current scene* is kept (the two full-res canvases are swapped, no pixel copies; a change of the scene signature resets it, and a best frame older than 2.5 s is replaced by the next frame). The capture hands that frame and its rectangles to the pipeline instead of whatever frame happened to be current when the stabiliser fired; the debug log reports its sharpness, glare and age. The badge shows "blurry, hold still" when the frame is less than half as sharp as the best recent one and "glare on the card" above 3% blown-out pixels — hints only, they don't block auto-capture (glare on a foil is often unavoidable).
 - **Stability** (`SceneStabilizer`, pure + unit-tested): a rect is steady after 700 ms of continuous tracking with ≥3 detections and a centroid spread ≤5% of its long edge (floor 10 px). Time-based so slow phones don't wait longer than fast laptops; relative so hand jitter on a card filling the frame doesn't block forever. The "steady %" badge reaches 100% exactly when auto-capture becomes possible.
 - **Guards:** a rect within 1.5% of the frame edge is drawn red ("card cut off at the edge") and blocks auto-capture; more than 12 tracked rects also block it ("too many rectangles"). Manual "Capture now" always works.
 - **Capture hands the tracked rects to the pipeline.** `onCapture(canvas, rects)` → `processImage(canvas, presetRects)` builds the card candidates directly from them and skips the six full-resolution strategies (1–3 s on a phone). A manual capture while the scene is still moving passes no rects, so full detection runs as a fallback.
@@ -227,10 +232,10 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 
 ## Testing
 
-- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, scene stability, overlay geometry, price display/divergence helpers. Anything touching OpenCV/Tesseract/DOM or SQLite is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable.
+- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, evidence fusion, spread geometry (oriented dimensions, lattice indexing, affine/homography grid hypothesis, empty cells), frame quality and best-frame selection, scene stability, overlay geometry, price display/divergence helpers. Anything touching OpenCV/Tesseract/DOM or SQLite is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable.
 - `npm run check` — svelte-check (TypeScript + Svelte). CI runs `check`, `test` and `build` on every PR (`.github/workflows/ci.yml`).
-- **Scanner harness** (`scripts/scanner-harness/`, see its README): drives the real `/scan` pipeline headlessly with Playwright — upload path (`harness.mjs --mode single|multiple photos/*.jpg`, optional `--expect` name lists per file, `--out` JSON with OCR texts and the full debug log) and live path (`live-harness.mjs` plays a Y4M clip as the fake camera). `make-synthetic.mjs` renders synthetic MTG-like cards (single, 2×2 grid, sideways) so the whole chain (detection → warp → crops → OCR → matching → reprint disambiguation) runs offline with the self-hosted libraries and a DB seeded by `seed-test-db.mjs`. Reference results on the sandbox: single 1/1 in ~3 s, grid 4/4 in ~4.4 s, sideways 1/1 in ~4 s (Phase 2b), live 2/2 about a second after the scene settles. Chromium's fake camera crops portrait clips when the app asks for 1920×1080, so render live scenes in landscape.
-- **Real photos**: eight phone/camera spreads (2x2 … 3x5, upright and sideways, touching cards, foils, EXIF-rotated) are the development set: identity and printing 101 of 104 each, 1 more offered as `likely`, 0 wrong, against a DB seeded with distractor printings at every plausible digit misread and the same number in every other set (`seed-test-db.mjs --distractors`, so a misread number or set code shows up as WRONG like it would in production). The harness scores printings, not just names (`expectations-real-photos.json` lists set + number per instance) and `baseline.json` fails a run that regresses. Results per photo and the remaining failure classes are in `scripts/scanner-harness/README.md`. The photos are not in the repository (2–6 MB each); `expectations-real-photos.json` and `seed-cards.json` let them be re-run from a local folder. `dump-debug.mjs` writes the detection overlay and every card's crops as a montage — the fastest way to see *why* a card failed.
+- **Scanner harness** (`scripts/scanner-harness/`, see its README): drives the real `/scan` pipeline headlessly with Playwright — upload path (`harness.mjs --mode single|multiple photos/*.jpg`, optional `--expect` name lists per file, `--out` JSON with OCR texts and the full debug log) and live path (`live-harness.mjs` plays a Y4M clip as the fake camera; its log shows which detector ran — `detector: Web Worker` — and the best-frame line). `make-synthetic.mjs` renders synthetic MTG-like cards (single, 2×2 grid, sideways) so the whole chain (detection → warp → crops → OCR → matching → reprint disambiguation) runs offline with the self-hosted libraries and a DB seeded by `seed-test-db.mjs`. Reference results on the sandbox: single 1/1 in ~3 s, grid 4/4 in ~4.4 s, sideways 1/1 in ~4 s (Phase 2b), live 2/2 about a second after the scene settles. Chromium's fake camera crops portrait clips when the app asks for 1920×1080, so render live scenes in landscape.
+- **Real photos**: eight phone/camera spreads (2x2 … 3x5, upright and sideways, touching cards, foils, EXIF-rotated) are the development set: identity and printing 103 of 104 each, the last one offered as `likely`, 0 wrong, against a DB seeded with distractor printings at every plausible digit misread and the same number in every other set (`seed-test-db.mjs --distractors`, so a misread number or set code shows up as WRONG like it would in production). The harness scores printings, not just names (`expectations-real-photos.json` lists set + number per instance) and `baseline.json` fails a run that regresses. Results per photo and the remaining failure classes are in `scripts/scanner-harness/README.md`. The photos are not in the repository (2–6 MB each); `expectations-real-photos.json` and `seed-cards.json` let them be re-run from a local folder. `dump-debug.mjs` writes the detection overlay and every card's crops as a montage — the fastest way to see *why* a card failed.
 
 ## Coding Conventions
 
@@ -360,12 +365,14 @@ Status: WP2.1/WP2.2 were part of the Phase 1 fusion; WP2.3 (binarised and gray r
 - **WP3.3 Feature verification for the top-K candidates** (ORB/AKAZE + RANSAC homography): the vendored OpenCV.js 4.9 build exposes no features2d symbols, so this needs a custom build or a server-side verifier; optional, the hash alone should carry identity for most cards.
 - Acceptance: identity ≥ 100/104 on the eight photos with 0 wrong identities; the hold-out set reported separately; printing rules unchanged.
 
-#### Phase 4 — Live scanner and robustness (~2 days)
+#### Phase 4 — Live scanner and robustness (~2 days) — done
+
+Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device check (checklist below). Eight photos: identity and printing 101 → 103 / 103 of 104 (the grid hypothesis recovers two more cards in the sideways phone spreads), 1 `likely`, 0 wrong, 76.9 s; synthetic single 1/1, grid 4/4, sideways 1/1; live harness 2/2 with `detector: Web Worker` and the best frame captured.
 
 - **WP4.1 Best-frame selection:** keep the last N frames while the scene is stable, score sharpness (Laplacian variance over the card ROI) and glare (saturated-pixel fraction), capture the best one; show "blur"/"glare" hints in the viewfinder.
 - **WP4.2 `detectCardsQuick` in a Web Worker** (OpenCV.js in the worker, ImageBitmap transfer) so the preview stays smooth on phones.
 - **WP4.3 Grid inference as a hypothesis:** oriented edge lengths instead of the axis-aligned ±15 % median filter, evidence required per cell (kept), no fill to an expected count, perspective-tolerant checks.
-- **WP4.4 Real-device verification (owner):** Android Chrome and iOS Safari checklist — portrait preview, auto-capture within ~1 s, red edge warning, a card filling the frame identified, 12 MP upload noticeably faster; tune `minStableMs`/`driftFrac` if needed.
+- **WP4.4 Real-device verification (owner):** Android Chrome and iOS Safari checklist — portrait preview, auto-capture within ~1 s, red edge warning, a card filling the frame identified, 12 MP upload noticeably faster; tune `minStableMs`/`driftFrac` if needed. **Checklist for the owner** (open the Debugger section on `/scan` for the `[live]` lines): (1) the preview is portrait when the phone is upright; (2) the log shows `detector: Web Worker (OpenCV.js off the main thread)` — if it says `main thread (…)`, note the reason in parentheses; (3) the preview stays fluid while the outlines update (that was the point of the worker); (4) a single card held still: "steady" reaches 100% and identification fires within ~1 s, the log has a `Best frame of the scene: sharpness …, glare …` line; (5) move the phone while a card is tracked: the badge shows "blurry, hold still"; a foil under a lamp: "glare on the card"; (6) a card touching the frame edge shows the red outline and no auto-capture; (7) a card filling the frame is identified; (8) a 12 MP photo upload in multiple mode finishes noticeably faster than before Round 2; (9) `/collection/scan` opens `/scan`. Tune `minStableMs`/`driftFrac` (LiveScanner) or the best-frame `improveFactor`/`windowMs` (`quality.ts`) if (4) or (5) misbehave.
 - **WP4.5 `/collection/scan`** consolidated onto the shared pipeline or retired in favour of `/scan` + add-to-collection.
 
 #### Phase 5 — Architecture and CI (~1.5 days)
@@ -375,7 +382,7 @@ Status: WP2.1/WP2.2 were part of the Phase 1 fusion; WP2.3 (binarised and gray r
 - **WP5.3 Frozen references:** reference-data snapshot, library versions and photo hashes recorded with every baseline (with WP0.2).
 - **WP5.4 Collection schema:** `collection_cards.finish` (nonfoil/foil/etched/unknown) and `language`, the `foil` boolean kept in sync; import, export and UI updated.
 
-**Order and dependencies.** 0 → 1 → 2 → 3 in sequence (each measured before the next); 4 and 5 can interleave with 2 and 3. WP1.4 precedes WP2.1; WP5.1 is best done before Phase 3 so the visual channel lands in a clean fusion.
+**Order and dependencies.** 0 → 1 → 2 → 4 done in that order; 3 and 5 remain (5 can interleave with 3). WP5.1 is best done before Phase 3 so the visual channel lands in a clean fusion.
 
 **Expected outcome on the eight photos** (in-sample; the hold-out set is the real check):
 
@@ -385,8 +392,9 @@ Status: WP2.1/WP2.2 were part of the Phase 1 fusion; WP2.3 (binarised and gray r
 | Phase 0 | 87 | measured (promo case counts as wrong) | measured at printing level |
 | Phase 1 | 90–93 | identity minus genuine ambiguities | 0, DFC path works in production |
 | Phase 2 (measured) | 101 | 101 | 0 |
+| Phase 4 (measured) | 103 | 103 | 0 (grid hypothesis; live quality is not measured by the stills) |
 | Phase 3 | ≥ 100 | ~95 (footer still needed for reprints) | 0 |
-| Phases 4–5 | unchanged on stills; live quality, CI, schema | | |
+| Phase 5 | unchanged on stills; CI, schema | | |
 
 **Decisions needed from the owner:** hold-out photos (WP0.4); the visual index data volume (once ~100k Scryfall images, several GB and hours on the server); and the two standing decisions below (price data quality, self-hosting the scanner libraries — now ~75 MB with the second OCR engine).
 
@@ -397,6 +405,7 @@ Status: WP2.1/WP2.2 were part of the Phase 1 fusion; WP2.3 (binarised and gray r
 
 ### Done
 
+- Phase 4 of the programme: grid inference as a validated hypothesis (`grid.ts`: oriented dimension filter, lattice indexing by neighbour links or 1-D clustering, affine/homography mapping, evidence per cell, no fill to a count), best-frame capture with blur/glare hints in the live scanner (`quality.ts`), per-frame detection in a Web Worker with its own OpenCV copy and a main-thread fallback (`quick-rects.ts`, `detect-worker.ts`, bundled by `scripts/build-detect-worker.mjs`), `/collection/scan` retired in favour of `/scan`. Eight photos: 101 → 103 of 104, 0 wrong.
 - Phase 2 of the programme: binarised and gray raw-line name passes, PaddleOCR PP-OCRv4 as a lazily loaded last name engine (WASM, CDN or self-hosted), padded collector numbers and lookalike set-code guard, edit-distance name fallback, up to three one-tap suggestions (structural number, one digit off with matching rarity, partial name), Vision retry with name and strip. Eight photos: identity and printing 90 → 101 of 104, 0 wrong.
 - Phase 1 of the programme: evidence fusion (`resolve.ts`) with confirmed / likely / unknown / conflict states for identity and printing, face-aware names (`Front // Back` records match their visible face), printings without a date cut-off, word-core search, safer reprint disambiguation (exact set+number first, near set codes for a certain name, no digit-sequence guessing), finish and language as fields, one-tap accept for likely cards, bulk import limited to established printings. Eight photos: identity 86 → 90, printing 85 → 90, 0 wrong.
 - Phase 0 of the programme: the harness scores printings (set + number) with a committed baseline and a failing exit code; the seed carries canonical double-faced names with `card_faces`; distractors cover misread set codes; the review's regression tests are in the suite.
@@ -430,4 +439,5 @@ Status: WP2.1/WP2.2 were part of the Phase 1 fusion; WP2.3 (binarised and gray r
 - Filming a monitor instead of a physical card produces moiré and glare that degrade OCR; not a code issue.
 - A card lying on its side comes out upside-down in the warp whenever its top points right (the short-edge rule in `orderCornersForCard()` breaks the 180° tie by proximity to the image origin); Phase 2b and the rotated collector-line pass recover most of them at the cost of a second OCR pass.
 - Tesseract can't reliably distinguish the foil `★` from the bullet `•`; text-based foil hints are only trusted from Google Vision, pixel-based detection runs in single-card mode only.
-- The live detector runs on the main thread; on low-end phones the preview can stutter while a frame is analysed.
+- Grid inference needs at least three detected cards on two rows and two columns; a single row or column of cards gets no synthetic cells, and cells are only offered one row/column beyond the detected extent.
+- The detection worker loads its own OpenCV.js copy (from the browser cache after the page's own load); on a first visit that is a second ~10 MB parse, about a second on a laptop, during which the preview runs without outlines.

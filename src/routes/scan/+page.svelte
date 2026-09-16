@@ -15,6 +15,7 @@
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
 	import type { QuickRect } from '$lib/scanner/detect';
+	import { emptyCells, filterByDimensions, inferGrid } from '$lib/scanner/grid';
 
 	let { data }: { data: PageData } = $props();
 	let loggedIn = $derived(!!data.user);
@@ -347,6 +348,11 @@
 					cardContours.push({ corners: pts, area: r.area, rect: { ...r.rect } });
 				}
 			} else {
+				/** Corner array of a 4x1 CV_32SC2 Mat, for the pure spread-geometry helpers. */
+				function matCorners(m: any): Array<[number, number]> {
+					return [0, 1, 2, 3].map((k) => [m.data32S[k * 2], m.data32S[k * 2 + 1]] as [number, number]);
+				}
+
 				function computeIoU(a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }): number {
 					const x1 = Math.max(a.x, b.x);
 					const y1 = Math.max(a.y, b.y);
@@ -577,23 +583,23 @@
 				}
 
 				// === Dimension consistency filter (multiple mode) ===
-				// In a spread every card has the same size. A bounding box far off the
-				// median width/height is either a partial card (the contour ran into a
-				// neighbour) or two touching cards merged into one card-shaped blob —
-				// both would OCR garbage. Drop them; the grid inference below re-creates
-				// the cells from the surviving neighbours.
+				// In a spread every card has the same size. A candidate whose oriented
+				// edge lengths (short and long side of the quad — a tilted card keeps
+				// its true size, only its bounding box grows) are far off the median
+				// is either a partial card (the contour ran into a neighbour) or two
+				// touching cards merged into one card-shaped blob; both would OCR
+				// garbage. Drop them; the grid inference below re-creates the cells
+				// from the surviving neighbours.
 				if (scanMode === 'multiple' && cardContours.length >= 4) {
-					const ws = cardContours.map(c => c.rect.width).sort((a, b) => a - b);
-					const hs = cardContours.map(c => c.rect.height).sort((a, b) => a - b);
-					const medW = ws[Math.floor(ws.length / 2)];
-					const medH = hs[Math.floor(hs.length / 2)];
 					const beforeDim = cardContours.length;
+					const { kept, dropped, median: medDims } = filterByDimensions(
+						cardContours.map((c) => ({ candidate: c, corners: matCorners(c.corners) }))
+					);
+					cardContours = kept.map((k) => k.candidate);
 					// 15%: flat-lay spreads vary a few percent with perspective; a partial
 					// card is typically 20%+ short on one side.
-					cardContours = cardContours.filter(c =>
-						Math.abs(c.rect.width - medW) <= medW * 0.15 && Math.abs(c.rect.height - medH) <= medH * 0.15
-					);
-					log(`Dimension filter: median ${medW.toFixed(0)}x${medH.toFixed(0)} (+-15%), ${beforeDim} -> ${cardContours.length}`);
+					log(`Dimension filter: median ${medDims!.short.toFixed(0)}x${medDims!.long.toFixed(0)} (oriented edges, +-15%), ${beforeDim} -> ${cardContours.length}`);
+					for (const d of dropped) log(`  dropped ${d.corners.map(([x, y]) => `(${x},${y})`).join(' ')}`);
 				}
 
 				// === Progressive relaxation if expected card count not met ===
@@ -665,114 +671,55 @@
 					log(`After relaxation: ${cardContours.length} candidates`);
 				}
 
-				// === Grid inference: fill missing positions if cards form a grid ===
-				// Single mode completes the grid up to expectedCardCount. Multiple mode
-				// fills every empty cell of a detected grid and keeps the ones with
-				// texture, so a card that was merged with or cut off by its neighbour
-				// still gets its own warp while blank paper is ignored.
-				const wantGridFill = expectedCardCount ? cardContours.length < expectedCardCount : scanMode === 'multiple';
-				if (wantGridFill && cardContours.length >= 3) {
-					// Use bounding rect centers for grid layout (stable for upright cards)
-					const gridRects = cardContours.map(c => c.rect);
-					const gridCenters = gridRects.map(r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }));
-
-					// Median card dimensions from bounding rects
-					const bws = gridRects.map(r => r.width).sort((a, b) => a - b);
-					const bhs = gridRects.map(r => r.height).sort((a, b) => a - b);
-					const medW = bws[Math.floor(bws.length / 2)];
-					const medH = bhs[Math.floor(bhs.length / 2)];
-
-					// Cluster into rows (by Y center) and columns (by X center)
-					function cluster1D(values: number[], threshold: number): number[][] {
-						const sorted = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
-						const groups: number[][] = [[]];
-						groups[0].push(sorted[0].i);
-						for (let i = 1; i < sorted.length; i++) {
-							if (sorted[i].v - sorted[i - 1].v > threshold) {
-								groups.push([]);
+				// === Grid inference (multiple mode): fill the empty cells of the lattice ===
+				// The detected cards are indexed on a lattice via neighbour links (a
+				// tilted or foreshortened spread still indexes correctly), a mapping
+				// grid index -> image is fitted (affine, or a homography for a photo
+				// taken at an angle), and every unoccupied cell — one row/column
+				// beyond the detected extent included — becomes a card only when
+				// there is texture inside it. The lattice is a hypothesis: nothing is
+				// added when the detected cards do not sit on one.
+				if (scanMode === 'multiple' && cardContours.length >= 3) {
+					const quads = cardContours.map((c) => ({ corners: matCorners(c.corners) }));
+					const grid = inferGrid(quads, det);
+					if (!grid) {
+						log('Grid inference: no consistent lattice (fewer than 2 rows/columns, or cards off the grid) - nothing added');
+					} else {
+						log(`Grid hypothesis: ${grid.rows} rows x ${grid.cols} cols, ${grid.mapping} mapping from ${grid.indexing}, max residual ${(grid.residual * 100).toFixed(0)}% of pitch, ${grid.offGrid} off-grid, card covers ${(grid.cellHalf.c * 2).toFixed(2)} x ${(grid.cellHalf.r * 2).toFixed(2)} of the pitch`);
+						let added = 0;
+						for (const cell of emptyCells(grid, quads, det)) {
+							// Blank paper has almost no contrast, a card has plenty: skip empty cells.
+							const x1 = Math.max(0, Math.round(cell.rect.x));
+							const y1 = Math.max(0, Math.round(cell.rect.y));
+							const x2 = Math.min(det.width, Math.round(cell.rect.x + cell.rect.width));
+							const y2 = Math.min(det.height, Math.round(cell.rect.y + cell.rect.height));
+							if (x2 - x1 < 4 || y2 - y1 < 4) continue;
+							const cellRoi = gray.roi(new cv.Rect(x1, y1, x2 - x1, y2 - y1));
+							const cellMean = new cv.Mat();
+							const cellStd = new cv.Mat();
+							cv.meanStdDev(cellRoi, cellMean, cellStd);
+							const cellContrast = cellStd.data64F[0];
+							cellRoi.delete(); cellMean.delete(); cellStd.delete();
+							if (cellContrast < 20) {
+								log(`Grid cell (${cell.row},${cell.col}) skipped: contrast ${cellContrast.toFixed(1)} looks empty`);
+								continue;
 							}
-							groups[groups.length - 1].push(sorted[i].i);
+							const corners = new cv.Mat(4, 1, cv.CV_32SC2);
+							cell.corners.forEach(([x, y], k) => {
+								corners.data32S[k * 2] = Math.round(x);
+								corners.data32S[k * 2 + 1] = Math.round(y);
+							});
+							cardContours.push({
+								corners,
+								area: cell.rect.width * cell.rect.height,
+								rect: { ...cell.rect },
+								synthetic: true
+							});
+							added++;
+							log(`Grid cell (${cell.row},${cell.col}) added (contrast ${cellContrast.toFixed(1)})`);
 						}
-						return groups;
+						log(`Grid inference: added ${added} synthetic card(s), now ${cardContours.length} total`);
 					}
-
-					const rows = cluster1D(gridCenters.map(c => c.y), medH * 0.4);
-					const cols = cluster1D(gridCenters.map(c => c.x), medW * 0.4);
-
-					log(`Grid analysis: ${rows.length} rows x ${cols.length} cols detected`);
-					const cells = rows.length * cols.length;
-					const gridPlausible = expectedCardCount
-						? cells >= expectedCardCount * 0.8
-						: cells > cardContours.length && cells <= cardContours.length * 2;
-					const hasGrid = rows.length >= 2 && cols.length >= 2;
-					// Multiple mode also runs with a complete-looking grid so an entire
-					// missed edge row/column can still be extrapolated below.
-					if (hasGrid && (gridPlausible || (!expectedCardCount && scanMode === 'multiple'))) {
-						const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-						const rowCenters = rows.map(r => mean(r.map(idx => gridCenters[idx].y)));
-						const colCenters = cols.map(c => mean(c.map(idx => gridCenters[idx].x)));
-
-						// Extrapolate one row above/below and one column left/right at the
-						// median pitch when the cell would still lie inside the image. A
-						// whole edge row is lost when its cards were merged with or cut off
-						// by a neighbour; the contrast check below discards empty paper.
-						const pitch = (centers: number[]) => {
-							const diffs = centers.slice(1).map((c, i) => c - centers[i]).sort((a, b) => a - b);
-							return diffs[Math.floor(diffs.length / 2)];
-						};
-						if (!expectedCardCount) {
-							const rp = pitch(rowCenters);
-							if (rowCenters[0] - rp - medH / 2 >= -medH * 0.05) rowCenters.unshift(rowCenters[0] - rp);
-							if (rowCenters[rowCenters.length - 1] + rp + medH / 2 <= det.height + medH * 0.05) rowCenters.push(rowCenters[rowCenters.length - 1] + rp);
-							const cp = pitch(colCenters);
-							if (colCenters[0] - cp - medW / 2 >= -medW * 0.05) colCenters.unshift(colCenters[0] - cp);
-							if (colCenters[colCenters.length - 1] + cp + medW / 2 <= det.width + medW * 0.05) colCenters.push(colCenters[colCenters.length - 1] + cp);
-						}
-
-						// Occupied cells: nearest row/col centre for every detected card
-						const nearest = (centers: number[], v: number) => centers.reduce((best, c, i) => (Math.abs(c - v) < Math.abs(centers[best] - v) ? i : best), 0);
-						const occupied = new Set<string>();
-						for (let ci = 0; ci < cardContours.length; ci++) {
-							occupied.add(`${nearest(rowCenters, gridCenters[ci].y)},${nearest(colCenters, gridCenters[ci].x)}`);
-						}
-
-						for (let ri = 0; ri < rowCenters.length; ri++) {
-							for (let ci = 0; ci < colCenters.length; ci++) {
-								if (expectedCardCount && cardContours.length >= expectedCardCount) break;
-								if (occupied.has(`${ri},${ci}`)) continue;
-
-								// Use median bounding rect dimensions (not corner edge lengths)
-								const x1 = Math.max(0, Math.round(colCenters[ci] - medW / 2));
-								const y1 = Math.max(0, Math.round(rowCenters[ri] - medH / 2));
-								const x2 = Math.min(det.width - 1, x1 + medW);
-								const y2 = Math.min(det.height - 1, y1 + medH);
-								if (x2 - x1 < medW * 0.9 || y2 - y1 < medH * 0.9) continue; // cell mostly outside the image
-								// Blank paper has almost no contrast, a card has plenty: skip empty cells.
-								const cellRoi = gray.roi(new cv.Rect(x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1)));
-								const cellMean = new cv.Mat();
-								const cellStd = new cv.Mat();
-								cv.meanStdDev(cellRoi, cellMean, cellStd);
-								const cellContrast = cellStd.data64F[0];
-								cellRoi.delete(); cellMean.delete(); cellStd.delete();
-								if (cellContrast < 20) {
-									log(`Grid cell (${ri},${ci}) skipped: contrast ${cellContrast.toFixed(1)} looks empty`);
-									continue;
-								}
-								const corners = new cv.Mat(4, 1, cv.CV_32SC2);
-								corners.data32S[0] = x1; corners.data32S[1] = y1;
-								corners.data32S[2] = x2; corners.data32S[3] = y1;
-								corners.data32S[4] = x2; corners.data32S[5] = y2;
-								corners.data32S[6] = x1; corners.data32S[7] = y2;
-								cardContours.push({
-									corners,
-									area: (x2 - x1) * (y2 - y1),
-									rect: { x: x1, y: y1, width: x2 - x1, height: y2 - y1 },
-									synthetic: true
-								});
-							}
-						}
-					}
-					log(`Grid inference: added synthetic cards, now ${cardContours.length} total`);
 				}
 
 				blur5.delete(); sepKernel5.delete(); dilateKernel3.delete();

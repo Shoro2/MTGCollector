@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { detectCardsQuick, isQuickBusy, type QuickRect } from '$lib/scanner/detect';
+	import { createQuickDetector, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { SceneStabilizer, sceneSignature } from '$lib/scanner/stability';
+	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
 	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
 
 	type Props = {
@@ -26,7 +27,13 @@
 	let rafId = 0;
 	let lastDetectAt = 0;
 	let analyzeCanvas: HTMLCanvasElement | null = null;
+	/** Full-resolution copy of the frame currently being analysed. */
+	let scratchCanvas: HTMLCanvasElement | null = null;
+	/** Full-resolution copy of the best-scoring frame of the current scene. */
+	let bestCanvas: HTMLCanvasElement | null = null;
+	/** Frame handed to the pipeline (copied so the loop can keep reusing its own canvases). */
 	let captureCanvas: HTMLCanvasElement | null = null;
+	let detector: QuickDetector | null = null;
 
 	let status = $state<'idle' | 'loading' | 'requesting' | 'live' | 'error'>('idle');
 	let errorTitle = $state('');
@@ -38,6 +45,10 @@
 	let stableProgress = $state(0); // 0..1
 	/** Short reason why auto-capture is currently held back, shown in the badge. */
 	let holdReason = $state('');
+	/** Frame-quality hint ('blurry' / 'glare') for the badge. */
+	let qualityHint = $state<'blurry' | 'glare' | ''>('');
+	/** Where the per-frame detection runs, exposed for the harness. */
+	let detectorMode = $state<'worker' | 'main' | ''>('');
 
 	// Intrinsic stream size. The viewfinder's aspect ratio follows it, so a
 	// phone held upright gets a portrait preview instead of a small
@@ -56,6 +67,16 @@
 	// hold still for STABLE_MS (wall-clock, so slow phones don't wait longer
 	// than fast laptops) before auto-capture fires.
 	const stabilizer = new SceneStabilizer({ minStableMs: 700, minSamples: 3 });
+
+	// Best-frame selection: every analysed frame of the current scene is
+	// scored (sharpness over the cards, discounted by glare) and the best one
+	// is kept at full resolution, so the capture doesn't use whichever frame
+	// happened to be current when the stabiliser fired.
+	const bestFrames = new BestFrameSelector({ windowMs: 2500, improveFactor: 1.15 });
+	let bestSceneId = '';
+	let bestRects: QuickRect[] = [];
+	let bestQuality: FrameQuality | null = null;
+	let bestAt = 0;
 
 	let lastCapturedSceneId = '';
 	let needSceneChange = false;
@@ -86,6 +107,9 @@
 			log?.(`OpenCV load failed: ${err}`);
 			return;
 		}
+		// The per-frame detector (a Web Worker with its own OpenCV copy, or the
+		// main thread as fallback) starts while the camera permission is pending.
+		const detectorReady = createQuickDetector({ log: (m) => log?.(m) });
 
 		status = 'requesting';
 		try {
@@ -105,6 +129,7 @@
 				errorTitle = 'Camera unavailable';
 				errorMsg = (err2 as Error).message || 'Camera permission denied.';
 				log?.(`getUserMedia failed: ${errorMsg}`);
+				detectorReady.then((d) => d.dispose());
 				return;
 			}
 		}
@@ -128,10 +153,23 @@
 			if (settings?.deviceId) activeDeviceId = settings.deviceId;
 		} catch { /* enumeration unavailable */ }
 
+		const ready = await detectorReady;
+		if (status !== 'requesting') {
+			// stop() ran while we were waiting (component unmounted or camera switched).
+			ready.dispose();
+			return;
+		}
+		detector?.dispose();
+		detector = ready;
+		detectorMode = detector.mode;
+
 		status = 'live';
 		analyzeCanvas = document.createElement('canvas');
+		scratchCanvas = document.createElement('canvas');
+		bestCanvas = document.createElement('canvas');
 		captureCanvas = document.createElement('canvas');
 		stabilizer.reset();
+		resetBestFrame();
 		scheduleFrame();
 	}
 
@@ -143,13 +181,18 @@
 			stream = null;
 		}
 		if (videoEl) videoEl.srcObject = null;
+		detector?.dispose();
+		detector = null;
+		detectorMode = '';
 		stabilizer.reset();
+		resetBestFrame();
 		lastRects = [];
 		cutOff = [];
 		lastCapturedSceneId = '';
 		needSceneChange = false;
 		stableProgress = 0;
 		holdReason = '';
+		qualityHint = '';
 		lastRectCount = 0;
 		streamW = 0;
 		streamH = 0;
@@ -160,6 +203,14 @@
 		activeDeviceId = deviceId;
 		stop();
 		await start();
+	}
+
+	function resetBestFrame() {
+		bestFrames.reset();
+		bestSceneId = '';
+		bestRects = [];
+		bestQuality = null;
+		bestAt = 0;
 	}
 
 	/** Track the stream's intrinsic size (also fires on device rotation). */
@@ -179,7 +230,7 @@
 	}
 
 	async function onFrame(ts: number) {
-		if (status !== 'live' || !videoEl) {
+		if (status !== 'live' || !videoEl || !detector) {
 			scheduleFrame();
 			return;
 		}
@@ -193,7 +244,7 @@
 
 		// Skip if a previous detect call is still running, or the parent
 		// pipeline is busy with a full capture.
-		if (isQuickBusy() || busy || videoEl.readyState < 2) {
+		if (detector.busy || busy || videoEl.readyState < 2) {
 			drawOverlay();
 			scheduleFrame();
 			return;
@@ -201,15 +252,29 @@
 
 		const vw = videoEl.videoWidth;
 		const vh = videoEl.videoHeight;
-		if (vw === 0 || vh === 0 || !analyzeCanvas) {
+		if (vw === 0 || vh === 0 || !analyzeCanvas || !scratchCanvas) {
 			scheduleFrame();
 			return;
 		}
 		updateStreamSize();
 
-		// Draw the frame straight into the small analysis canvas. The detector
-		// used to receive the full-resolution frame and downscale it itself,
-		// which cost an extra full-size blit plus a canvas allocation per frame.
+		// Keep the full-resolution frame that is about to be analysed, so the
+		// best frame of the scene can be captured pixel-for-pixel later — the
+		// video has moved on by the time the asynchronous detection result
+		// arrives.
+		if (scratchCanvas.width !== vw || scratchCanvas.height !== vh) {
+			scratchCanvas.width = vw;
+			scratchCanvas.height = vh;
+		}
+		const sctx = scratchCanvas.getContext('2d');
+		if (!sctx) {
+			scheduleFrame();
+			return;
+		}
+		sctx.drawImage(videoEl, 0, 0, vw, vh);
+
+		// Downscale into the small analysis canvas; the detector reads its
+		// pixels back once (and transfers them to the worker).
 		const analyzeScale = Math.min(1, ANALYZE_EDGE / Math.max(vw, vh));
 		const aw = Math.max(1, Math.round(vw * analyzeScale));
 		const ah = Math.max(1, Math.round(vh * analyzeScale));
@@ -217,19 +282,23 @@
 			analyzeCanvas.width = aw;
 			analyzeCanvas.height = ah;
 		}
-		const ctx = analyzeCanvas.getContext('2d');
+		const ctx = analyzeCanvas.getContext('2d', { willReadFrequently: true });
 		if (!ctx) {
 			scheduleFrame();
 			return;
 		}
-		ctx.drawImage(videoEl, 0, 0, aw, ah);
+		ctx.drawImage(scratchCanvas, 0, 0, aw, ah);
 
+		let quality: FrameQuality = { sharpness: 0, glare: 0, score: 0 };
 		try {
-			lastRects = await detectCardsQuick(analyzeCanvas, { maxEdge: ANALYZE_EDGE, coordScale: vw / aw });
+			const result = await detector.detect(analyzeCanvas, { coordScale: vw / aw });
+			lastRects = result.rects;
+			quality = result.quality;
 		} catch (err) {
 			log?.(`live detect error: ${err}`);
 			lastRects = [];
 		}
+		if (status !== 'live') return; // stopped while the frame was analysed
 
 		const now = ts;
 		stabilizer.update(lastRects, now);
@@ -240,6 +309,28 @@
 
 		const stable = stabilizer.isStable(lastRects, now);
 		stableProgress = stabilizer.progress(lastRects, now);
+		const sceneId = lastRects.length ? sceneSignature(lastRects, sceneCellPx(vw, vh)) : '';
+
+		// Best-frame bookkeeping. The selector only compares frames of the same
+		// scene, so a sharp frame from before the cards were put down never
+		// stands in for the scene that is captured.
+		if (!sceneId) {
+			resetBestFrame();
+			qualityHint = '';
+		} else {
+			if (sceneId !== bestSceneId) {
+				bestFrames.reset();
+				bestSceneId = sceneId;
+			}
+			qualityHint = bestFrames.hint(quality, now);
+			if (bestFrames.offer(quality, now) && bestCanvas) {
+				// Promote the analysed frame: swap the canvases instead of copying pixels.
+				[bestCanvas, scratchCanvas] = [scratchCanvas, bestCanvas];
+				bestRects = lastRects;
+				bestQuality = quality;
+				bestAt = now;
+			}
+		}
 
 		const anyCutOff = cutOff.some(Boolean);
 		if (lastRects.length > MAX_AUTO_CAPTURE_RECTS) {
@@ -251,10 +342,9 @@
 		}
 
 		if (stable) {
-			const sceneId = sceneSignature(lastRects, sceneCellPx(vw, vh));
 			if (sceneId !== lastCapturedSceneId && !needSceneChange) {
 				if (autoCapture && !busy && !holdReason) {
-					triggerCapture(sceneId, lastRects);
+					triggerCapture(sceneId, lastRects, now);
 				}
 			} else if (sceneId !== lastCapturedSceneId) {
 				// Scene already changed enough that we can re-arm.
@@ -283,10 +373,15 @@
 		// steady; a forced capture mid-motion should run full detection.
 		const stable = stabilizer.isStable(lastRects, now);
 		const sceneId = sceneSignature(lastRects, sceneCellPx(vw, vh));
-		triggerCapture(sceneId || `manual-${Date.now()}`, stable ? lastRects : []);
+		triggerCapture(sceneId || `manual-${Date.now()}`, stable ? lastRects : [], now);
 	}
 
-	function triggerCapture(sceneId: string, rects: QuickRect[]) {
+	/**
+	 * Hand a frame to the pipeline: the best-scoring frame of the current
+	 * scene when one exists (same rectangles, chosen for sharpness and lack
+	 * of glare), otherwise the live frame as it is right now.
+	 */
+	function triggerCapture(sceneId: string, rects: QuickRect[], now: number) {
 		if (!videoEl || !captureCanvas) return;
 		const vw = videoEl.videoWidth;
 		const vh = videoEl.videoHeight;
@@ -295,11 +390,22 @@
 		captureCanvas.height = vh;
 		const ctx = captureCanvas.getContext('2d');
 		if (!ctx) return;
-		ctx.drawImage(videoEl, 0, 0, vw, vh);
+		const best = bestCanvas && bestQuality && bestSceneId === sceneId && rects.length > 0
+			&& bestCanvas.width === vw && bestCanvas.height === vh
+			? { canvas: bestCanvas, quality: bestQuality }
+			: null;
+		let handedRects = rects;
+		if (best) {
+			ctx.drawImage(best.canvas, 0, 0);
+			handedRects = bestRects;
+			log?.(`Best frame of the scene: sharpness ${best.quality.sharpness.toFixed(0)}, glare ${(best.quality.glare * 100).toFixed(1)}%, ${Math.round(now - bestAt)} ms old`);
+		} else {
+			ctx.drawImage(videoEl, 0, 0, vw, vh);
+		}
 		lastCapturedSceneId = sceneId;
 		needSceneChange = true;
-		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${rects.length} handed to the pipeline, scene=${sceneId})`);
-		onCapture(captureCanvas, [...rects]);
+		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
+		onCapture(captureCanvas, [...handedRects]);
 	}
 
 	function drawOverlay() {
@@ -356,7 +462,7 @@
 	});
 </script>
 
-<div class="space-y-3">
+<div class="space-y-3" data-detector={detectorMode}>
 	<!-- The box takes the stream's aspect ratio (portrait on an upright phone),
 	     capped in height so the controls stay reachable; any remaining
 	     letterbox is accounted for by the overlay's fitContain mapping. -->
@@ -389,10 +495,15 @@
 			</div>
 		{/if}
 		{#if status === 'live' && lastRectCount > 0}
-			<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-white text-xs">
+			<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-white text-xs" data-quality-hint={qualityHint}>
 				{lastRectCount} card{lastRectCount === 1 ? '' : 's'} · steady {Math.round(stableProgress * 100)}%
 				{#if holdReason}
 					<span class="text-red-300"> · {holdReason}</span>
+				{/if}
+				{#if qualityHint === 'blurry'}
+					<span class="text-yellow-300"> · blurry, hold still</span>
+				{:else if qualityHint === 'glare'}
+					<span class="text-yellow-300"> · glare on the card, tilt it a little</span>
 				{/if}
 			</div>
 		{/if}
@@ -428,6 +539,6 @@
 	</div>
 
 	<p class="text-xs text-[var(--color-text-muted)]">
-		Hold one or more cards upright in front of the camera, fully inside the frame. Yellow outlines mean detected, green means steady, red means the card is cut off at the edge (move back a little). With auto-capture enabled, identification fires as soon as the scene holds still. Move the cards out of frame and back in to capture again.
+		Hold one or more cards upright in front of the camera, fully inside the frame. Yellow outlines mean detected, green means steady, red means the card is cut off at the edge (move back a little). With auto-capture enabled, identification fires as soon as the scene holds still and uses the sharpest recent frame; the badge warns about blur and glare. Move the cards out of frame and back in to capture again.
 	</p>
 </div>

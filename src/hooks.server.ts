@@ -113,6 +113,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = sessionId ? validateSession(sessionId) : null;
 
 	const path = event.url.pathname;
+
+	// /collection/scan was the old upload-only scanner with its own pipeline;
+	// /scan runs the shared pipeline (live camera, evidence fusion) and adds to
+	// the collection when signed in. Old links and bookmarks land there.
+	if (path === '/collection/scan' || path.startsWith('/collection/scan/')) {
+		throw redirect(302, '/scan');
+	}
+
 	const isPublic = publicRoutes.some(r => path === r || path.startsWith(r.endsWith('/') ? r : r + '/'));
 	const isApi = path.startsWith('/cards/');
 

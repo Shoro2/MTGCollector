@@ -689,7 +689,7 @@
 				{fillingPrices ? 'Setting...' : 'Set missing purchase prices'}
 			</button>
 			<a
-				href="/collection/scan"
+				href="/scan"
 				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
 			>
 				Scan Card
