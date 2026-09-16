@@ -282,7 +282,108 @@ For Docker deployments, mount `/app/data` as a volume and include it in your hos
 
 ## Roadmap & Open Points
 
-Status of the scanner work (most recent first). Keep this list current when you change the scanner.
+Keep this section current when you change the scanner. It has three parts: the improvement programme (the plan), the history of what is done, and known limitations.
+
+### Scanner improvement programme (planned 2026-09-16)
+
+**Basis.** Eight real photos run through the harness: 87 of 104 names identified, 0 wrong, measured against the distractor DB — but *in-sample* (OCR scales and plausibility rules were tuned on these photos) and *name-level only*. An external code review of commit 9cfe928 (16 Sept 2026, not in the repository) reproduced four defects with the real modules and set an acceptance definition; its six regression tests fail 5/6 on the current code. Both sources are merged into the programme below.
+
+**Findings that drive the order** (all reproduced):
+
+- The harness scores a bag of names; the printing is not checked (Bot Bashing Time is the PTMT #85p promo in the photos, a TMT #85 hit counts as correct) and nothing fails the run.
+- `disambiguateReprints()` matches arbitrary digit sequences before the exact set+number: `C 0085p PTMT EN` with set `ptmt`/number `85p` returns `tmt#85`; a copyright year `2009` selects a printing numbered 2009.
+- Double-faced cards: production stores Scryfall's canonical name (`Beloved Beggar // Generous Soul`), the search and `bestNameMatch()` ignore `card_faces`, so a *perfect* read of the front face scores 0.50/0.44 and fails the 0.6 threshold. The harness seed uses simplified names and hides this. Name queries are also capped at the 10 newest printings (exact) / 20 rows, so the right printing of a much-reprinted card may not be among the candidates.
+- `found` does not mean "printing confirmed": unresolved reprint lists are `found`, and "Import all" writes `results[0]` (the newest printing) into the collection; the Tesseract path stores finish `nonfoil` although it has no evidence.
+- Local scanner findings still open: strip-score ties keep the first reading, extra strips only run for cards without any name candidate, the Vision retry only sees the footer crop, `cropWindowsFromProfiles()` fails on bright backgrounds, 7 of the 17 misses are ~12 px collector digits (15 cards per phone photo).
+
+**Target architecture** (evidence channels feed one decision):
+
+```
+photo / live frame -> EXIF-normalised -> detection (quads, orientation, quality)
+  -> warp per card at native resolution
+  -> evidence channels, in parallel:
+       name OCR (single-line + raw-line, face-aware search)   -> identity candidates + scores
+       footer OCR (4x, 2x, both orientations, Vision)         -> set / number / rarity / language / finish readings
+       visual match (art hash, later feature verification)   -> identity candidates + distances
+  -> fusion (src/lib/scanner/resolve.ts, pure): identity + printing + language + finish,
+     each confirmed | likely | unknown | conflict, with reasons
+  -> UI: confirmed (green) / likely ("Accept?" one tap) / unknown (search prefilled) / conflict (both shown)
+  -> bulk import and Moxfield export take confirmed + user-accepted cards only
+```
+
+**Measurement protocol** (acceptance definition, applies to every phase):
+
+- Metrics per photo and in total: detected instances, identity correct, printing correct, wrong identity, wrong printing, missing, extra detections, `likely`/`unknown`/`conflict` counts, wall time, peak memory. Wrong automatic acceptances are the primary number; identity and printing are reported separately.
+- Frozen conditions per baseline: commit, photo SHA-256 (`photo-inventory.json`), reference-data snapshot (seed export incl. distractors), OpenCV.js/Tesseract.js versions, constants. Before/after only under identical conditions.
+- The eight photos are the development set. A hold-out set (WP0.4) is measured after each phase and never tuned on. Repeated shots of the same spread stay on one side of the split.
+- "104/104" means every instance localised once and mapped to the verified printing automatically; a `likely` card confirmed by one tap is a different metric (assisted) and is reported as such.
+
+#### Phase 0 — Measurement foundation (~4 h)
+
+- **WP0.1 Printing-level harness metric.** `expectations-real-photos.json` lists expected printings (`name`, `set`, `number`, optional `finish`) per photo; `harness.mjs` reports the metrics above, compares against a committed `baseline.json` and exits non-zero on any regression. Acceptance: the PTMT #85p promo returned as TMT #85 counts as a wrong printing; a missing card is a miss even when it is correctly `unknown`.
+- **WP0.2 Reference-data fidelity.** Harness seed from canonical data: names with ` // `, `card_faces` rows, real layouts; `seed-cards.json` regenerated from a full DB export (`export-seed.mjs`) instead of hand-typed rows; distractors extended cross-set (the same number in every other seeded set, so a misread set code like `YOW` for `MID` shows up as WRONG); `photo-inventory.json` (hashes, sizes, instance counts) committed.
+- **WP0.3 Review regression tests.** Add the six tests as `src/lib/scanner/review-regressions.test.ts`, the five failing ones as `it.fails` until WP1.1/WP1.2 land, then flip them.
+- **WP0.4 Hold-out photos (owner).** 5–10 new photos not used for tuning: double-faced cards, showcase/borderless frames, foils under glare, a 2×3 phone spread, single-card live captures, a mixed-set pile, an empty table (negative case). Expected printings verified by the owner.
+
+#### Phase 1 — Matching correctness (~12 h)
+
+- **WP1.1 Reprint disambiguation order** (`pipeline.ts`): exact set + full collector number first (suffix preserved, only leading zeros normalised), then unique set, then unique number — and a number only when it comes from a structural parse (fraction, rarity-prefixed, pair; never an arbitrary digit sequence, never a copyright year). Acceptance: the four review tests pass; conflicting evidence yields `null`, not a guess.
+- **WP1.2 Face-aware names.** `bestNameMatch()` scores the canonical name and each face (split on ` // `) and returns the canonical name; `searchByName()` matches face names (join `card_faces`, `name LIKE 'q //%'`); scan results show the visible face; the seed uses canonical names (WP0.2). Acceptance: the two DFC review tests pass; DSC00855's DFCs resolve by name against the canonical seed.
+- **WP1.3 Identity-first candidate search.** Name queries return distinct identities (top 20 by relevance, all fallbacks), then *all printings* of an accepted identity (`oracle_id`, no date limit) for reprint resolution; inner-substring fallback for words with a glued or misread first letter (`CTenderize`, `Jrenderize` → Tenderize).
+- **WP1.4 Evidence fusion module** `src/lib/scanner/resolve.ts` (pure, unit-tested; replaces the inline logic in `applyBottomMatch`, the weak-number guard, the majority-set fallback and `numberOnlyHitPlausible`). Inputs: name candidates with scores from every pass, footer readings from every variant (set, number, number source, rarity, language, foil hint), the majority set, printings per candidate. Rules: readings that agree across variants outrank a single reading; strong number + set + rarity agreement → printing *confirmed*; name ≥ 0.6 with a unique printing → *confirmed*; name ≥ 0.4 ∩ number within one edit or a dropped digit ∩ read or majority set → unique → *likely*; strong name and strong number that disagree → *conflict*, never silently one of them; weak number without name evidence → *unknown* with the candidate attached. Acceptance: distractor DB stays at 0 wrong; Dawnhart Rejuvenator, The Last Ronin's Technique and Null Group become `likely` or `confirmed`.
+- **WP1.5 Result states in the UI and import.** Four states rendered distinctly; `likely` has a one-tap "Accept" with the printing prefilled; `unknown` opens the manual search prefilled with the best candidate; `conflict` shows both readings. "Select all", "Import all" and the Moxfield text take confirmed + user-accepted cards only; an unresolved reprint list is never imported via index 0.
+- **WP1.6 Finish and language as fields.** Scan result gets `finish: 'nonfoil' | 'foil' | 'etched' | 'unknown'` and `language`; the Tesseract path yields `unknown` (badge "Finish?"); `*F*` in the Moxfield text only for confirmed foil; accepting a row confirms its finish. The collection schema change is WP5.4.
+
+#### Phase 2 — OCR evidence quality (~8 h)
+
+- **WP2.1 Keep every footer reading** (4×, 2×, rotated, Vision) as evidence for WP1.4 instead of a single strip-score winner.
+- **WP2.2 Extra strips for name-known cards** whose printing is unresolved (today only cards without a name candidate get them).
+- **WP2.3 Name-band preprocessing variants** (Otsu binarisation, inversion for light-on-dark frames, CLAHE) as a third pass for unresolved cards, measured first with `ocr-scale-experiment.mjs --preprocess`. Target: the Skaab Wrangler class (legible crop, Tesseract fails at every scale).
+- **WP2.4 Text-line localisation fallback.** When the profile/fixed windows yield no text, find the name bar and the collector line by edge-density projection over the top 25 % / bottom 15 % of the warp; the profile windows stay the fast path.
+- **WP2.5 Vision retry input:** name crop + footer crop (optionally the base-size warp) per failed card; results feed the fusion like any other reading; still only with the user's own key and the on-page toggle.
+- **WP2.6 Second OCR engine evaluation** (PP-OCRv5 via ONNX Runtime Web): same crops, same experiment script; adopt only with a measured gain and no new wrong identifications; ~10–15 MB model, WASM/WebGPU. Evaluation only; adoption is a separate decision.
+
+#### Phase 3 — Visual reference matching (~3–5 days)
+
+- **WP3.1 Art hash index (server).** A job computes a 64-bit DCT perceptual hash of the art region of every printing's image (fixed art box for standard frames, whole card for showcase/borderless/full-art), stored in `cards.art_hash` and served as a compact table (~1 MB gzipped, cached). Images come from Scryfall with the existing rate limit (~100k images, hours, once; the `unique_artwork` list halves it); decoding needs `sharp` (new dependency). Disk and time budget are an owner decision.
+- **WP3.2 Client hash lookup.** Hash of the warped card's art region (plain canvas DCT, no OpenCV needed), Hamming search (≤ 10 bits) over the table → identity candidates with distances → fusion evidence. Same artwork gives the same hash: this decides *identity*, the footer decides the *printing*.
+- **WP3.3 Feature verification for the top-K candidates** (ORB/AKAZE + RANSAC homography): the vendored OpenCV.js 4.9 build exposes no features2d symbols, so this needs a custom build or a server-side verifier; optional, the hash alone should carry identity for most cards.
+- Acceptance: identity ≥ 100/104 on the eight photos with 0 wrong identities; the hold-out set reported separately; printing rules unchanged.
+
+#### Phase 4 — Live scanner and robustness (~2 days)
+
+- **WP4.1 Best-frame selection:** keep the last N frames while the scene is stable, score sharpness (Laplacian variance over the card ROI) and glare (saturated-pixel fraction), capture the best one; show "blur"/"glare" hints in the viewfinder.
+- **WP4.2 `detectCardsQuick` in a Web Worker** (OpenCV.js in the worker, ImageBitmap transfer) so the preview stays smooth on phones.
+- **WP4.3 Grid inference as a hypothesis:** oriented edge lengths instead of the axis-aligned ±15 % median filter, evidence required per cell (kept), no fill to an expected count, perspective-tolerant checks.
+- **WP4.4 Real-device verification (owner):** Android Chrome and iOS Safari checklist — portrait preview, auto-capture within ~1 s, red edge warning, a card filling the frame identified, 12 MP upload noticeably faster; tune `minStableMs`/`driftFrac` if needed.
+- **WP4.5 `/collection/scan`** consolidated onto the shared pipeline or retired in favour of `/scan` + add-to-collection.
+
+#### Phase 5 — Architecture and CI (~1.5 days)
+
+- **WP5.1 Orchestrator extraction:** phases, evidence collection and fusion move from the Svelte page into `src/lib/scanner/orchestrator.ts` (testable, the page only renders); OCR parameters passed per batch (`recognizeBatch(pool, urls, { psm, whitelist })`) so concurrent scans never share mutable worker state.
+- **WP5.2 Harness in CI:** vendored assets job, photos from Git LFS or a fixtures bucket, baseline comparison, hold-out reported separately.
+- **WP5.3 Frozen references:** reference-data snapshot, library versions and photo hashes recorded with every baseline (with WP0.2).
+- **WP5.4 Collection schema:** `collection_cards.finish` (nonfoil/foil/etched/unknown) and `language`, the `foil` boolean kept in sync; import, export and UI updated.
+
+**Order and dependencies.** 0 → 1 → 2 → 3 in sequence (each measured before the next); 4 and 5 can interleave with 2 and 3. WP1.4 precedes WP2.1; WP5.1 is best done before Phase 3 so the visual channel lands in a clean fusion.
+
+**Expected outcome on the eight photos** (in-sample; the hold-out set is the real check):
+
+| After | Identity | Printing | Wrong |
+|---|---|---|---|
+| today | 87/104 | not measured | 0 (names) |
+| Phase 0 | 87 | measured (promo case counts as wrong) | measured at printing level |
+| Phase 1 | 90–93 | identity minus genuine ambiguities | 0, DFC path works in production |
+| Phase 2 | 93–96 | as above | 0 |
+| Phase 3 | ≥ 100 | ~95 (footer still needed for reprints) | 0 |
+| Phases 4–5 | unchanged on stills; live quality, CI, schema | | |
+
+**Decisions needed from the owner:** hold-out photos (WP0.4); the visual index data volume (once ~100k Scryfall images, several GB and hours on the server); a second OCR engine only after WP2.6 numbers; and the two standing decisions below (price data quality, self-hosting the scanner libraries).
+
+**Standing decisions (unchanged):**
+
+- **Price data quality**: when `priceDivergence()` flags an EUR value, collection value and profit/loss still use it. Options: (a) keep as is and only flag; (b) fall back to USD×rate for flagged printings in `/collection`, `/prices` and the homepage KPI; (c) let the user pin a manual price per printing. (b) changes reported totals based on a heuristic, so it should be an explicit product decision.
+- **Self-hosting the scanner libraries in production** (`PUBLIC_SCANNER_ASSETS_URL=/vendor`, ~50 MB static files, no CDN calls, Apache-2.0 licences with attribution). The mechanism exists; this is a deployment/privacy decision.
 
 ### Done
 
@@ -307,17 +408,6 @@ Status of the scanner work (most recent first). Keep this list current when you 
 - Live captures skip the six-strategy detection and warp the tracked rectangles directly; Tesseract pool is pre-warmed in live mode.
 - Stricter live detector filters (min area 3%, aspect 0.55–0.88, relative-area 25%) plus edge-cut and too-many-rects guards — keyboard keys are no longer captured as cards.
 - Corner expansion is no longer clamped to the frame; name/collector crop windows widened so cards that fill the frame still OCR (fixed "0 of 1 identified" with the bottom crop showing flavour text).
-
-### Next steps (in suggested order)
-
-1. **Real-device verification** on Android Chrome and iOS Safari: portrait preview, auto-capture within ~1 s of holding still, red edge warning, a card filling the frame gets identified, upload scan of a 12 MP photo is noticeably faster. Tune `minStableMs` / `driftFrac` in `LiveScanner.svelte` if auto-capture fires too eagerly or too late.
-2. **Price data quality (decision needed)**: when `priceDivergence()` flags an EUR value, collection value and profit/loss still use it. Options: (a) keep as is and only flag; (b) fall back to USD×rate for flagged printings in `/collection`, `/prices` and the homepage KPI; (c) let the user pin a manual price per printing. (b) changes reported totals based on a heuristic, so it should be an explicit product decision.
-3. **Regression fixtures in CI**: keep the eight real photos outside the repo (Git LFS or a fixtures bucket) and wire `harness.mjs --expect` into a CI job that runs `vendor-assets.mjs` first; fail on regressions against the reference table in the harness README. Also add a few *live* captures.
-4. **Remaining OCR misses** (17 of 104, see harness README): showcase/borderless frames need their own crop layout (name in a banner, collector line unchanged); collector digits in 15-card phone spreads are ~12 px tall, at Tesseract's limit — fewer cards per photo or the Vision retry are the practical answers; names truncated by Tesseract ("Skaab") could be accepted at a lower threshold when set+number agrees; cells offset by a neighbour's shadow would benefit with a local edge search around grid-inferred cells. A "confirm this candidate?" state for number-only hits that the plausibility check rejects would turn some "not found" into one click.
-5. **Move `detectCardsQuick` into a Web Worker** (OpenCV.js loaded in the worker) so the ~50–100 ms per frame on phones stops blocking the main thread; the overlay would then stay smooth during detection.
-6. **Sharpness gate before auto-capture** (variance of the Laplacian over the card ROI) to reject motion-blurred frames that pass the stability check.
-7. **Consolidate `/collection/scan` onto the shared pipeline**: it still has its own simpler detection (single Canny pass at full resolution, no name OCR, 92–100% bottom crop, 4× upscale) and none of the scanner fixes above. Its bottom crop is tolerant of tight warps, so it was left untouched rather than half-ported.
-8. **Decide whether production should self-host the scanner libraries** (`PUBLIC_SCANNER_ASSETS_URL=/vendor`, ~50 MB static files, no CDN calls, Apache-2.0 licences with attribution). The mechanism exists; this is a deployment/privacy decision.
 
 ### Known limitations
 
