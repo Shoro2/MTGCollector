@@ -12,10 +12,20 @@ export type SearchResult = { results: CardRow[]; matchType: 'exact' | 'like' | '
 // module as part of discovering routes, which used to fail on a fresh DB.
 let _exact: Statement | undefined;
 let _like: Statement | undefined;
+let _core: Statement | undefined;
 let _fts: Statement | undefined;
 let _setNum: Statement | undefined;
+let _printings: Statement | undefined;
 
-const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? ORDER BY released_at DESC LIMIT 10`));
+// Exact name: the canonical name, a "Front // Back" record whose front face
+// is the query, or any record with a face of that name (card_faces) — the
+// scanner reads the face printed on the card, the database stores the
+// canonical string.
+const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM cards
+	WHERE name = ? OR name LIKE ? OR id IN (SELECT card_id FROM card_faces WHERE name = ?)
+	ORDER BY released_at DESC LIMIT 10`));
+const coreStmt = () => (_core ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`));
+const printingsStmt = () => (_printings ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? ORDER BY released_at DESC LIMIT 200`));
 const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? ORDER BY released_at DESC LIMIT 20`));
 // cards_fts is an external-content FTS5 index (content='cards',
 // content_rowid='rowid'): it stores only name/type_line/oracle_text and reuses
@@ -67,7 +77,7 @@ export function searchByName(query: string): SearchResult {
 	const cleaned = query.trim();
 	if (cleaned.length < 2) return { results: [], matchType: 'none' };
 
-	const exact = exactStmt().all(cleaned) as CardRow[];
+	const exact = exactStmt().all(cleaned, `${cleaned} //%`, cleaned) as CardRow[];
 	if (exact.length > 0) return { results: exact, matchType: 'exact' };
 
 	const words = cleaned
@@ -93,9 +103,30 @@ export function searchByName(query: string): SearchResult {
 			const stemmed = runFts(`name : (${stems.map(term).join(' OR ')})`);
 			if (stemmed.length > 0) return { results: stemmed, matchType: 'fuzzy' };
 		}
+
+		// Word core: OCR glues the mana symbol or the frame edge to the first
+		// letter ("CTenderize") or misreads it ("Jrenderize"), which defeats
+		// prefix stems. Drop the first one or two characters and the last one
+		// and look for the remaining core inside a name.
+		for (const w of strong.filter((x) => x.length >= 7)) {
+			const core = w.length >= 8 ? w.slice(2, -1) : w.slice(1, -1);
+			const rows = coreStmt().all(`%${core}%`) as CardRow[];
+			if (rows.length > 0) return { results: rows, matchType: 'fuzzy' };
+		}
 	}
 
 	return { results: [], matchType: 'none' };
+}
+
+/** Every printing of a canonical card name, newest first (no date cut-off). */
+export function printingsByName(name: string): CardRow[] {
+	return printingsStmt().all(name) as CardRow[];
+}
+
+/** Whether a set code exists in the database (used to weigh footer readings). */
+export function isKnownSet(setCode: string): boolean {
+	const lc = setCode.trim().toLowerCase();
+	return lc.length > 0 && setsCache.get().some((s) => s.set_code === lc);
 }
 
 /**

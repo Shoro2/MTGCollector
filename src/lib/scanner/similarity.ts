@@ -61,6 +61,11 @@ export function looksLikeOcrJunk(word: string): boolean {
 	return upper / word.length >= 0.6;
 }
 
+/** Number of 5+-letter words that don't look like OCR junk: does this OCR text say anything about the card? */
+export function realWordCount(text: string): number {
+	return text.split(/\s+/).filter((w) => w.replace(/[^a-z]/gi, '').length >= 5 && !looksLikeOcrJunk(w)).length;
+}
+
 /**
  * Similarity of `candidate` to a leading run of `ocr`'s words, for the case
  * where the name was read fine but junk from the mana cost is glued to the end
@@ -87,9 +92,31 @@ export function prefixSimilarity(ocr: string, candidate: string): number {
 const PREFIX_MATCH_WEIGHT = 0.97;
 
 /**
+ * Names a physical card can show for one database record: the canonical name
+ * and, for double-faced / split / adventure cards stored as "Front // Back",
+ * each face on its own. The scanner reads a face; the database stores the
+ * canonical string.
+ */
+export function nameAliases(name: string): string[] {
+	const faces = name.split(' // ').map((f) => f.trim()).filter(Boolean);
+	return faces.length > 1 ? [name, ...faces] : [name];
+}
+
+/** Best similarity of the OCR text to any alias of `name` (whole string or junk-tolerant prefix). */
+export function nameScore(query: string, name: string): number {
+	let best = 0;
+	for (const alias of nameAliases(name)) {
+		best = Math.max(best, similarity(query, alias), prefixSimilarity(query, alias) * PREFIX_MATCH_WEIGHT);
+	}
+	return best;
+}
+
+/**
  * Pick the best-matching card name from a result list by similarity to `query`
  * (the OCR text). Scores the whole string and, when trailing OCR junk drags
- * that down, the matching word-prefix — see prefixSimilarity.
+ * that down, the matching word-prefix — see prefixSimilarity — against every
+ * alias of the name (canonical string and each face), returning the canonical
+ * name so result rows can still be grouped by it.
  */
 export function bestNameMatch(
 	results: Array<Record<string, unknown>>,
@@ -102,7 +129,7 @@ export function bestNameMatch(
 		const name = r.name as string;
 		if (seen.has(name)) continue;
 		seen.add(name);
-		const score = Math.max(similarity(query, name), prefixSimilarity(query, name) * PREFIX_MATCH_WEIGHT);
+		const score = nameScore(query, name);
 		if (score > bestScore) {
 			bestScore = score;
 			bestName = name;

@@ -8,9 +8,8 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
-	import type { CollectorInfo } from '$lib/scanner/parse';
-	import { bestNameMatch, looksLikeOcrJunk, similarity } from '$lib/scanner/similarity';
-	import { disambiguateReprints } from '$lib/scanner/pipeline';
+	import { bestNameMatch, realWordCount } from '$lib/scanner/similarity';
+	import { resolveCard, NAME_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState } from '$lib/scanner/resolve';
 	import { loadImage, orderCorners } from '$lib/scanner/geometry';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
@@ -39,9 +38,21 @@
 		collectorNumber: string;
 		results: Array<Record<string, unknown>>;
 		matchType: string;
-		status: 'scanning' | 'found' | 'not_found';
+		/** found = identity confirmed; likely / conflict wait for one tap; not_found may carry a suggestion. */
+		status: 'scanning' | 'found' | 'likely' | 'conflict' | 'not_found';
+		/** confirmed = exactly one printing is established; unknown = the user picks from `results`. */
+		printingState: DecisionState;
+		finish: Finish;
+		language: string;
+		/** Kept in sync with `finish` for the collection API and the Moxfield text. */
 		foil: boolean;
 		selectedResultIdx: number;
+		/** Evidence collected by the OCR phases; the fusion (resolveCard) turns it into the fields above. */
+		nameCandidates: NameCandidate[];
+		readings: FooterReading[];
+		/** Candidate attached to a not_found card (weak number, majority set) for the manual search. */
+		suggestion: PrintingRow | null;
+		reasons: string[];
 		/** Crops from the 180°-rotated warp when the upside-down retry did not resolve the name (Phase 2b). */
 		altNameUrl?: string;
 		altBottomUrl?: string;
@@ -51,8 +62,6 @@
 		bottomUrl2?: string;
 		altNameUrl2?: string;
 		altBottomUrl2?: string;
-		/** Best (unaccepted, score < 0.6) name-search candidate: positive evidence for what the name OCR says. */
-		nameBest?: { name: string; score: number };
 	}>>([]);
 	let debugCanvasUrl = $state('');
 	let debugLog = $state<string[]>([]);
@@ -96,14 +105,37 @@
 	const NAME_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.";
 	const BOTTOM_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&';
 
-	/** Number of >=5-letter words that don't look like OCR junk: does this name OCR say anything about the card? */
-	function realWordCount(text: string): number {
-		return text.split(/\s+/).filter((w) => w.replace(/[^a-z]/gi, '').length >= 5 && !looksLikeOcrJunk(w)).length;
+	/** Record a name-search candidate of a card (every pass, accepted or not) as evidence for the fusion. */
+	function noteNameCandidate(card: { nameCandidates: NameCandidate[] }, best: { name: string; score: number }, pass: string) {
+		if (!best.name || best.score <= 0) return;
+		const existing = card.nameCandidates.find((c) => c.name === best.name);
+		if (existing) {
+			if (best.score > existing.score) {
+				existing.score = best.score;
+				existing.pass = pass;
+			}
+		} else {
+			card.nameCandidates.push({ name: best.name, score: best.score, pass });
+		}
 	}
 
-	/** Remember the strongest name-search candidate of a card that no pass accepted. */
-	function noteNameCandidate(card: { nameBest?: { name: string; score: number } }, best: { name: string; score: number }) {
-		if (best.name && best.score > (card.nameBest?.score ?? 0)) card.nameBest = { name: best.name, score: best.score };
+	/** Set most confirmed cards of a scan belong to (at least 3 cards and 60%), else null. */
+	function majoritySetOf(cards: Array<{ status: string; printingState: string; results: Array<Record<string, unknown>> }>): string | null {
+		const counts = new Map<string, number>();
+		let total = 0;
+		for (const c of cards) {
+			if (c.status !== 'found' || c.printingState !== 'confirmed' || c.results.length !== 1) continue;
+			const sc = String(c.results[0].set_code).toLowerCase();
+			counts.set(sc, (counts.get(sc) ?? 0) + 1);
+			total++;
+		}
+		const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+		return top && top[1] >= 3 && top[1] >= total * 0.6 ? top[0] : null;
+	}
+
+	/** A card the bulk actions may take: identity confirmed and exactly one printing established. */
+	function isImportable(card: { status: string; printingState: string; results: Array<Record<string, unknown>> }): boolean {
+		return card.status === 'found' && card.results.length > 0 && (card.results.length === 1 || card.printingState === 'confirmed');
 	}
 
 	/** Base-size PNG data URL of a warped card canvas for the result list and debug views. */
@@ -985,8 +1017,15 @@
 					results: [],
 					matchType: '',
 					status: 'scanning',
+					printingState: 'unknown',
+					finish: 'unknown',
+					language: '',
 					foil: false,
-					selectedResultIdx: 0
+					selectedResultIdx: 0,
+					nameCandidates: [],
+					readings: [],
+					suggestion: null,
+					reasons: []
 				});
 
 				// Cleanup card-specific mats
@@ -1071,6 +1110,7 @@
 				if (searchData && searchData.results.length > 0) {
 					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
 					const best = bestNameMatch(searchData.results, cleanName);
+					noteNameCandidate(card, best, 'primary');
 					log(`Card ${cardIdx + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
 					if (best.score >= 0.6) {
 						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
@@ -1078,7 +1118,6 @@
 						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
 						continue;
 					}
-					noteNameCandidate(card, best);
 					log(`Card ${cardIdx + 1}: score below threshold, rejected`);
 				}
 
@@ -1117,7 +1156,7 @@
 					}
 					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
 					const best = bestNameMatch(wData.results, cleanName);
-					noteNameCandidate(card, best);
+					noteNameCandidate(card, best, 'word');
 					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
 					if (best.score >= 0.6) {
 						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
@@ -1126,18 +1165,15 @@
 					}
 				}
 			}
-			// Best rotated name OCR text / name candidate per card, adopted when
-			// Phase 3 switches a card to its rotated warp because the collector
-			// line reads better there.
+			// Best rotated name OCR text per card, adopted when Phase 3 switches a
+			// card to its rotated warp because the collector line reads better there.
 			const rotatedNameText = new Map<number, string>();
-			const rotatedNameBest = new Map<number, { name: string; score: number }>();
 
 			// Batch-search OCR name texts and accept the best match per card
 			// (score >= 0.6). Shared by the raw-line pass and the upside-down
 			// retry; returns the indices (relative to firstIdx) that resolved.
-			// Unaccepted candidates are remembered as name evidence for the
-			// plausibility check of set+number hits.
-			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string, rotated = false): Promise<number[]> {
+			// Every candidate is recorded as name evidence for the fusion.
+			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string): Promise<number[]> {
 				const accepted: number[] = [];
 				if (items.length === 0 || superseded()) return accepted;
 				let batch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
@@ -1159,12 +1195,7 @@
 					if (!searchData || searchData.results.length === 0) return;
 					const best = bestNameMatch(searchData.results, cleanName);
 					log(`Card ${firstIdx + i + 1} ${tag}: best match "${best.name}" score=${best.score.toFixed(3)}`);
-					if (rotated) {
-						const prev = rotatedNameBest.get(i);
-						if (!prev || best.score > prev.score) rotatedNameBest.set(i, { name: best.name, score: best.score });
-					} else {
-						noteNameCandidate(card, best);
-					}
+					noteNameCandidate(card, best, tag);
 					if (best.score < 0.6) return;
 					card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
 					card.matchType = searchData.matchType;
@@ -1294,208 +1325,32 @@
 							if (cleanName.length >= 2) items.push({ i, cleanName });
 							if (!rotatedNameText.has(i) || realWordCount(cleanName) > realWordCount(rotatedNameText.get(i) ?? '')) rotatedNameText.set(i, cleanName);
 						});
-						for (const i of await acceptNameMatches(items, pass.tag, true)) adopt(i);
+						for (const i of await acceptNameMatches(items, pass.tag)) adopt(i);
 					}
 				}
 			}
 			detectedCards = [...detectedCards];
 
-			// Phase 3: OCR bottom areas for disambiguation + foil detection
+			// Phase 3: OCR the collector strips (every variant), then fuse all
+			// evidence per card — name candidates from every pass plus one reading
+			// per strip variant — into identity / printing / finish decisions
+			// (src/lib/scanner/resolve.ts). The OCR phases only collect evidence.
 			await setPoolParameters(pool, {
 				tessedit_char_whitelist: BOTTOM_WHITELIST,
 				tessedit_pageseg_mode: '6'
 			});
-
 			const langs = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
-
-			// Populated via a pre-pass before the applyBottomMatch loop so the
-			// set+number fallback doesn't round-trip the server once per card.
-			// Key: "setCode|collectorNumber". Lookups populated here short-circuit
-			// the per-card fetch inside applyBottomMatch.
-			const setNumCache = new Map<string, { results: Record<string, unknown>[]; matchType: string }>();
-			const setNumKey = (s: string, n: string) => `${s.toLowerCase()}|${n}`;
-
-			// Scryfall rarity -> letter printed on the card. Basic lands print "L"
-			// but carry rarity "common" in the data.
-			const RARITY_LETTER: Record<string, string> = { common: 'c', uncommon: 'u', rare: 'r', mythic: 'm', special: 's', bonus: 's' };
-			const rarityAgrees = (letter: string, rarity: unknown): boolean => {
-				const expected = RARITY_LETTER[String(rarity ?? '').toLowerCase()];
-				if (!letter || !expected || letter === expected) return true;
-				return letter === 'l' && expected === 'c';
-			};
-
-			// A set+number hit for a card whose name search failed rests on OCR
-			// digits alone, and one misread digit silently yields a wrong card
-			// ("23/277" read as "24/277"). Rules, measured against a test DB with a
-			// distractor printing at every plausible misread:
-			// - a weak number (bare digits, dropped digit) needs name evidence: no
-			//   readable word -> reject, readable words that contradict -> reject;
-			// - a full-length number is rejected only when the name OCR positively
-			//   points at a different card (best name candidate >= 0.45 and the hit
-			//   itself scores < 0.3), so a stray fake word can't veto a good read;
-			// - the rarity letter read next to the number must not contradict the
-			//   hit's rarity.
-			function numberOnlyHitPlausible(card: typeof detectedCards[number], parsed: CollectorInfo, hit: Record<string, unknown>, cardIdx: number): boolean {
-				const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '');
-				const label = `${card.setCode}#${card.collectorNumber} -> "${hit.name}"`;
-				if (parsed.numberSource === 'weak') {
-					if (realWordCount(cleanName) === 0) {
-						log(`Card ${cardIdx}: ${label} rests on a weak number without a readable name, rejected`);
-						return false;
-					}
-					const check = bestNameMatch([hit], cleanName);
-					if (check.score < 0.3) {
-						log(`Card ${cardIdx}: ${label} (weak number) contradicts name OCR "${cleanName}" (score ${check.score.toFixed(2)}), rejected`);
-						return false;
-					}
-				} else if (card.nameBest && card.nameBest.score >= 0.45 && card.nameBest.name !== hit.name) {
-					const check = bestNameMatch([hit], cleanName);
-					if (check.score < 0.3) {
-						log(`Card ${cardIdx}: ${label} rejected: name OCR "${cleanName}" points at "${card.nameBest.name}" (${card.nameBest.score.toFixed(2)}), hit scores ${check.score.toFixed(2)}`);
-						return false;
-					}
-				}
-				if (!rarityAgrees(parsed.rarity, hit.rarity)) {
-					log(`Card ${cardIdx}: ${label} is ${hit.rarity} but the collector line reads "${parsed.rarity.toUpperCase()}", rejected`);
-					return false;
-				}
-				return true;
-			}
-
-			async function prefetchSetNumberLookups(cards: typeof detectedCards) {
-				const seen = new Set<string>();
-				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
-				for (const card of cards) {
-					if (card.results.length > 0) continue; // also prefetch cards whose name OCR was garbage (no match)
-					const parsed = parseCollectorInfo(card.ocrText, langs);
-					if (!parsed.setCode || !parsed.collectorNumber) continue;
-					const key = setNumKey(parsed.setCode, parsed.collectorNumber);
-					if (seen.has(key) || setNumCache.has(key)) continue;
-					seen.add(key);
-					lookups.push({ setCode: parsed.setCode, collectorNumber: parsed.collectorNumber });
-				}
-				if (lookups.length === 0) return;
-				log(`Phase 3 pre-pass: batching ${lookups.length} set+number lookup(s)`);
-				try {
-					const res = await fetch('/scan', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ lookups })
-					});
-					const data = await res.json();
-					const batch = Array.isArray(data?.batch) ? data.batch : [];
-					for (const entry of batch) {
-						setNumCache.set(setNumKey(entry.setCode, entry.collectorNumber), {
-							results: entry.results ?? [],
-							matchType: entry.matchType ?? 'set_number'
-						});
-					}
-				} catch (err) {
-					log(`Phase 3 pre-pass batch error: ${err}`);
-				}
-			}
-
-			// Re-run set/number parsing + reprint disambiguation for a single card
-			// using whatever is currently in card.ocrText. Used both after the
-			// Tesseract pass (trustFoilChar=false) and after Google Vision retry
-			// (trustFoilChar=true). Tesseract routinely misreads the bullet
-			// separator • as * at small sizes, so we can't trust its foil hint
-			// for non-foil cards — card.foil is only set from OCR text when the
-			// upstream engine distinguishes the two symbols reliably.
-			async function applyBottomMatch(
-				card: typeof detectedCards[number],
-				cardIdx: number,
-				trustFoilChar: boolean
-			) {
-				const parsed = parseCollectorInfo(card.ocrText, langs, (msg) => log(`Card ${cardIdx}: ${msg}`));
-				card.setCode = parsed.setCode;
-				card.collectorNumber = parsed.collectorNumber;
-
-				if (trustFoilChar) {
-					card.foil = parsed.foilFromText;
-					log(`Card ${cardIdx}: parsed set="${parsed.setCode}" num="${parsed.collectorNumber}" foil=${parsed.foilFromText} (trusted)`);
-				} else {
-					// Tesseract — never auto-flip foil; user toggles manually if needed.
-					card.foil = false;
-					log(`Card ${cardIdx}: parsed set="${parsed.setCode}" num="${parsed.collectorNumber}" (foil hint "${parsed.foilFromText}" ignored — Tesseract * / . misread)`);
-				}
-
-				if (card.results.length === 1) {
-					// Unique card from name search — done
-					log(`Card ${cardIdx}: unique name match -> found`);
-					card.status = 'found';
-				} else if (card.results.length > 1) {
-					// Reprint disambiguation lives in the shared pipeline so both
-					// scanners resolve the same way (Phase 2). It returns the matched
-					// row plus per-step debug lines we prefix and log here.
-					const { match, log: reprintLog } = disambiguateReprints(
-						card.results,
-						card.ocrText,
-						card.setCode,
-						card.collectorNumber
-					);
-					for (const m of reprintLog) log(`Card ${cardIdx}: ${m}`);
-
-					if (match) {
-						card.results = [match];
-						card.matchType = 'reprint_match';
-						log(`Card ${cardIdx}: reprint resolved to ${match.set_code}#${match.collector_number}`);
-					} else {
-						log(`Card ${cardIdx}: could not disambiguate reprints, showing all ${card.results.length}`);
-					}
-					card.status = 'found';
-				} else if (card.setCode && card.collectorNumber) {
-					// Name search found no usable match (empty OCR or non-matching garbage)
-					// — fall back to a direct set+number lookup. This used to also require
-					// !card.nameText, which dropped cards with garbage name OCR but a
-					// readable collector line straight to not_found.
-					// Common case: the batch pre-pass populated setNumCache, so this
-					// short-circuits without a network hit. Vision-retry path falls
-					// through to a per-card fetch since it's rare and post-batch.
-					log(`Card ${cardIdx}: name unresolved, trying set+number fallback (${card.setCode}#${card.collectorNumber}, number source=${parsed.numberSource})`);
-					const cached = setNumCache.get(setNumKey(card.setCode, card.collectorNumber));
-					if (cached) {
-						card.results = cached.results;
-						card.matchType = cached.matchType;
-						card.status = card.results.length > 0 ? 'found' : 'not_found';
-						log(`Card ${cardIdx}: set+number fallback (cached) -> ${card.results.length} results, status=${card.status}`);
-					} else {
-						try {
-							const res = await fetch('/scan', {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ setCode: card.setCode, collectorNumber: card.collectorNumber })
-							});
-							const searchData = await res.json();
-							card.results = searchData.results;
-							card.matchType = searchData.matchType || 'set_number';
-							card.status = card.results.length > 0 ? 'found' : 'not_found';
-							log(`Card ${cardIdx}: set+number fallback -> ${card.results.length} results, status=${card.status}`);
-						} catch { card.status = 'not_found'; }
-					}
-					if (card.status === 'found') {
-						card.results = card.results.filter((hit) => numberOnlyHitPlausible(card, parsed, hit, cardIdx));
-						if (card.results.length === 0) card.status = 'not_found';
-					}
-				} else {
-					log(`Card ${cardIdx}: no match possible -> not_found`);
-					card.status = 'not_found';
-				}
-			}
-
-			// Phase 3a: Batch Tesseract bottom OCR across the worker pool, then
-			// run the (fast, in-memory) matching pass sequentially afterwards.
-			log(`Phase 3: Bottom OCR + disambiguation (Tesseract PSM 6, ${pool.length} workers)`);
+			log(`Phase 3: Bottom OCR (Tesseract PSM 6, ${pool.length} workers)`);
 			const newCards = detectedCards.slice(firstIdx);
 			const bottomUrls = newCards.map((c) => c.bottomUrl);
-			// Unresolved cards get their smaller strip and, when the upside-down
-			// retry produced one, both rotated strips OCR'd as well; the variant
-			// that parses best as a collector line wins below.
+			// Every card whose printing is not settled by a unique name hit gets
+			// its smaller strip and, when the upside-down retry produced one, both
+			// rotated strips OCR'd as well; all of them become readings.
 			type StripVariant = { i: number; url: string; rotated: boolean; label: string };
 			const extra: StripVariant[] = [];
 			for (let i = 0; i < newCount; i++) {
 				const c = newCards[i];
-				if (c.results.length > 0) continue;
+				if (c.results.length === 1) continue;
 				if (c.bottomUrl2) extra.push({ i, url: c.bottomUrl2, rotated: false, label: 'small' });
 				if (c.altBottomUrl) extra.push({ i, url: c.altBottomUrl, rotated: true, label: 'rotated' });
 				if (c.altBottomUrl2) extra.push({ i, url: c.altBottomUrl2, rotated: true, label: 'rotated small' });
@@ -1504,21 +1359,24 @@
 				scanProgress = `OCR bottom ${done}/${total}...`;
 			});
 			const cleanOcr = (t: string) => t.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+			const readingOf = (text: string, variant: string, trustFoil = false): FooterReading => ({ ...parseCollectorInfo(text, langs), text, variant, trustFoil });
 			for (let i = 0; i < newCount; i++) {
-				const absIdx = firstIdx + i;
-				detectedCards[absIdx].ocrText = cleanOcr(bottomTexts[i]);
-				log(`Card ${absIdx + 1} bottom OCR: "${detectedCards[absIdx].ocrText}"`);
+				const card = detectedCards[firstIdx + i];
+				card.ocrText = cleanOcr(bottomTexts[i]);
+				log(`Card ${firstIdx + i + 1} bottom OCR: "${card.ocrText}"`);
+				card.readings = [readingOf(card.ocrText, 'primary')];
 			}
-			// Pick the strip that parses best as a collector line: a set code and a
-			// reliable number beat a bare number. A card that came out of the warp
-			// upside down and whose rotated name OCR was too poor to match still
-			// gets its set + number this way.
+			// Which orientation to *show*: the strip that parses best as a
+			// collector line. A card that came out of the warp upside down and
+			// whose rotated name OCR was too poor to match is switched to its
+			// rotated warp here; every variant stays in `readings` regardless.
 			const stripScore = (p: { setCode: string; collectorNumber: string; numberSource: string }) =>
 				(p.setCode ? 2 : 0) + (p.collectorNumber ? (p.numberSource === 'weak' ? 1 : 2) : 0);
 			const variantsByCard = new Map<number, Array<StripVariant & { text: string }>>();
 			extra.forEach((e, k) => {
 				const text = cleanOcr(bottomTexts[newCount + k]);
 				log(`Card ${firstIdx + e.i + 1} bottom OCR (${e.label}): "${text}"`);
+				detectedCards[firstIdx + e.i].readings.push(readingOf(text, e.label));
 				let list = variantsByCard.get(e.i);
 				if (!list) {
 					list = [];
@@ -1538,7 +1396,7 @@
 					}
 				}
 				if (best) {
-					log(`Card ${firstIdx + i + 1}: ${best.label} strip reads better, using it`);
+					log(`Card ${firstIdx + i + 1}: ${best.label} strip reads better, showing it`);
 					card.ocrText = best.text;
 					if (best.rotated && card.altBottomUrl && card.altNameUrl && card.altCroppedUrl) {
 						log(`Card ${firstIdx + i + 1}: switching to the rotated warp`);
@@ -1548,8 +1406,7 @@
 						card.nameUrl2 = card.altNameUrl2;
 						card.croppedUrl = card.altCroppedUrl;
 						const rt = rotatedNameText.get(i);
-						if (rt !== undefined) card.nameText = rt;
-						card.nameBest = rotatedNameBest.get(i);
+						if (rt !== undefined && realWordCount(rt) >= realWordCount(card.nameText)) card.nameText = rt;
 					}
 				}
 				card.altNameUrl = undefined;
@@ -1558,61 +1415,115 @@
 				card.altBottomUrl2 = undefined;
 				card.altCroppedUrl = undefined;
 			}
-			if (superseded()) return;
-			await prefetchSetNumberLookups(detectedCards.slice(firstIdx));
 			for (let i = 0; i < newCount; i++) {
-				const absIdx = firstIdx + i;
-				scanProgress = `Matching card ${i + 1}/${newCount}...`;
-				await applyBottomMatch(detectedCards[absIdx], absIdx + 1, false);
+				const card = detectedCards[firstIdx + i];
+				const shown = parseCollectorInfo(card.ocrText, langs);
+				card.setCode = shown.setCode;
+				card.collectorNumber = shown.collectorNumber;
 			}
+			if (superseded()) return;
 
-			// Phase 3c: majority-set fallback. The cards in one photo usually come
-			// from one set (a booster, a spread sorted by set). For cards whose
-			// collector number was read reliably but whose set code was not, try
-			// the set most identified cards belong to, and accept only when the
-			// hit's name agrees with the (partial) name OCR.
-			{
-				const identified = detectedCards.slice(firstIdx).filter((c) => c.status === 'found' && c.results.length === 1);
-				const counts = new Map<string, number>();
-				for (const c of identified) {
-					const sc = String(c.results[0].set_code);
-					counts.set(sc, (counts.get(sc) ?? 0) + 1);
-				}
-				const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-				if (top && top[1] >= 3 && top[1] >= identified.length * 0.6) {
-					const majoritySet = top[0];
-					for (let i = 0; i < newCount; i++) {
-						const card = detectedCards[firstIdx + i];
-						if (card.status !== 'not_found' || card.setCode || !card.collectorNumber) continue;
-						const parsed = parseCollectorInfo(card.ocrText, langs);
-						if (parsed.numberSource !== 'rarity' && parsed.numberSource !== 'fraction' && parsed.numberSource !== 'pair') continue;
-						if (superseded()) return;
-						try {
-							const res = await fetch('/scan', {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ setCode: majoritySet, collectorNumber: card.collectorNumber })
-							});
-							const data = await res.json();
-							const rows: Array<Record<string, unknown>> = Array.isArray(data?.results) ? data.results : [];
-							if (rows.length !== 1) continue;
-							if (!rarityAgrees(parsed.rarity, rows[0].rarity)) {
-								log(`Card ${firstIdx + i + 1}: majority-set fallback ${majoritySet}#${card.collectorNumber} -> "${rows[0].name}" rejected (${rows[0].rarity} vs collector line "${parsed.rarity.toUpperCase()}")`);
-								continue;
-							}
-							const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
-							const sim = cleanName.length >= 3 ? similarity(cleanName, rows[0].name as string) : 0;
-							if (sim >= 0.4) {
-								card.results = rows;
-								card.matchType = 'majority_set';
-								card.setCode = majoritySet;
-								card.status = 'found';
-								log(`Card ${firstIdx + i + 1}: majority-set fallback ${majoritySet}#${card.collectorNumber} -> "${rows[0].name}" (name similarity ${sim.toFixed(2)})`);
-							} else {
-								log(`Card ${firstIdx + i + 1}: majority-set fallback ${majoritySet}#${card.collectorNumber} -> "${rows[0].name}" rejected (name similarity ${sim.toFixed(2)})`);
-							}
-						} catch { /* keep not_found */ }
+			// Evidence fusion. The resolver is pure, so everything it may ask for is
+			// prefetched in two batched round trips: every printing of every name
+			// candidate worth joining, and every set+number a reading produced (plus
+			// the majority set's number in the second pass).
+			const printingsCache = new Map<string, PrintingRow[]>();
+			const lookupCache = new Map<string, PrintingRow[]>();
+			const knownSets = new Map<string, boolean>();
+			const lookupKey = (setCode: string, n: string) => `${setCode.toLowerCase()}|${n}`;
+			async function prefetch(cards: typeof detectedCards, majoritySet: string | null) {
+				const names = new Set<string>();
+				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
+				const want = (setCode: string, n: string) => {
+					if (!setCode || lookupCache.has(lookupKey(setCode, n))) return;
+					lookupCache.set(lookupKey(setCode, n), []);
+					lookups.push({ setCode, collectorNumber: n });
+				};
+				for (const c of cards) {
+					for (const cand of c.nameCandidates) if (cand.score >= NAME_LIKELY && !printingsCache.has(cand.name)) names.add(cand.name);
+					for (const r of c.readings) {
+						if (r.setCode) want(r.setCode, r.collectorNumber);
+						if (majoritySet && r.collectorNumber) want(majoritySet, r.collectorNumber);
 					}
+				}
+				try {
+					if (names.size > 0) {
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printings: [...names] }) });
+						const data = await res.json();
+						for (const entry of Array.isArray(data?.batch) ? data.batch : []) printingsCache.set(entry.name, entry.results ?? []);
+					}
+					for (let start = 0; start < lookups.length; start += 100) {
+						const chunk = lookups.slice(start, start + 100);
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lookups: chunk }) });
+						const data = await res.json();
+						for (const entry of Array.isArray(data?.batch) ? data.batch : []) {
+							lookupCache.set(lookupKey(entry.setCode, entry.collectorNumber), entry.results ?? []);
+							knownSets.set(String(entry.setCode).toLowerCase(), !!entry.setKnown);
+						}
+					}
+					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s)`);
+				} catch (err) {
+					log(`Phase 3 prefetch error: ${err}`);
+				}
+			}
+			function resolveOne(card: typeof detectedCards[number], cardIdx: number, majoritySet: string | null) {
+				const d = resolveCard({
+					nameCandidates: card.nameCandidates,
+					nameText: card.nameText,
+					footer: card.readings,
+					majoritySet,
+					printingsByName: (n) => printingsCache.get(n) ?? [],
+					lookup: (setCode, n) => lookupCache.get(lookupKey(setCode, n)) ?? [],
+					isKnownSet: (setCode) => (majoritySet !== null && setCode.toLowerCase() === majoritySet) || (knownSets.get(setCode.toLowerCase()) ?? false)
+				});
+				for (const r of d.reasons) log(`Card ${cardIdx}: ${r}`);
+				card.reasons = d.reasons;
+				card.finish = d.finish;
+				card.foil = d.finish === 'foil';
+				card.language = d.language;
+				card.suggestion = null;
+				const row = d.printing.row;
+				const cands = d.printing.candidates;
+				switch (d.identity.state) {
+					case 'confirmed':
+						card.status = 'found';
+						card.results = row ? [row] : cands;
+						card.printingState = d.printing.state === 'confirmed' ? 'confirmed' : 'unknown';
+						card.matchType = 'resolved';
+						break;
+					case 'likely':
+						card.status = 'likely';
+						card.results = row ? [row, ...cands.filter((c) => c !== row)] : cands;
+						card.printingState = 'likely';
+						break;
+					case 'conflict':
+						card.status = 'conflict';
+						card.results = cands;
+						card.printingState = 'conflict';
+						break;
+					default:
+						card.status = 'not_found';
+						card.results = [];
+						card.printingState = 'unknown';
+						card.suggestion = cands[0] ?? null;
+				}
+				card.selectedResultIdx = 0;
+				log(`Card ${cardIdx}: identity ${d.identity.state}${d.identity.name ? ` "${d.identity.name}"` : ''}, printing ${d.printing.state}${row ? ` ${row.set_code}#${row.collector_number}` : ''}, finish ${d.finish}`);
+			}
+			const unsettled = () => detectedCards.slice(firstIdx).filter((c) => !(c.status === 'found' && c.printingState === 'confirmed'));
+			scanProgress = 'Matching...';
+			await prefetch(detectedCards.slice(firstIdx), null);
+			if (superseded()) return;
+			for (let i = 0; i < newCount; i++) resolveOne(detectedCards[firstIdx + i], firstIdx + i + 1, null);
+			// Second pass: the set most confirmed cards belong to helps the rest.
+			const majoritySet = majoritySetOf(detectedCards.slice(firstIdx));
+			if (majoritySet && unsettled().length > 0) {
+				log(`Phase 3c: majority set ${majoritySet.toUpperCase()} for ${unsettled().length} unsettled card(s)`);
+				await prefetch(unsettled(), majoritySet);
+				if (superseded()) return;
+				for (let i = 0; i < newCount; i++) {
+					const c = detectedCards[firstIdx + i];
+					if (!(c.status === 'found' && c.printingState === 'confirmed')) resolveOne(c, firstIdx + i + 1, majoritySet);
 				}
 			}
 
@@ -1632,31 +1543,30 @@
 						(m) => log(`Card 1: ${m}`)
 					);
 					if (foilResult) {
+						card.finish = foilResult.foil ? 'foil' : 'nonfoil';
 						card.foil = foilResult.foil;
-						log(`Card 1: pixel foil detection -> foil=${foilResult.foil} (bright=${(foilResult.brightRatio * 100).toFixed(1)}%)`);
+						log(`Card 1: pixel foil detection -> ${card.finish} (bright=${(foilResult.brightRatio * 100).toFixed(1)}%)`);
 					}
 				}
 			}
 			detectedCards = [...detectedCards];
 
 			// Phase 3b: Optional Google Vision retry. If the user has stored a personal
-			// API key in /settings AND the toggle on this page is enabled, re-OCR any
-			// cards that Tesseract could not identify (status === 'not_found') or
-			// could not narrow down to a single reprint (results.length > 1), then
-			// re-run the matching logic with the higher-quality Vision text.
+			// API key in /settings AND the toggle on this page is enabled, re-OCR the
+			// collector strip of every card that is not settled (identity or printing)
+			// and run the fusion again with the Vision text as one more reading —
+			// the only reading whose foil hint (★ vs •) is trusted.
 			if (superseded()) return;
 			const userHasVisionKey = !!data.user?.hasVisionApiKey;
 			if (userHasVisionKey && visionRetryEnabled) {
 				const failed: Array<{ card: typeof detectedCards[number]; index: number }> = [];
 				for (let i = firstIdx; i < detectedCards.length; i++) {
 					const c = detectedCards[i];
-					if (c.status === 'not_found' || c.results.length > 1) {
-						failed.push({ card: c, index: i });
-					}
+					if (!(c.status === 'found' && c.printingState === 'confirmed')) failed.push({ card: c, index: i });
 				}
-
 				if (failed.length > 0) {
 					log(`Phase 3b: Vision retry for ${failed.length} card(s) [${failed.map(f => `Card ${f.index + 1}`).join(', ')}]`);
+					const retried: typeof failed = [];
 					// /api/ocr accepts up to 16 images per request — chunk if needed.
 					for (let batchStart = 0; batchStart < failed.length; batchStart += 16) {
 						const batch = failed.slice(batchStart, batchStart + 16);
@@ -1670,22 +1580,27 @@
 							if (res.ok) {
 								const visionData = await res.json();
 								for (let j = 0; j < batch.length; j++) {
-									const newText = (visionData.results?.[j] ?? '').toString();
+									const newText = cleanOcr((visionData.results?.[j] ?? '').toString());
 									if (!newText) continue;
 									const { card, index: cardIdx } = batch[j];
-									const oldText = card.ocrText;
-									card.ocrText = newText;
-									log(`Card ${cardIdx + 1}: Vision text="${newText}" (Tesseract was="${oldText}")`);
-									await applyBottomMatch(card, cardIdx + 1, true);
+									log(`Card ${cardIdx + 1}: Vision text="${newText}" (Tesseract was="${card.ocrText}")`);
+									card.readings.push(readingOf(newText, 'vision', true));
+									retried.push(batch[j]);
 									visionRetriedCount++;
-									log(`Card ${cardIdx + 1}: after Vision retry -> status=${card.status}, results=${card.results.length}`);
 								}
-								detectedCards = [...detectedCards];
 							}
 						} catch { /* keep Tesseract result for this batch */ }
 					}
+					if (retried.length > 0 && !superseded()) {
+						await prefetch(retried.map((f) => f.card), majoritySet);
+						for (const { card, index } of retried) {
+							resolveOne(card, index + 1, majoritySet);
+							log(`Card ${index + 1}: after Vision retry -> ${card.status}, printing ${card.printingState}`);
+						}
+						detectedCards = [...detectedCards];
+					}
 				} else {
-					log('Phase 3b: Vision retry skipped (no failed cards)');
+					log('Phase 3b: Vision retry skipped (no unsettled cards)');
 				}
 			} else {
 				log(`Phase 3b: Vision retry ${!userHasVisionKey ? 'no API key' : 'disabled by toggle'}`);
@@ -1693,8 +1608,9 @@
 
 			const newSlice = detectedCards.slice(firstIdx);
 			const identifiedCount = newSlice.filter((c) => c.status === 'found').length;
-			log(`Scan complete: ${identifiedCount}/${newSlice.length} identified`);
-			scanProgress = `Done! ${identifiedCount} of ${newSlice.length} identified.`;
+			const likelyCount = newSlice.filter((c) => c.status === 'likely' || c.status === 'conflict').length;
+			log(`Scan complete: ${identifiedCount}/${newSlice.length} identified${likelyCount ? `, ${likelyCount} to confirm` : ''}`);
+			scanProgress = `Done! ${identifiedCount} of ${newSlice.length} identified${likelyCount ? `, ${likelyCount} to confirm` : ''}.`;
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
 		} finally {
@@ -1723,8 +1639,43 @@
 		const card = detectedCards[cardIndex];
 		manualSetCode = card.setCode;
 		manualNumber = card.collectorNumber;
-		manualQuery = '';
+		// Prefill with what the OCR did read: the best name candidate, else the raw text.
+		const bestCandidate = [...card.nameCandidates].sort((a, b) => b.score - a.score)[0];
+		manualQuery = bestCandidate?.name ?? card.nameText.replace(/^[^A-Za-z]+/, '').trim();
+		manualMode = manualQuery.length >= 3 ? 'name' : 'set';
 		manualResults = [];
+	}
+
+	/** One tap on a likely / conflict / suggested card: take this printing as confirmed. */
+	function acceptCandidate(cardIndex: number, row: Record<string, unknown>) {
+		const card = detectedCards[cardIndex];
+		card.status = 'found';
+		card.results = [row];
+		card.selectedResultIdx = 0;
+		card.printingState = 'confirmed';
+		card.suggestion = null;
+		card.matchType = 'accepted';
+		log(`Card ${cardIndex + 1}: accepted by user -> ${row.set_code}#${row.collector_number} "${row.name}"`);
+		detectedCards = [...detectedCards];
+	}
+
+	/** "Not this card": drop the offer and open the manual search. */
+	function rejectCandidate(cardIndex: number) {
+		const card = detectedCards[cardIndex];
+		card.status = 'not_found';
+		card.results = [];
+		card.suggestion = null;
+		card.printingState = 'unknown';
+		detectedCards = [...detectedCards];
+		openManualSearch(cardIndex);
+	}
+
+	/** Finish toggle: unknown -> foil -> nonfoil -> unknown. */
+	function cycleFinish(cardIndex: number) {
+		const card = detectedCards[cardIndex];
+		card.finish = card.finish === 'unknown' ? 'foil' : card.finish === 'foil' ? 'nonfoil' : 'unknown';
+		card.foil = card.finish === 'foil';
+		detectedCards = [...detectedCards];
 	}
 
 	async function doManualSearch() {
@@ -1760,7 +1711,7 @@
 		const next = new Set(selectedCards);
 		for (let i = 0; i < detectedCards.length; i++) {
 			const card = detectedCards[i];
-			if (card.status === 'found' && card.results.length > 0) {
+			if (isImportable(card)) {
 				const selectedResult = card.results[card.selectedResultIdx];
 				if (!addedCards.some(a => a.id === selectedResult.id)) {
 					next.add(i);
@@ -1774,7 +1725,7 @@
 		importing = true;
 		for (const idx of selectedCards) {
 			const card = detectedCards[idx];
-			if (card.status === 'found' && card.results.length > 0) {
+			if (isImportable(card)) {
 				const result = card.results[card.selectedResultIdx];
 				const id = result.id as string;
 				const name = result.name as string;
@@ -1822,7 +1773,7 @@
 	function getMoxfieldText(): string {
 		const lines: string[] = [];
 		for (const card of detectedCards) {
-			if (card.status === 'found' && card.results.length > 0) {
+			if (isImportable(card)) {
 				const r = card.results[card.selectedResultIdx];
 				const rawName = r.name as string;
 				const parts = rawName.split(' // ');
@@ -1995,10 +1946,14 @@
 
 	<!-- Detected Cards -->
 	{#if detectedCards.length > 0}
-		{@const identifiedCount = detectedCards.filter(c => c.status === 'found' && c.results.length > 0 && !addedCards.some(a => a.id === c.results[c.selectedResultIdx].id)).length}
-		{@const hasIdentified = detectedCards.some(c => c.status === 'found' && c.results.length > 0)}
+		{@const identifiedCount = detectedCards.filter(c => isImportable(c) && !addedCards.some(a => a.id === c.results[c.selectedResultIdx].id)).length}
+		{@const hasIdentified = detectedCards.some(c => isImportable(c))}
+		{@const toConfirm = detectedCards.filter(c => c.status === 'likely' || c.status === 'conflict' || (c.status === 'found' && !isImportable(c))).length}
 		{#if !scanning && (identifiedCount > 0 || hasIdentified)}
 			<div class="flex gap-3 items-center flex-wrap">
+				{#if toConfirm > 0}
+					<span class="text-xs px-2 py-1 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">{toConfirm} card{toConfirm === 1 ? '' : 's'} need{toConfirm === 1 ? 's' : ''} a tap to confirm</span>
+				{/if}
 				{#if loggedIn && identifiedCount > 0}
 					<button onclick={selectAllIdentified}
 						class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors">
@@ -2047,10 +2002,15 @@
 		{/if}
 		<div class="space-y-4">
 			{#each sortedCards() as { card, origIdx }, idx}
-				<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''}">
+				{@const cardState = card.status === 'found' ? 'confirmed' : card.status === 'likely' ? 'likely' : card.status === 'conflict' ? 'conflict' : card.status === 'scanning' ? 'scanning' : 'unknown'}
+				<div
+					data-state={cardState}
+					data-printing-state={card.printingState}
+					data-finish={card.finish}
+					class="bg-[var(--color-surface)] rounded-lg border p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''} {card.status === 'likely' || card.status === 'conflict' ? 'border-yellow-500/40' : 'border-[var(--color-border)]'}">
 					<div class="flex flex-col sm:flex-row gap-4">
-						<!-- Selection checkbox for identified cards -->
-						{#if loggedIn && card.status === 'found' && card.results.length > 0 && !addedCards.some(a => a.id === card.results[card.selectedResultIdx].id)}
+						<!-- Selection checkbox for importable cards -->
+						{#if loggedIn && isImportable(card) && !addedCards.some(a => a.id === card.results[card.selectedResultIdx].id)}
 							<div class="flex-shrink-0 pt-1">
 								<input type="checkbox" checked={selectedCards.has(origIdx)} onchange={() => toggleSelect(origIdx)}
 									class="w-5 h-5 rounded border-[var(--color-border)] accent-green-600 cursor-pointer" />
@@ -2083,16 +2043,34 @@
 
 						<!-- Result -->
 						<div class="flex-1">
-							<h3 class="text-sm font-semibold mb-2">
-								Card {origIdx + 1}
+							<h3 class="text-sm font-semibold mb-2 flex flex-wrap items-center gap-1">
+								<span>Card {origIdx + 1}</span>
+								{#if card.status === 'found'}
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-green-500/15 text-green-400 border-green-500/30">Confirmed</span>
+									{#if card.results.length > 1 && card.printingState !== 'confirmed'}
+										<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-yellow-500/15 text-yellow-300 border-yellow-500/30">Printing?</span>
+									{/if}
+								{:else if card.status === 'likely'}
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-yellow-500/15 text-yellow-300 border-yellow-500/30">Likely</span>
+								{:else if card.status === 'conflict'}
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-red-500/15 text-red-400 border-red-500/30">Conflict</span>
+								{:else if card.status === 'not_found'}
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]">Unknown</span>
+								{/if}
 								<button
-									onclick={() => { card.foil = !card.foil; }}
-									class="text-xs px-1.5 py-0.5 rounded font-medium ml-1 border transition-colors {card.foil
+									onclick={() => cycleFinish(origIdx)}
+									title="Finish: click to cycle unknown / foil / non-foil"
+									class="text-xs px-1.5 py-0.5 rounded font-medium border transition-colors {card.finish === 'foil'
 										? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30'
-										: 'bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}"
+										: card.finish === 'nonfoil'
+											? 'bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-text-muted)]'
+											: 'bg-[var(--color-bg)] text-yellow-300 border-yellow-500/30 hover:border-yellow-400'}"
 								>
-									{card.foil ? 'FOIL' : 'Non-Foil'}
+									{card.finish === 'foil' ? 'FOIL' : card.finish === 'nonfoil' ? 'Non-Foil' : 'Finish?'}
 								</button>
+								{#if card.language && card.language !== 'EN'}
+									<span class="text-xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]">{card.language}</span>
+								{/if}
 								{#if card.setCode || card.collectorNumber}
 									<span class="text-[var(--color-text-muted)] font-normal">
 										— detected: {card.setCode.toUpperCase()} #{card.collectorNumber}
@@ -2105,16 +2083,24 @@
 									<div class="w-4 h-4 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin"></div>
 									Scanning...
 								</div>
-							{:else if card.status === 'found' && card.results.length > 0}
+							{:else if (card.status === 'found' || card.status === 'likely' || card.status === 'conflict') && card.results.length > 0}
+								{#if card.status === 'likely'}
+									<p class="text-xs text-yellow-300 mb-2">Probably this card — the name and the collector line only agree partially. Tap "Accept" or "Not this card".</p>
+								{:else if card.status === 'conflict'}
+									<p class="text-xs text-red-400 mb-2">The name and the collector line point at different cards. Pick the right one or search manually.</p>
+								{:else if card.results.length > 1 && card.printingState !== 'confirmed'}
+									<p class="text-xs text-yellow-300 mb-2">Several printings match — pick the right one before importing.</p>
+								{/if}
 								{#each card.results as result, rIdx}
 									{@const imgSrc = getImageSrc(result)}
 									{@const isAdded = addedCards.some((a) => a.id === result.id)}
-									{@const isSelected = rIdx === card.selectedResultIdx}
+									{@const isSelected = card.status === 'found' && rIdx === card.selectedResultIdx}
 									{@const hasMultiple = card.results.length > 1}
+									{@const offer = card.status === 'likely' || card.status === 'conflict'}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<div
-										onclick={() => { if (hasMultiple) { card.selectedResultIdx = rIdx; detectedCards = [...detectedCards]; } }}
+										onclick={() => { if (!offer && hasMultiple) { card.selectedResultIdx = rIdx; card.printingState = 'confirmed'; detectedCards = [...detectedCards]; } }}
 										class="flex items-center gap-4 p-2 rounded-lg border transition-all
 											{hasMultiple ? 'cursor-pointer' : ''}
 											{isSelected
@@ -2135,7 +2121,14 @@
 											</p>
 										</div>
 										<PriceTag card={result as PriceFields} class="text-sm text-[var(--color-accent)]" />
-										{#if loggedIn && isSelected}
+										{#if offer}
+											<button
+												onclick={(e) => { e.stopPropagation(); acceptCandidate(origIdx, result); }}
+												class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded-lg text-sm transition-colors"
+											>
+												Accept
+											</button>
+										{:else if loggedIn && isSelected}
 											{#if isAdded}
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 											{:else}
@@ -2150,8 +2143,30 @@
 										{/if}
 									</div>
 								{/each}
+								{#if card.status === 'likely' || card.status === 'conflict'}
+									<button onclick={() => rejectCandidate(origIdx)}
+										class="mt-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
+										Not this card — search manually
+									</button>
+								{/if}
 							{:else}
 								<p class="text-sm text-[var(--color-text-muted)] mb-2">Not identified automatically.</p>
+								{#if card.suggestion}
+									{@const sug = card.suggestion}
+									{@const sugImg = getImageSrc(sug)}
+									<div class="flex items-center gap-3 p-2 mb-2 rounded-lg border border-yellow-500/30 bg-[var(--color-bg)]">
+										{#if sugImg}
+											<img src={sugImg} alt={sug.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
+										{/if}
+										<div class="flex-1 min-w-0">
+											<p class="text-xs text-yellow-300">Could be (collector number only, no name evidence):</p>
+											<p class="text-sm font-medium truncate">{sug.name}</p>
+											<p class="text-xs text-[var(--color-text-muted)]">{sug.set_name} ({(sug.set_code as string).toUpperCase()}) #{sug.collector_number}</p>
+										</div>
+										<button onclick={() => acceptCandidate(origIdx, sug)}
+											class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1 rounded-lg text-sm transition-colors">Accept</button>
+									</div>
+								{/if}
 								{#if manualCardIndex === origIdx}
 									<!-- Manual search form -->
 									<div class="space-y-2">

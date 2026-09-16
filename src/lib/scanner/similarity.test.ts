@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { similarity, bestNameMatch, normalizeName, prefixSimilarity, looksLikeOcrJunk } from './similarity';
+import { similarity, bestNameMatch, normalizeName, prefixSimilarity, looksLikeOcrJunk, nameAliases, nameScore } from './similarity';
 
 describe('similarity', () => {
 	it('returns 1 for identical strings', () => {
@@ -111,5 +111,19 @@ describe('bestNameMatch with OCR junk', () => {
 	it('does not raise the score when the tail is real text', () => {
 		const best = bestNameMatch([{ name: 'Island' }], 'Island Fish Jasconius');
 		expect(best.score).toBeLessThan(0.6);
+	});
+});
+
+describe('nameAliases / face-aware scoring', () => {
+	it('lists the canonical name and each face of a double-faced card', () => {
+		expect(nameAliases('Beloved Beggar // Generous Soul')).toEqual(['Beloved Beggar // Generous Soul', 'Beloved Beggar', 'Generous Soul']);
+		expect(nameAliases('Lightning Bolt')).toEqual(['Lightning Bolt']);
+	});
+
+	it('scores a perfectly read front face as a full match and returns the canonical name', () => {
+		const best = bestNameMatch([{ name: 'Beloved Beggar // Generous Soul' }, { name: 'Beloved Bee' }], 'Beloved Beggar');
+		expect(best.name).toBe('Beloved Beggar // Generous Soul');
+		expect(best.score).toBeCloseTo(1, 5);
+		expect(nameScore('Generous Soul', 'Beloved Beggar // Generous Soul')).toBeCloseTo(1, 5);
 	});
 });

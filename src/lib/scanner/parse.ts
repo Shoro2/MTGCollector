@@ -39,6 +39,8 @@ export interface CollectorInfo {
 	 * silently yields a wrong card).
 	 */
 	rarity: string;
+	/** Two-letter language code read after the set code ("EN", "DE", ...), '' when no anchor matched. */
+	language: string;
 }
 
 /**
@@ -48,10 +50,10 @@ export interface CollectorInfo {
  * @param dbg optional per-step debug logger
  */
 export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: string) => void): CollectorInfo {
-	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false, numberSource: 'none', rarity: '' };
+	const result: CollectorInfo = { setCode: '', collectorNumber: '', foilFromText: false, numberSource: 'none', rarity: '', language: '' };
 
 	// Step 1: Find anchor — <SET code, 3-4 alphanumeric> followed by <LANG 2-letter> within a few chars
-	const anchor = new RegExp(`\\b([A-Z0-9]{3,4})\\s*([^A-Za-z0-9\\s]?)\\s*(?:${langs})\\b`, 'gi');
+	const anchor = new RegExp(`\\b([A-Z0-9]{3,4})\\s*([^A-Za-z0-9\\s]?)\\s*(${langs})\\b`, 'gi');
 	let anchorMatch: RegExpMatchArray | null = null;
 	for (const m of text.matchAll(anchor)) {
 		// Set codes are not always 3 letters: many are alphanumeric (M21, 2X2,
@@ -66,6 +68,7 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 
 	if (anchorMatch) {
 		result.setCode = anchorMatch[1].toLowerCase();
+		result.language = anchorMatch[3].toUpperCase();
 		dbg?.(`anchor matched: "${anchorMatch[0]}" -> set="${result.setCode}"`);
 
 		// Check separator character for foil hint
@@ -182,9 +185,9 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			}
 		}
 		const fractionMatch = text.match(/(\d{1,4})\/(\d{1,4})(?:\s*([CURMLST])(?![A-Za-z]))?/i);
-		// "C 0150" / "Cc 0150" (OCR doubles letters): rarity + number is reliable
-		// even when the set code next to it was unreadable.
-		const rarityMatch = !fractionMatch ? text.match(/(?:^|\s)([curml]{1,2})\s+(0*\d{1,4})(?!\d)/i) : null;
+		// "C 0150" / "Cc 0150" (OCR doubles letters) / "C0047" (space lost):
+		// rarity + number is reliable even when the set code next to it was unreadable.
+		const rarityMatch = !fractionMatch ? text.match(/(?:^|\s)([curml]{1,2})\s*(0*\d{1,4})(?!\d)/i) : null;
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
 			// Same padding rule as above: a numerator shorter than the total lost a digit.

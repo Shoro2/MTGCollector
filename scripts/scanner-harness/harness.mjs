@@ -68,7 +68,8 @@ for (const file of files) {
 	const result = { file: basename(file), mode, wallSeconds: Number(wall.toFixed(1)), identified: summary[1], detected: summary[2], expectedCount: expected ? expected.length : null, metrics: score?.metrics ?? null, matched: score?.metrics.identity ?? null, wrong: score?.wrong ?? null, missing: score?.missing ?? null, phases, errors, cards, log };
 	all.push(result);
 	if (score) metricsByFile[result.file] = { ...score.metrics, wallSeconds: result.wallSeconds };
-	console.log(`\n=== ${result.file} (${mode}) — ${result.identified}/${result.detected} identified` + (score ? `, identity ${score.metrics.identity}/${expected.length}, printing ${score.metrics.printing}/${expected.length}` + (score.metrics.unresolvedPrinting ? `, ${score.metrics.unresolvedPrinting} unresolved printing` : '') + (score.metrics.likely ? `, ${score.metrics.likely} likely` : '') : '') + ` — ${result.wallSeconds}s ===`);
+	const printingsExpected = expected?.some((e) => typeof e === 'object' && e.set);
+	console.log(`\n=== ${result.file} (${mode}) — ${result.identified}/${result.detected} identified` + (score ? `, identity ${score.metrics.identity}/${expected.length}, printing ${printingsExpected ? `${score.metrics.printing}/${expected.length}` : 'n/a'}` + (score.metrics.unresolvedPrinting ? `, ${score.metrics.unresolvedPrinting} unresolved printing` : '') + (score.metrics.likely ? `, ${score.metrics.likely} likely` : '') : '') + ` — ${result.wallSeconds}s ===`);
 	console.log('phases:', JSON.stringify(phases));
 	for (const c of cards) console.log(`  ${c.card.padEnd(14)} ${(c.name ?? '—').padEnd(34)} ${(c.printing ?? '').padEnd(40)} [${c.state}] name-ocr="${c.nameOcr.slice(0, 40)}" bottom-ocr="${c.bottomOcr.slice(0, 50)}"`);
 	if (score?.wrong.length) console.log('  WRONG:', score.wrong.join(' | '));

@@ -69,17 +69,22 @@ Columns: state before the scanner work, after spread-aware detection and
 adaptive crop windows, and after the OCR input-size fix plus the plausibility
 check for number-only hits (current code).
 
-| Photo | Layout | Before | Detection + windows | OCR scale + plausibility |
-|-------|--------|--------|---------------------|--------------------------|
-| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 |
-| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 |
-| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 |
-| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 |
-| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 |
-| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 |
-| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 |
-| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 |
-| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | **87/104, none wrong**, 64 s for all eight |
+| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) |
+|-------|--------|--------|---------------------|--------------------------|----------------------------------------|
+| 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 |
+| 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 |
+| 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 |
+| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 |
+| 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 |
+| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 |
+| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely |
+| 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 |
+| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | **90 / 90 of 104, 2 likely, none wrong**, 65 s |
+
+The last column is measured with the canonical seed (double-faced names) and
+the printing-level metric; the earlier columns counted names only. The
+"87 names" run drops to 86 under those conditions (Beloved Beggar's front face
+no longer matched its canonical name), which the face-aware search fixed.
 
 \* measured against the distractor database (see below); without it those two
 digit misreads were "not found" because the test DB had no card at the misread
@@ -106,12 +111,13 @@ with a second pass at 2x.
 node scripts/scanner-harness/ocr-scale-experiment.mjs --json out.json photos/*.jpg
 ```
 
-The remaining 17 misses are showcase/borderless frames (no name bar or
+The remaining 14 misses are showcase/borderless frames (no name bar or
 collector line where the crops expect them), collector digits misread at
 ~12 px (15 cards on one phone photo is the resolution limit for Tesseract),
-names truncated by the OCR ("Skaab"), and dropped digits that are now
-rejected instead of misidentified ("4/277" for Unruly Mob 040/277, "80/277"
-for Dawnhart Rejuvenator 180/277).
+names Tesseract cannot read on a legible crop ("Skaab Wrangler"), and dropped
+digits that are rejected instead of misidentified ("4/277" for Unruly Mob
+040/277). Dawnhart Rejuvenator ("Dawnhart r" + "80/277") and The Last Ronin's
+Technique ("LAST … Techmaue" + "223 THT") are offered as `likely` for one tap.
 
 Notes: the fake camera crops portrait clips when the app asks for 1920x1080,
 so render live scenes in landscape; real phones deliver native portrait frames.

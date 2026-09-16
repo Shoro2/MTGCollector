@@ -210,3 +210,20 @@ describe('parseCollectorInfo — land rarity letter', () => {
 		expect(r.rarity).toBe('l');
 	});
 });
+
+describe('parseCollectorInfo — language', () => {
+	it('reports the language code read after the set code', () => {
+		expect(parse('C 0156 TMT EN').language).toBe('EN');
+		expect(parse('180/277 C MID • DE').language).toBe('DE');
+		expect(parse('Cc 0150').language).toBe('');
+	});
+});
+
+describe('parseCollectorInfo — rarity letter glued to the digits', () => {
+	it('treats "C0047" as a rarity-prefixed number', () => {
+		const r = parse('eee et eta C0047');
+		expect(r.collectorNumber).toBe('47');
+		expect(r.numberSource).toBe('rarity');
+		expect(r.rarity).toBe('c');
+	});
+});
