@@ -98,7 +98,9 @@ const CSP = [
 	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https://cards.scryfall.io https://c1.scryfall.com https://c2.scryfall.com https://lh3.googleusercontent.com",
-	"connect-src 'self' https://api.scryfall.com https://vision.googleapis.com https://api.frankfurter.dev https://analytics.mtg-collector.com",
+	// data: is for OpenCV.js, whose single-file build fetches its embedded WASM
+	// from a data: URL (it silently falls back to a slower path when refused).
+	"connect-src 'self' data: https://api.scryfall.com https://vision.googleapis.com https://api.frankfurter.dev https://analytics.mtg-collector.com",
 	"font-src 'self' data:",
 	"worker-src 'self' blob:",
 	"frame-ancestors 'none'",

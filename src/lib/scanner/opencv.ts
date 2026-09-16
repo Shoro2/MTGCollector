@@ -1,12 +1,16 @@
 /**
- * Lazily load OpenCV.js from its CDN. The global `window.cv` object is
- * available as soon as this resolves.
+ * Lazily load OpenCV.js (from the CDN, or the self-hosted copy configured via
+ * PUBLIC_SCANNER_ASSETS_URL — see assets.ts). The global `window.cv` object
+ * is available as soon as this resolves.
  *
  * Callers should treat the returned promise as a ready-signal — concurrent
- * callers share one script injection.
+ * callers share one script injection. Readiness is detected by polling
+ * `cv.Mat`: OpenCV's builds expose `cv` as an Emscripten module whose `then`
+ * resolves with itself, so `await cv` would never settle.
  */
 
-const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
+import { openCvUrl } from './assets.js';
+
 const LOAD_TIMEOUT_MS = 30_000;
 
 let loadPromise: Promise<void> | null = null;
@@ -39,6 +43,7 @@ export function loadOpenCV(opts: { force?: boolean } = {}): Promise<void> {
 			fn();
 		};
 		const script = document.createElement('script');
+		const url = openCvUrl();
 		const fail = (message: string) =>
 			finish(() => {
 				loadPromise = null;
@@ -49,7 +54,7 @@ export function loadOpenCV(opts: { force?: boolean } = {}): Promise<void> {
 				reject(error);
 			});
 
-		script.src = OPENCV_URL;
+		script.src = url;
 		script.async = true;
 		script.onload = () => {
 			const check = () => {
@@ -61,7 +66,7 @@ export function loadOpenCV(opts: { force?: boolean } = {}): Promise<void> {
 			};
 			check();
 		};
-		script.onerror = () => fail('Failed to load OpenCV.js');
+		script.onerror = () => fail(`Failed to load OpenCV.js from ${url}`);
 		document.head.appendChild(script);
 
 		setTimeout(() => fail('OpenCV.js load timed out'), LOAD_TIMEOUT_MS);

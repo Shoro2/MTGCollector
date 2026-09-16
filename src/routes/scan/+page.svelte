@@ -704,12 +704,78 @@
 			log(`Detection complete: ${cardContours.length} card(s) found`);
 			scanProgress = `Found ${cardContours.length} card(s). Reading...`;
 
+			// Name band + collector strip crops from a warped card Mat, upscaled
+			// and sharpened for Tesseract. Shared by the card loop and the
+			// upside-down retry in Phase 2b, so both read exactly the same windows.
+			function extractOcrCrops(
+				warpedMat: any,
+				synthetic: boolean,
+				label: string
+			): { nameUrl: string; bottomUrl: string; bottomCanvas: HTMLCanvasElement } {
+				const cardW = warpedMat.cols as number;
+				const cardH = warpedMat.rows as number;
+
+				// Crop name area — skip black border + frame top, capture name text line.
+				// The band is taller than the name box itself so the text stays inside
+				// whether the detected quad was the outer black border (~3.5% margin
+				// after expansion) or the inner coloured frame (~1%). It starts at 6%
+				// from the left so the first letter isn't clipped on tight warps and
+				// ends at 74% so a three-symbol mana cost doesn't turn into junk
+				// letters glued to the name. Synthetic (grid-inferred) cards have
+				// less margin (~3%).
+				const nameY = Math.floor(cardH * (synthetic ? 0.03 : 0.055));
+				const nameH = Math.floor(cardH * 0.08);
+				const nameX = Math.floor(cardW * (synthetic ? 0.08 : 0.06));
+				const nameW = Math.floor(cardW * 0.68);
+				log(`${label}: name crop x=${nameX} y=${nameY} h=${nameH} w=${nameW}`);
+				const nameRoi = warpedMat.roi(new cv.Rect(nameX, nameY, nameW, nameH));
+				const grayName = new cv.Mat();
+				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
+				const nameScaled = new cv.Mat();
+				cv.resize(grayName, nameScaled, new cv.Size(nameW * 6, nameH * 6), 0, 0, cv.INTER_CUBIC);
+				const nameCanvas = document.createElement('canvas');
+				cv.imshow(nameCanvas, nameScaled);
+				const nameUrl = nameCanvas.toDataURL();
+				nameRoi.delete(); grayName.delete(); nameScaled.delete();
+
+				// Crop bottom strip for collector info (left half only, right has copyright).
+				// 89-99% rather than 90-97%: the collector line sits at ~96-99% of the
+				// physical card, which lands anywhere between ~91% and ~98% of the warp
+				// depending on how much margin the detected quad left. PSM 6 plus the
+				// anchor-based parser cope with the extra flavour-text line above it.
+				const bottomY = Math.floor(cardH * 0.89);
+				const bottomH = Math.floor(cardH * 0.10);
+				const roiW = Math.floor(cardW * 0.5);
+				log(`${label}: bottom crop y=${bottomY} h=${bottomH} w=${roiW}`);
+				const bottomRoi = warpedMat.roi(new cv.Rect(0, bottomY, roiW, bottomH));
+
+				// Convert to grayscale, scale up 6x, and sharpen for better OCR
+				const grayBottom = new cv.Mat();
+				cv.cvtColor(bottomRoi, grayBottom, cv.COLOR_RGBA2GRAY);
+				const upscaled = new cv.Mat();
+				cv.resize(grayBottom, upscaled, new cv.Size(roiW * 6, bottomH * 6), 0, 0, cv.INTER_CUBIC);
+				// Unsharp mask: subtract blurred version to enhance edges
+				const blurredBottom = new cv.Mat();
+				cv.GaussianBlur(upscaled, blurredBottom, new cv.Size(0, 0), 3);
+				const scaled = new cv.Mat();
+				cv.addWeighted(upscaled, 1.5, blurredBottom, -0.5, 0, scaled);
+				grayBottom.delete(); upscaled.delete(); blurredBottom.delete();
+
+				const bottomCanvas = document.createElement('canvas');
+				cv.imshow(bottomCanvas, scaled);
+				const bottomUrl = bottomCanvas.toDataURL();
+				bottomRoi.delete(); scaled.delete();
+				return { nameUrl, bottomUrl, bottomCanvas };
+			}
+
 			// Process each detected card
 			const cards: typeof detectedCards = [];
-			// Bottom canvases kept outside $state so Svelte doesn't try to proxy
-			// HTMLCanvasElement instances. Used for pixel-based foil detection
-			// in single-card mode after OCR completes.
+			// Canvases kept outside $state so Svelte doesn't try to proxy
+			// HTMLCanvasElement instances. `bottomCanvases` feeds pixel-based
+			// foil detection in single-card mode; `cardCanvases` (the 488x680
+			// warps) feed the upside-down retry in Phase 2b.
 			const bottomCanvases: HTMLCanvasElement[] = [];
+			const cardCanvases: HTMLCanvasElement[] = [];
 
 			for (let i = 0; i < cardContours.length; i++) {
 				const pts = cardContours[i].corners;
@@ -775,56 +841,9 @@
 				const cardCanvas = document.createElement('canvas');
 				cv.imshow(cardCanvas, warped);
 				const croppedUrl = cardCanvas.toDataURL();
+				cardCanvases.push(cardCanvas);
 
-				// Crop name area — skip black border + frame top, capture name text line.
-				// The band is taller than the name box itself so the text stays inside
-				// whether the detected quad was the outer black border (~3.5% margin
-				// after expansion) or the inner coloured frame (~1%). It starts at 6%
-				// from the left so the first letter isn't clipped on tight warps.
-				// Synthetic (grid-inferred) cards have less margin (~3%).
-				const nameY = Math.floor(cardH * (cardContours[i].synthetic ? 0.03 : 0.055));
-				const nameH = Math.floor(cardH * 0.08);
-				const nameX = Math.floor(cardW * (cardContours[i].synthetic ? 0.08 : 0.06));
-				// 68% wide: ends before a three-symbol mana cost, which otherwise
-				// turns into junk letters glued to the name ("...Augustin IV SSSERRY").
-				const nameW = Math.floor(cardW * 0.68);
-				log(`Card ${i + 1}: name crop x=${nameX} y=${nameY} h=${nameH} w=${nameW}`);
-				const nameRoi = warped.roi(new cv.Rect(nameX, nameY, nameW, nameH));
-				const grayName = new cv.Mat();
-				cv.cvtColor(nameRoi, grayName, cv.COLOR_RGBA2GRAY);
-				const nameScaled = new cv.Mat();
-				cv.resize(grayName, nameScaled, new cv.Size(nameW * 6, nameH * 6), 0, 0, cv.INTER_CUBIC);
-				const nameCanvas = document.createElement('canvas');
-				cv.imshow(nameCanvas, nameScaled);
-				const nameUrl = nameCanvas.toDataURL();
-				nameRoi.delete(); grayName.delete(); nameScaled.delete();
-
-				// Crop bottom strip for collector info (left half only, right has copyright).
-				// 89-99% rather than 90-97%: the collector line sits at ~96-99% of the
-				// physical card, which lands anywhere between ~91% and ~98% of the warp
-				// depending on how much margin the detected quad left. PSM 6 plus the
-				// anchor-based parser cope with the extra flavour-text line above it.
-				const bottomY = Math.floor(cardH * 0.89);
-				const bottomH = Math.floor(cardH * 0.10);
-				log(`Card ${i + 1}: bottom crop y=${bottomY} h=${bottomH} w=${Math.floor(cardW * 0.5)}`);
-				const roiW = Math.floor(cardW * 0.5);
-				const bottomRoi = warped.roi(new cv.Rect(0, bottomY, roiW, bottomH));
-
-				// Convert to grayscale, scale up 6x, and sharpen for better OCR
-				const grayBottom = new cv.Mat();
-				cv.cvtColor(bottomRoi, grayBottom, cv.COLOR_RGBA2GRAY);
-				const upscaled = new cv.Mat();
-				cv.resize(grayBottom, upscaled, new cv.Size(roiW * 6, bottomH * 6), 0, 0, cv.INTER_CUBIC);
-				// Unsharp mask: subtract blurred version to enhance edges
-				const blurredBottom = new cv.Mat();
-				cv.GaussianBlur(upscaled, blurredBottom, new cv.Size(0, 0), 3);
-				const scaled = new cv.Mat();
-				cv.addWeighted(upscaled, 1.5, blurredBottom, -0.5, 0, scaled);
-				grayBottom.delete(); upscaled.delete(); blurredBottom.delete();
-
-				const bottomCanvas = document.createElement('canvas');
-				cv.imshow(bottomCanvas, scaled);
-				const bottomUrl = bottomCanvas.toDataURL();
+				const { nameUrl, bottomUrl, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
 				bottomCanvases.push(bottomCanvas);
 
 				cards.push({
@@ -845,7 +864,6 @@
 
 				// Cleanup card-specific mats
 				srcPts.delete(); dstPts.delete(); M.delete(); warped.delete();
-				bottomRoi.delete(); scaled.delete();
 				pts.delete();
 			}
 
@@ -977,6 +995,82 @@
 						card.matchType = 'similarity';
 						log(`Card ${cardIdx + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
 					}
+				}
+			}
+			// Phase 2b: upside-down retry. orderCornersForCard() cannot tell a
+			// card's top from its bottom when the card lies sideways (or upside
+			// down): both short edges are geometrically identical, so about half
+			// of such cards leave the warp rotated 180° and their name OCR reads
+			// garbage. For every card the name search didn't resolve, re-crop the
+			// name band from the 180°-rotated warp, OCR it again and search again;
+			// when that yields a real name, the rotated crops replace the originals
+			// so the bottom-line phase reads the right strip as well.
+			const retryIdx: number[] = [];
+			for (let i = 0; i < newCount; i++) {
+				if (detectedCards[firstIdx + i].results.length === 0) retryIdx.push(i);
+			}
+			if (retryIdx.length > 0) {
+				if (superseded()) return;
+				log(`Phase 2b: upside-down retry for ${retryIdx.length} unresolved card(s) [${retryIdx.map((i) => `Card ${firstIdx + i + 1}`).join(', ')}]`);
+				scanProgress = `Retrying ${retryIdx.length} card${retryIdx.length === 1 ? '' : 's'} rotated...`;
+				const rotated: Array<{ i: number; canvas: HTMLCanvasElement; nameUrl: string; bottomUrl: string; bottomCanvas: HTMLCanvasElement }> = [];
+				for (const i of retryIdx) {
+					const original = cardCanvases[i];
+					const rot = document.createElement('canvas');
+					rot.width = original.width;
+					rot.height = original.height;
+					const rctx = rot.getContext('2d');
+					if (!rctx) continue;
+					rctx.translate(rot.width, rot.height);
+					rctx.rotate(Math.PI);
+					rctx.drawImage(original, 0, 0);
+					const rotMat = cv.imread(rot);
+					try {
+						const crops = extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`);
+						rotated.push({ i, canvas: rot, ...crops });
+					} finally {
+						rotMat.delete();
+					}
+				}
+				const rotTexts = await recognizeBatch(pool, rotated.map((r) => r.nameUrl));
+				const rotQueries: Array<{ k: number; cleanName: string }> = [];
+				rotated.forEach((r, k) => {
+					const text = rotTexts[k].replace(/[\r\n]+/g, ' ').trim();
+					const cleanName = text.replace(/^[^A-Za-z]+/, '').trim();
+					log(`Card ${firstIdx + r.i + 1} rotated name OCR: "${text}"`);
+					if (cleanName.length >= 2) rotQueries.push({ k, cleanName });
+				});
+				if (rotQueries.length > 0 && !superseded()) {
+					let rotBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+					try {
+						const res = await fetch('/scan', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ queries: rotQueries.map((q) => q.cleanName) })
+						});
+						const data = await res.json();
+						rotBatch = Array.isArray(data?.batch) ? data.batch : [];
+					} catch (err) {
+						log(`Phase 2b batch search error: ${err}`);
+					}
+					rotQueries.forEach(({ k, cleanName }, qi) => {
+						const r = rotated[k];
+						const card = detectedCards[firstIdx + r.i];
+						const searchData = rotBatch[qi];
+						if (!searchData || searchData.results.length === 0) return;
+						const best = bestNameMatch(searchData.results, cleanName);
+						log(`Card ${firstIdx + r.i + 1} rotated: best match "${best.name}" score=${best.score.toFixed(3)}`);
+						if (best.score < 0.6) return;
+						card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
+						card.matchType = searchData.matchType;
+						card.nameText = cleanName;
+						card.nameUrl = r.nameUrl;
+						card.bottomUrl = r.bottomUrl;
+						card.croppedUrl = r.canvas.toDataURL();
+						bottomCanvases[r.i] = r.bottomCanvas;
+						cardCanvases[r.i] = r.canvas;
+						log(`Card ${firstIdx + r.i + 1}: accepted after 180° rotation -> "${best.name}" (${card.results.length} reprints)`);
+					});
 				}
 			}
 			detectedCards = [...detectedCards];
