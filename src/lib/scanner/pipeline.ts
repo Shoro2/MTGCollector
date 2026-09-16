@@ -1,84 +1,79 @@
 /**
- * Shared scanner pipeline helpers.
- *
- * Phase 2 (Task 2.1) consolidates the two scanners (`/scan` and
- * `/collection/scan`) onto one accurate, tested pipeline. This module is the
- * home for the stages they should share — detection, warp, region extraction,
- * OCR, candidate matching, and foil evidence — extracted incrementally so each
- * step stays behaviour-preserving and unit-testable.
- *
- * First extracted stage: reprint disambiguation (was inline in
- * `/scan`'s applyBottomMatch). Pure string/data logic, no DOM or OpenCV.
+ * Shared scanner pipeline helpers — pure string/data logic, no DOM or OpenCV.
  */
+
+import type { CollectorInfo } from './parse';
 
 export type CardRow = Record<string, unknown>;
 
+/** Lower-case, leading zeros of the numeric part stripped, suffix kept ("0085p" -> "85p"). */
+export function normalizeCollectorNumber(n: string): string {
+	return String(n).trim().toLowerCase().replace(/^0+(?=\d)/, '');
+}
+
+const STRONG_SOURCES: ReadonlyArray<CollectorInfo['numberSource']> = ['fraction', 'pair', 'rarity', 'padded'];
+
 /**
- * Given several reprints that all share a name, pick the single printing that
- * best matches the OCR'd bottom collector line.
- *
- * Strategy (first hit wins):
- *  1. A known collector number appears among the digit sequences in the text.
- *  2. The parsed set code + collector number uniquely identify a printing.
- *  3. The parsed set code alone matches exactly one printing.
- *
- * Returns the matched row (or null if it cannot be disambiguated) plus the
- * per-step debug lines the caller can prefix and log.
+ * Given several reprints that all share a name, pick the single printing the
+ * parsed collector line identifies. Evidence is used strictly in order of
+ * specificity and only when it singles out one printing:
+ *  1. set code + full collector number (suffix preserved, only leading zeros
+ *     of the numeric part normalised);
+ *  2. set code alone, when exactly one printing has it (a code one glyph
+ *     away from exactly one candidate set counts as that set — the name is
+ *     already certain here);
+ *  3. collector number alone, when it came from a structural parse (fraction,
+ *     rarity-prefixed, number/total pair) and exactly one printing has it.
+ * Arbitrary digit sequences in the footer text (copyright years, set totals)
+ * are never used, and conflicting or ambiguous evidence yields null rather
+ * than a guess. `bottomText` is only echoed into the log.
  */
 export function disambiguateReprints(
 	results: CardRow[],
 	bottomText: string,
 	setCode: string,
-	collectorNumber: string
+	collectorNumber: string,
+	numberSource: CollectorInfo['numberSource'] = 'none'
 ): { match: CardRow | null; log: string[] } {
 	const log: string[] = [];
-	let match: CardRow | undefined;
+	const set = setCode.trim().toLowerCase();
+	const num = collectorNumber ? normalizeCollectorNumber(collectorNumber) : '';
+	log.push(`${results.length} reprints to disambiguate (set="${set}" number="${num}" source=${numberSource}, text="${bottomText.slice(0, 40)}")`);
 
-	// Extract all digit sequences from bottom text for matching.
-	const digitSeqs = [...bottomText.matchAll(/\d+/g)].map((m) => m[0]);
-	log.push(`${results.length} reprints to disambiguate, digit sequences: [${digitSeqs.join(', ')}]`);
+	const sameSet = set ? results.filter((r) => String(r.set_code).toLowerCase() === set) : [];
+	const sameNumber = num ? results.filter((r) => normalizeCollectorNumber(String(r.collector_number)) === num) : [];
 
-	// 1. Try matching known collector numbers in the bottom text.
-	const numMatches = results.filter((r) => {
-		const cn = String(r.collector_number);
-		const cnPadded = cn.padStart(3, '0');
-		// Exact match, or collector number contained in a digit sequence
-		// (e.g. "8202" contains "202", "0188" contains "188").
-		return digitSeqs.some(
-			(d) =>
-				d === cn ||
-				d === cnPadded ||
-				d.replace(/^0+/, '') === cn ||
-				d === cn.padStart(4, '0') ||
-				d.includes(cn) ||
-				d.includes(cnPadded)
-		);
-	});
-	log.push(`collector number matching -> ${numMatches.length} matches`);
-	if (numMatches.length === 1) {
-		match = numMatches[0];
-		log.push(`unique number match: ${match.set_code}#${match.collector_number}`);
+	if (set && num) {
+		const both = sameSet.filter((r) => normalizeCollectorNumber(String(r.collector_number)) === num);
+		log.push(`set+number match -> ${both.length}`);
+		if (both.length === 1) return { match: both[0], log };
 	}
-
-	// 2. Try set code + collector number from the generic parser.
-	if (!match && setCode && collectorNumber) {
-		match = results.find(
-			(r) =>
-				(r.set_code as string).toLowerCase() === setCode.toLowerCase() &&
-				(String(r.collector_number) === collectorNumber ||
-					String(r.collector_number) === collectorNumber.replace(/^0+/, ''))
-		);
-		log.push(`set+number match (${setCode}#${collectorNumber}) -> ${match ? 'found' : 'none'}`);
+	if (set) {
+		log.push(`set-only match -> ${sameSet.length}`);
+		if (sameSet.length === 1) return { match: sameSet[0], log };
+		// The name is certain, so a set code the OCR got one glyph wrong (THT
+		// for TMT) may still pick the printing — when exactly one candidate set
+		// is one substitution away.
+		if (sameSet.length === 0) {
+			const near = [...new Set(results.map((r) => String(r.set_code).toLowerCase()))].filter((code) => code.length === set.length && oneSubstitutionApart(code, set));
+			const nearRows = near.length === 1 ? results.filter((r) => String(r.set_code).toLowerCase() === near[0]) : [];
+			log.push(`near set code (${near.join(', ') || 'none'}) -> ${nearRows.length}`);
+			if (nearRows.length === 1) return { match: nearRows[0], log };
+		}
 	}
-
-	// 3. Try just the set code.
-	if (!match && setCode) {
-		const setMatches = results.filter(
-			(r) => (r.set_code as string).toLowerCase() === setCode.toLowerCase()
-		);
-		if (setMatches.length === 1) match = setMatches[0];
-		log.push(`set-only match (${setCode}) -> ${setMatches.length} matches`);
+	if (num && STRONG_SOURCES.includes(numberSource)) {
+		log.push(`number-only match (${numberSource}) -> ${sameNumber.length}`);
+		if (sameNumber.length === 1) return { match: sameNumber[0], log };
+	} else if (num) {
+		log.push(`number "${num}" is ${numberSource}: not used on its own`);
 	}
+	log.push('could not disambiguate');
+	return { match: null, log };
+}
 
-	return { match: match ?? null, log };
+function oneSubstitutionApart(a: string, b: string): boolean {
+	if (a.length !== b.length) return false;
+	let diff = 0;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++diff > 1) return false;
+	return diff === 1;
 }

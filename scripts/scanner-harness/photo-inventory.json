@@ -1,0 +1,118 @@
+{
+  "scope": "Photo inventory only. Not a per-card ground-truth annotation; no printing or finish labels have been verified here.",
+  "photos": [
+    {
+      "file": "20260403_114602(1).jpg",
+      "sha256": "7404fb4c265aa5b5ffbd62c76cf83bff11706866679bc30f6dea90a702d44b8d",
+      "sourceSize": [
+        2268,
+        2901
+      ],
+      "exifOrientation": 1,
+      "orientedSize": [
+        2268,
+        2901
+      ],
+      "expectedCardInstances": 4
+    },
+    {
+      "file": "20260403_120150(1).jpg",
+      "sha256": "4bc701708e4b49b6a61b444aba8f079962bde9bd3f3d0556303ccb5a069cdb32",
+      "sourceSize": [
+        2224,
+        2814
+      ],
+      "exifOrientation": 1,
+      "orientedSize": [
+        2224,
+        2814
+      ],
+      "expectedCardInstances": 15
+    },
+    {
+      "file": "20260403_121351(1).jpg",
+      "sha256": "fd18a43ce5775a261d69ba45f02dba686d302f4f149cd4215ee69269c7bc49cd",
+      "sourceSize": [
+        4032,
+        2268
+      ],
+      "exifOrientation": 6,
+      "orientedSize": [
+        2268,
+        4032
+      ],
+      "expectedCardInstances": 10
+    },
+    {
+      "file": "20260405_154748.jpg",
+      "sha256": "9d1c909b3c23a28f91e12c73d84d897a0c02aa03a788b3bd9caf9b661fad41d2",
+      "sourceSize": [
+        4032,
+        2268
+      ],
+      "exifOrientation": 6,
+      "orientedSize": [
+        2268,
+        4032
+      ],
+      "expectedCardInstances": 15
+    },
+    {
+      "file": "DSC00847.JPG",
+      "sha256": "d453f4e63b002f7026c22b10c55df1708aff17f13d2a3f89a2772edaf1c35ddc",
+      "sourceSize": [
+        6000,
+        3376
+      ],
+      "exifOrientation": 1,
+      "orientedSize": [
+        6000,
+        3376
+      ],
+      "expectedCardInstances": 15
+    },
+    {
+      "file": "DSC00853.JPG",
+      "sha256": "f95312168824db0813d4c290d246eb125a128098311946a446f8ab92e98e720b",
+      "sourceSize": [
+        3376,
+        4581
+      ],
+      "exifOrientation": 1,
+      "orientedSize": [
+        3376,
+        4581
+      ],
+      "expectedCardInstances": 15
+    },
+    {
+      "file": "DSC00854.JPG",
+      "sha256": "76dcab4e22a8b377da955f1f8092b24e144ba99c2bbd28dfa1b6a55e68d29012",
+      "sourceSize": [
+        6000,
+        3376
+      ],
+      "exifOrientation": 1,
+      "orientedSize": [
+        6000,
+        3376
+      ],
+      "expectedCardInstances": 15
+    },
+    {
+      "file": "DSC00855(1).JPG",
+      "sha256": "5e03724f26592493f8b0c5264825403de5822ed98511851d72a5b5424a729639",
+      "sourceSize": [
+        4673,
+        3376
+      ],
+      "exifOrientation": 1,
+      "orientedSize": [
+        4673,
+        3376
+      ],
+      "expectedCardInstances": 15
+    }
+  ],
+  "totalCardInstances": 104
+}

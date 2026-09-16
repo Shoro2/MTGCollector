@@ -67,7 +67,14 @@ function scheduleDailyPriceUpdate() {
 		}
 	}, 30_000);
 }
-scheduleDailyPriceUpdate();
+// DISABLE_PRICE_UPDATES=1 keeps the catalogue and the price history frozen —
+// for a second dev server on a seeded harness database, where the first
+// catch-up run would otherwise import every Scryfall card into it.
+if (process.env.DISABLE_PRICE_UPDATES === '1') {
+	console.log('[price-updater] Disabled by DISABLE_PRICE_UPDATES=1');
+} else {
+	scheduleDailyPriceUpdate();
+}
 
 // Graceful shutdown so in-flight SQLite writes finish and the WAL flushes
 // before the process exits. Without this, `docker stop` or `kubectl delete`
@@ -98,7 +105,9 @@ const CSP = [
 	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https://cards.scryfall.io https://c1.scryfall.com https://c2.scryfall.com https://lh3.googleusercontent.com",
-	"connect-src 'self' https://api.scryfall.com https://vision.googleapis.com https://api.frankfurter.dev https://analytics.mtg-collector.com",
+	// data: is for OpenCV.js, whose single-file build fetches its embedded WASM
+	// from a data: URL (it silently falls back to a slower path when refused).
+	"connect-src 'self' data: https://api.scryfall.com https://vision.googleapis.com https://api.frankfurter.dev https://analytics.mtg-collector.com https://cdn.jsdelivr.net",
 	"font-src 'self' data:",
 	"worker-src 'self' blob:",
 	"frame-ancestors 'none'",
@@ -111,6 +120,14 @@ export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = sessionId ? validateSession(sessionId) : null;
 
 	const path = event.url.pathname;
+
+	// /collection/scan was the old upload-only scanner with its own pipeline;
+	// /scan runs the shared pipeline (live camera, evidence fusion) and adds to
+	// the collection when signed in. Old links and bookmarks land there.
+	if (path === '/collection/scan' || path.startsWith('/collection/scan/')) {
+		throw redirect(302, '/scan');
+	}
+
 	const isPublic = publicRoutes.some(r => path === r || path.startsWith(r.endsWith('/') ? r : r + '/'));
 	const isApi = path.startsWith('/cards/');
 

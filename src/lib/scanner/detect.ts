@@ -1,182 +1,224 @@
 /**
  * Lightweight card-rectangle detection for the live preview overlay.
  *
- * The full single-shot pipeline in /scan runs six OpenCV strategies plus
- * relaxation and grid inference — too slow to drive a per-frame overlay.
- * This version runs only Canny on a downscaled grayscale Mat so it fits
- * comfortably inside ~30 ms on a mid-range phone, leaving the main thread
- * free for the video pipeline.
+ * The OpenCV work itself lives in `quick-rects.ts`; this module decides
+ * *where* it runs. `createQuickDetector()` starts the detection Web Worker
+ * (`detect-worker.ts`, bundled to `static/scanner/detect-worker.js`), which
+ * loads its own OpenCV.js copy and analyses frames off the main thread, so
+ * the video preview stays smooth while a frame is processed. When workers
+ * are unavailable, the worker script fails to load or OpenCV fails inside
+ * it, the detector falls back to the main thread transparently.
  *
- * Returns plain corner arrays (not cv.Mats) so the caller never has to
- * worry about WASM-heap lifetimes.
+ * Frames are handed over as an RGBA buffer (transferred, not copied): the
+ * caller draws the video into a small analysis canvas exactly as before and
+ * the detector reads it back once. Every result also carries the frame's
+ * quality (sharpness/glare over the detected cards), computed on the same
+ * pixels the rectangles were found in.
  */
 
 import { loadOpenCV } from './opencv.js';
+import { openCvUrl } from './assets.js';
+import { detectOnPixels, type DetectQuickOptions, type QuickDetection, type QuickRect } from './quick-rects.js';
 
-export type QuickRect = {
-	corners: Array<[number, number]>;
-	rect: { x: number; y: number; width: number; height: number };
-	area: number;
+export type { DetectQuickOptions, QuickDetection, QuickRect } from './quick-rects.js';
+
+export type QuickDetectorOptions = {
+	/** Set false to stay on the main thread (tests, diagnostics). Default true. */
+	preferWorker?: boolean;
+	/** URL of the bundled worker script. Default `/scanner/detect-worker.js`. */
+	workerUrl?: string;
+	log?: (msg: string) => void;
 };
 
-export type DetectQuickOptions = {
-	/** Long-edge resolution for the analysis Mat. Default 720. */
-	maxEdge?: number;
-	/** Minimum candidate area as fraction of the analyzed image area. Default 0.01. */
-	minAreaFrac?: number;
-	/** Maximum candidate area as fraction. Default 0.6. */
-	maxAreaFrac?: number;
+export type QuickDetector = {
+	/** Where detection runs. */
+	readonly mode: 'worker' | 'main';
+	/** True while a frame is being analysed; callers should skip frames rather than queue them. */
+	readonly busy: boolean;
+	/** Analyse the canvas (read-only). Coordinates come back in canvas pixels times `opts.coordScale`. */
+	detect(canvas: HTMLCanvasElement, opts?: DetectQuickOptions): Promise<QuickDetection>;
+	dispose(): void;
 };
 
-let busy = false;
+/** Bundled worker script (see scripts/build-detect-worker.mjs); a static file so it stays a classic worker in dev and prod. */
+export const DETECT_WORKER_URL = '/scanner/detect-worker.js';
+const WORKER_INIT_TIMEOUT_MS = 30_000;
+const WORKER_DETECT_TIMEOUT_MS = 5_000;
 
-/**
- * True while a `detectCardsQuick` call is in flight on the same thread.
- * The live overlay should skip a frame rather than queue calls — OpenCV.js
- * is single-threaded and concurrent reentry just stalls everything.
- */
-export function isQuickBusy(): boolean {
-	return busy;
+const EMPTY_QUALITY = { sharpness: 0, glare: 0, score: 0 };
+
+function readPixels(canvas: HTMLCanvasElement): ImageData | null {
+	const ctx = canvas.getContext('2d', { willReadFrequently: true });
+	if (!ctx || canvas.width === 0 || canvas.height === 0) return null;
+	return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+/** Main-thread detector: OpenCV on the page's own `window.cv`. */
+function createMainThreadDetector(): QuickDetector {
+	let busy = false;
+	return {
+		mode: 'main',
+		get busy() {
+			return busy;
+		},
+		async detect(canvas, opts = {}) {
+			if (busy) return { rects: [], quality: EMPTY_QUALITY };
+			busy = true;
+			try {
+				await loadOpenCV();
+				const cv = (window as unknown as { cv: any }).cv;
+				const pixels = readPixels(canvas);
+				if (!pixels) return { rects: [], quality: EMPTY_QUALITY };
+				return detectOnPixels(cv, pixels.data, pixels.width, pixels.height, opts);
+			} finally {
+				busy = false;
+			}
+		},
+		dispose() {
+			/* nothing to release */
+		}
+	};
+}
+
+type WorkerResult = { type: 'result'; id: number; rects: QuickRect[]; quality: QuickDetection['quality'] | null; ms: number; error?: string };
+
+/** Start the worker and wait until its OpenCV copy is ready; rejects when anything fails. */
+function startWorker(url: string, log?: (msg: string) => void): Promise<Worker> {
+	return new Promise((resolve, reject) => {
+		if (typeof Worker === 'undefined') {
+			reject(new Error('Web Workers unavailable'));
+			return;
+		}
+		let worker: Worker;
+		try {
+			worker = new Worker(url);
+		} catch (err) {
+			reject(err instanceof Error ? err : new Error(String(err)));
+			return;
+		}
+		let settled = false;
+		const finish = (fn: () => void) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			fn();
+		};
+		const timer = setTimeout(() => finish(() => {
+			worker.terminate();
+			reject(new Error('detection worker did not become ready in time'));
+		}), WORKER_INIT_TIMEOUT_MS);
+		worker.onmessage = (e: MessageEvent) => {
+			const msg = e.data;
+			if (msg?.type === 'ready') {
+				finish(() => resolve(worker));
+			} else if (msg?.type === 'error') {
+				finish(() => {
+					worker.terminate();
+					reject(new Error(msg.message || 'detection worker failed to initialise'));
+				});
+			} else if (msg?.type === 'log') {
+				log?.(String(msg.message));
+			}
+		};
+		worker.onerror = (e: ErrorEvent) => {
+			finish(() => {
+				worker.terminate();
+				reject(new Error(e.message || 'detection worker script failed to load'));
+			});
+		};
+		// OpenCV's URL is resolved on the page so a relative self-hosted path
+		// (PUBLIC_SCANNER_ASSETS_URL=/vendor) works from inside the worker too.
+		const cvUrl = new URL(openCvUrl(), window.location.href).href;
+		worker.postMessage({ type: 'init', openCvUrl: cvUrl });
+	});
+}
+
+/** Worker-backed detector; falls back to the main thread when the worker dies mid-session. */
+function createWorkerDetector(worker: Worker, log?: (msg: string) => void): QuickDetector {
+	let busy = false;
+	let nextId = 1;
+	let pending: { id: number; resolve: (d: QuickDetection) => void; timer: ReturnType<typeof setTimeout> } | null = null;
+	let dead = false;
+	const fallback = createMainThreadDetector();
+
+	const settle = (result: QuickDetection) => {
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		const { resolve } = pending;
+		pending = null;
+		busy = false;
+		resolve(result);
+	};
+
+	worker.onmessage = (e: MessageEvent) => {
+		const msg = e.data as WorkerResult | { type: 'log'; message: string };
+		if (msg.type === 'log') {
+			log?.(String(msg.message));
+			return;
+		}
+		if (msg.type !== 'result' || !pending || msg.id !== pending.id) return;
+		if (msg.error) log?.(`detection worker error: ${msg.error}`);
+		settle({ rects: msg.rects ?? [], quality: msg.quality ?? EMPTY_QUALITY });
+	};
+	worker.onerror = (e: ErrorEvent) => {
+		log?.(`detection worker crashed (${e.message}); continuing on the main thread`);
+		dead = true;
+		worker.terminate();
+		settle({ rects: [], quality: EMPTY_QUALITY });
+	};
+
+	return {
+		get mode() {
+			return dead ? ('main' as const) : ('worker' as const);
+		},
+		get busy() {
+			return dead ? fallback.busy : busy;
+		},
+		async detect(canvas, opts = {}) {
+			if (dead) return fallback.detect(canvas, opts);
+			if (busy) return { rects: [], quality: EMPTY_QUALITY };
+			const pixels = readPixels(canvas);
+			if (!pixels) return { rects: [], quality: EMPTY_QUALITY };
+			busy = true;
+			const id = nextId++;
+			return new Promise<QuickDetection>((resolve) => {
+				const timer = setTimeout(() => {
+					log?.('detection worker timed out; continuing on the main thread');
+					dead = true;
+					worker.terminate();
+					settle({ rects: [], quality: EMPTY_QUALITY });
+				}, WORKER_DETECT_TIMEOUT_MS);
+				pending = { id, resolve, timer };
+				// Transfer the pixel buffer instead of copying ~1 MB per frame.
+				const buffer = pixels.data.buffer;
+				worker.postMessage({ type: 'detect', id, width: pixels.width, height: pixels.height, buffer, opts }, [buffer]);
+			});
+		},
+		dispose() {
+			dead = true;
+			worker.terminate();
+			settle({ rects: [], quality: EMPTY_QUALITY });
+		}
+	};
 }
 
 /**
- * Run a fast Canny-based card detection on the given canvas.
- * The canvas is treated as read-only; corner coordinates are returned
- * in the canvas's own pixel coordinate space (not the downscaled space).
+ * Create the live detector: the Web Worker when it starts within the
+ * timeout, otherwise the main thread. Never rejects — the reason for a
+ * fallback goes to `log`.
  */
-export async function detectCardsQuick(
-	srcCanvas: HTMLCanvasElement,
-	opts: DetectQuickOptions = {}
-): Promise<QuickRect[]> {
-	if (busy) return [];
-	busy = true;
-	try {
-		await loadOpenCV();
-		const cv = (window as unknown as { cv: any }).cv;
-		const maxEdge = opts.maxEdge ?? 720;
-		const minAreaFrac = opts.minAreaFrac ?? 0.01;
-		const maxAreaFrac = opts.maxAreaFrac ?? 0.6;
-
-		// Downscale to keep the per-frame cost predictable.
-		const longEdge = Math.max(srcCanvas.width, srcCanvas.height);
-		const scale = longEdge > maxEdge ? maxEdge / longEdge : 1;
-		const w = Math.max(1, Math.round(srcCanvas.width * scale));
-		const h = Math.max(1, Math.round(srcCanvas.height * scale));
-
-		const work = document.createElement('canvas');
-		work.width = w;
-		work.height = h;
-		const wctx = work.getContext('2d');
-		if (!wctx) return [];
-		wctx.drawImage(srcCanvas, 0, 0, w, h);
-
-		const src = cv.imread(work);
-		const gray = new cv.Mat();
-		const blurred = new cv.Mat();
-		const edges = new cv.Mat();
-		const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-		const contours = new cv.MatVector();
-		const hier = new cv.Mat();
-		const candidates: QuickRect[] = [];
-
+export async function createQuickDetector(opts: QuickDetectorOptions = {}): Promise<QuickDetector> {
+	const preferWorker = opts.preferWorker ?? true;
+	if (preferWorker && typeof window !== 'undefined') {
 		try {
-			cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-			cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-			cv.Canny(blurred, edges, 50, 150);
-			cv.dilate(edges, edges, kernel);
-			cv.findContours(edges, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-			const imgArea = w * h;
-			const minArea = imgArea * minAreaFrac;
-			const maxArea = imgArea * maxAreaFrac;
-			const invScale = 1 / scale;
-
-			for (let i = 0; i < contours.size(); i++) {
-				const contour = contours.get(i);
-				const area = cv.contourArea(contour);
-				if (area < minArea || area > maxArea) { contour.delete(); continue; }
-
-				const perimeter = cv.arcLength(contour, true);
-				let approx = new cv.Mat();
-				let used: any = null;
-				try {
-					for (const eps of [0.02, 0.03, 0.04]) {
-						cv.approxPolyDP(contour, approx, eps * perimeter, true);
-						if (approx.rows === 4) {
-							used = approx;
-							break;
-						}
-						approx.delete();
-						approx = new cv.Mat();
-					}
-					if (!used) {
-						// Fallback: 5-8 sides → minAreaRect
-						cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
-						if (approx.rows >= 5 && approx.rows <= 8) {
-							const rotRect = cv.minAreaRect(contour);
-							const verts = cv.RotatedRect.points(rotRect);
-							const rectMat = new cv.Mat(4, 1, cv.CV_32SC2);
-							for (let k = 0; k < 4; k++) {
-								rectMat.data32S[k * 2] = Math.round(verts[k].x);
-								rectMat.data32S[k * 2 + 1] = Math.round(verts[k].y);
-							}
-							approx.delete();
-							approx = rectMat;
-							used = approx;
-						}
-					}
-					if (!used) continue;
-
-					const rect = cv.boundingRect(used);
-					const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-					if (aspect <= 0.5 || aspect >= 0.95) continue;
-
-					const corners: Array<[number, number]> = [];
-					for (let k = 0; k < 4; k++) {
-						corners.push([
-							used.data32S[k * 2] * invScale,
-							used.data32S[k * 2 + 1] * invScale
-						]);
-					}
-					candidates.push({
-						corners,
-						rect: {
-							x: rect.x * invScale,
-							y: rect.y * invScale,
-							width: rect.width * invScale,
-							height: rect.height * invScale
-						},
-						area: area * invScale * invScale
-					});
-				} finally {
-					approx.delete();
-					contour.delete();
-				}
-			}
-		} finally {
-			src.delete();
-			gray.delete();
-			blurred.delete();
-			edges.delete();
-			kernel.delete();
-			contours.delete();
-			hier.delete();
+			const worker = await startWorker(opts.workerUrl ?? DETECT_WORKER_URL, opts.log);
+			opts.log?.('detector: Web Worker (OpenCV.js off the main thread)');
+			return createWorkerDetector(worker, opts.log);
+		} catch (err) {
+			opts.log?.(`detector: main thread (${(err as Error).message})`);
 		}
-
-		// Containment filter: drop any rect whose center sits inside a larger one.
-		candidates.sort((a, b) => b.area - a.area);
-		const kept: QuickRect[] = [];
-		for (const c of candidates) {
-			const cx = c.rect.x + c.rect.width / 2;
-			const cy = c.rect.y + c.rect.height / 2;
-			const inside = kept.some((k) => {
-				return cx > k.rect.x && cx < k.rect.x + k.rect.width
-					&& cy > k.rect.y && cy < k.rect.y + k.rect.height;
-			});
-			if (!inside) kept.push(c);
-		}
-		return kept;
-	} finally {
-		busy = false;
+	} else {
+		opts.log?.('detector: main thread');
 	}
+	return createMainThreadDetector();
 }

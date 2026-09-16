@@ -9,7 +9,11 @@ import { mkdirSync } from 'node:fs';
 const dataDir = join(process.cwd(), 'data');
 mkdirSync(dataDir, { recursive: true });
 
-const dbPath = join(dataDir, 'mtg.db');
+// MTG_DB_PATH points a second instance at another database (the scanner
+// harness runs a seeded test catalogue next to the real one); everything else
+// under data/ (secret key, exchange-rate cache, bulk-update marker) stays shared.
+const dbPath = process.env.MTG_DB_PATH ? process.env.MTG_DB_PATH : join(dataDir, 'mtg.db');
+if (process.env.MTG_DB_PATH) mkdirSync(join(dbPath, '..'), { recursive: true });
 const sqlite = new Database(dbPath);
 
 // synchronous=NORMAL is safe with WAL (durability vs FULL is "last committed

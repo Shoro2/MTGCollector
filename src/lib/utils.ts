@@ -43,6 +43,58 @@ export function formatPrice(price: number | null, priceUsd?: number | null): str
 	return '-';
 }
 
+export type PriceFields = {
+	price_eur?: number | null;
+	price_usd?: number | null;
+	price_eur_foil?: number | null;
+	price_usd_foil?: number | null;
+};
+
+/**
+ * Price to show for a printing in list/tile contexts. Prefers the non-foil
+ * price (EUR, then USD). When a printing has no non-foil price at all it falls
+ * back to the foil price and flags it: some printings only exist in foil (The
+ * Hobbit extras, many promos) and used to render as "-" although Scryfall
+ * carries a perfectly good foil price for them.
+ */
+export function displayPrice(card: PriceFields): { text: string; foil: boolean } | null {
+	const has = (v: number | null | undefined): v is number => v !== null && v !== undefined;
+	if (has(card.price_eur) || has(card.price_usd)) {
+		return { text: formatPrice(card.price_eur ?? null, card.price_usd ?? null), foil: false };
+	}
+	if (has(card.price_eur_foil) || has(card.price_usd_foil)) {
+		return { text: formatPrice(card.price_eur_foil ?? null, card.price_usd_foil ?? null), foil: true };
+	}
+	return null;
+}
+
+/** Ratio beyond which EUR and USD prices are considered to contradict each other (5x either way). */
+export const PRICE_DIVERGENCE_LIMIT = 5;
+
+/**
+ * How far the Cardmarket (EUR) price sits from the TCGplayer (USD) price once
+ * USD is converted to EUR, as `eur / (usd * usdToEur)`. Null unless both prices
+ * are present and positive.
+ *
+ * Scryfall relays Cardmarket's "price trend" as `eur`/`eur_foil`. For very
+ * thinly traded printings that trend occasionally collapses (a €300 trend for
+ * a card whose cheapest offer is €25k) while the USD side stays sane. The UI
+ * uses this to flag such a value rather than present it as fact.
+ */
+export function priceDivergence(
+	eur: number | null | undefined,
+	usd: number | null | undefined,
+	usdToEur: number
+): { ratio: number; usdAsEur: number } | null {
+	if (eur == null || usd == null || eur <= 0 || usd <= 0 || !(usdToEur > 0)) return null;
+	const usdAsEur = usd * usdToEur;
+	return { ratio: eur / usdAsEur, usdAsEur };
+}
+
+export function isSuspiciousDivergence(d: { ratio: number } | null): boolean {
+	return !!d && (d.ratio > PRICE_DIVERGENCE_LIMIT || d.ratio < 1 / PRICE_DIVERGENCE_LIMIT);
+}
+
 /**
  * EUR value for a price-history row: prefer the EUR column, otherwise convert
  * the USD column at the given rate so USD-only cards still render on the chart.

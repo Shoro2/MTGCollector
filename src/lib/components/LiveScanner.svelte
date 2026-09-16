@@ -1,10 +1,20 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { detectCardsQuick, isQuickBusy, type QuickRect } from '$lib/scanner/detect';
+	import { createQuickDetector, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
 	import { loadOpenCV } from '$lib/scanner/opencv';
+	import { SceneStabilizer, sceneSignature } from '$lib/scanner/stability';
+	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
+	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
 
 	type Props = {
-		onCapture: (canvas: HTMLCanvasElement) => void;
+		/**
+		 * Called with the full-resolution captured frame. `rects` holds the
+		 * rectangles the live detector was tracking as steady at capture time,
+		 * in the canvas's pixel coordinates, so the caller can skip its own
+		 * (much slower) detection pass. It is empty when the capture was
+		 * forced while the scene was still moving — run full detection then.
+		 */
+		onCapture: (canvas: HTMLCanvasElement, rects: QuickRect[]) => void;
 		busy?: boolean;
 		log?: (msg: string) => void;
 	};
@@ -12,53 +22,100 @@
 
 	let videoEl: HTMLVideoElement | null = $state(null);
 	let overlayEl: HTMLCanvasElement | null = $state(null);
-	let containerEl: HTMLDivElement | null = $state(null);
 
 	let stream: MediaStream | null = null;
 	let rafId = 0;
 	let lastDetectAt = 0;
 	let analyzeCanvas: HTMLCanvasElement | null = null;
+	/** Full-resolution copy of the frame currently being analysed. */
+	let scratchCanvas: HTMLCanvasElement | null = null;
+	/** Full-resolution copy of the best-scoring frame of the current scene. */
+	let bestCanvas: HTMLCanvasElement | null = null;
+	/** Frame handed to the pipeline (copied so the loop can keep reusing its own canvases). */
 	let captureCanvas: HTMLCanvasElement | null = null;
+	let detector: QuickDetector | null = null;
 
-	let status = $state<'idle' | 'requesting' | 'live' | 'error'>('idle');
+	let status = $state<'idle' | 'loading' | 'requesting' | 'live' | 'error'>('idle');
+	let errorTitle = $state('');
 	let errorMsg = $state('');
 	let cameras = $state<Array<{ deviceId: string; label: string }>>([]);
 	let activeDeviceId = $state<string>('');
 	let autoCapture = $state(true);
 	let lastRectCount = $state(0);
 	let stableProgress = $state(0); // 0..1
+	/** Short reason why auto-capture is currently held back, shown in the badge. */
+	let holdReason = $state('');
+	/** Frame-quality hint ('blurry' / 'glare') for the badge. */
+	let qualityHint = $state<'blurry' | 'glare' | ''>('');
+	/** Where the per-frame detection runs, exposed for the harness. */
+	let detectorMode = $state<'worker' | 'main' | ''>('');
+
+	// Intrinsic stream size. The viewfinder's aspect ratio follows it, so a
+	// phone held upright gets a portrait preview instead of a small
+	// pillarboxed feed inside a 16:9 box that made the scanner look as if it
+	// wanted the card in landscape.
+	let streamW = $state(0);
+	let streamH = $state(0);
+	const streamAspect = $derived(streamW > 0 && streamH > 0 ? `${streamW} / ${streamH}` : '16 / 9');
 
 	// Per-frame detected rectangles (in video pixel coords).
 	let lastRects: QuickRect[] = [];
+	// Which of lastRects touch the frame edge (same index order).
+	let cutOff: boolean[] = [];
 
-	// Stability tracking. Each tracker holds the last few centroids it saw;
-	// when all of them sit within `STABLE_DRIFT_PX` over `STABLE_FRAMES`,
-	// we consider the rect "settled". The whole scene must be stable
-	// before auto-capture fires.
-	type Tracker = { id: number; centroids: Array<{ x: number; y: number }>; lastSeenAt: number };
-	let trackers: Tracker[] = [];
-	let nextTrackerId = 1;
-	const STABLE_FRAMES = 8;
-	const STABLE_DRIFT_PX = 14;
-	const TRACKER_MAX_DIST = 60;
+	// Stability tracking lives in a pure, unit-tested helper. The scene must
+	// hold still for STABLE_MS (wall-clock, so slow phones don't wait longer
+	// than fast laptops) before auto-capture fires.
+	const stabilizer = new SceneStabilizer({ minStableMs: 700, minSamples: 3 });
+
+	// Best-frame selection: every analysed frame of the current scene is
+	// scored (sharpness over the cards, discounted by glare) and the best one
+	// is kept at full resolution, so the capture doesn't use whichever frame
+	// happened to be current when the stabiliser fired.
+	const bestFrames = new BestFrameSelector({ windowMs: 2500, improveFactor: 1.15 });
+	let bestSceneId = '';
+	let bestRects: QuickRect[] = [];
+	let bestQuality: FrameQuality | null = null;
+	let bestAt = 0;
 
 	let lastCapturedSceneId = '';
 	let needSceneChange = false;
 
 	const TARGET_FPS = 6;
 	const FRAME_INTERVAL_MS = 1000 / TARGET_FPS;
+	/** Long edge of the frame handed to the quick detector. */
+	const ANALYZE_EDGE = 720;
+	/** Fraction of the frame's short edge a card may approach the border before it counts as cut off. */
+	const EDGE_MARGIN_FRAC = 0.015;
+	/** More tracked rectangles than this is not a hand-held card scene — don't auto-capture. */
+	const MAX_AUTO_CAPTURE_RECTS = 12;
 
 	async function start() {
-		status = 'requesting';
+		status = 'loading';
+		errorTitle = '';
 		errorMsg = '';
 		try {
-			// Pre-warm OpenCV so the first detect() doesn't stall the rAF loop.
-			await loadOpenCV();
+			// Load OpenCV before touching the camera: without it the preview
+			// would run but never detect anything, which used to fail silently
+			// (and re-inject the script tag on every frame). `force` bypasses the
+			// post-failure cooldown because this is a user-initiated attempt.
+			await loadOpenCV({ force: true });
 		} catch (err) {
-			log?.(`OpenCV preload failed: ${err}`);
+			status = 'error';
+			errorTitle = 'Card detection unavailable';
+			errorMsg = `OpenCV.js could not be loaded (${(err as Error).message}). Check your connection, then try again.`;
+			log?.(`OpenCV load failed: ${err}`);
+			return;
 		}
+		// The per-frame detector (a Web Worker with its own OpenCV copy, or the
+		// main thread as fallback) starts while the camera permission is pending.
+		const detectorReady = createQuickDetector({ log: (m) => log?.(m) });
 
+		status = 'requesting';
 		try {
+			// width/height are matched against the sensor's native (landscape)
+			// modes; mobile browsers rotate the frames to the device orientation
+			// afterwards, so a phone held upright yields e.g. 1080x1920.
 			const constraints: MediaStreamConstraints = activeDeviceId
 				? { video: { deviceId: { exact: activeDeviceId } } }
 				: { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } };
@@ -69,8 +126,10 @@
 				stream = await navigator.mediaDevices.getUserMedia({ video: true });
 			} catch (err2) {
 				status = 'error';
+				errorTitle = 'Camera unavailable';
 				errorMsg = (err2 as Error).message || 'Camera permission denied.';
 				log?.(`getUserMedia failed: ${errorMsg}`);
+				detectorReady.then((d) => d.dispose());
 				return;
 			}
 		}
@@ -80,6 +139,7 @@
 			try {
 				await videoEl.play();
 			} catch { /* autoplay can be blocked; user gesture is the play button */ }
+			updateStreamSize();
 		}
 
 		// Refresh device list now that we have permission.
@@ -93,9 +153,23 @@
 			if (settings?.deviceId) activeDeviceId = settings.deviceId;
 		} catch { /* enumeration unavailable */ }
 
+		const ready = await detectorReady;
+		if (status !== 'requesting') {
+			// stop() ran while we were waiting (component unmounted or camera switched).
+			ready.dispose();
+			return;
+		}
+		detector?.dispose();
+		detector = ready;
+		detectorMode = detector.mode;
+
 		status = 'live';
 		analyzeCanvas = document.createElement('canvas');
+		scratchCanvas = document.createElement('canvas');
+		bestCanvas = document.createElement('canvas');
 		captureCanvas = document.createElement('canvas');
+		stabilizer.reset();
+		resetBestFrame();
 		scheduleFrame();
 	}
 
@@ -107,11 +181,21 @@
 			stream = null;
 		}
 		if (videoEl) videoEl.srcObject = null;
-		trackers = [];
+		detector?.dispose();
+		detector = null;
+		detectorMode = '';
+		stabilizer.reset();
+		resetBestFrame();
 		lastRects = [];
+		cutOff = [];
 		lastCapturedSceneId = '';
 		needSceneChange = false;
 		stableProgress = 0;
+		holdReason = '';
+		qualityHint = '';
+		lastRectCount = 0;
+		streamW = 0;
+		streamH = 0;
 		status = 'idle';
 	}
 
@@ -121,12 +205,32 @@
 		await start();
 	}
 
+	function resetBestFrame() {
+		bestFrames.reset();
+		bestSceneId = '';
+		bestRects = [];
+		bestQuality = null;
+		bestAt = 0;
+	}
+
+	/** Track the stream's intrinsic size (also fires on device rotation). */
+	function updateStreamSize() {
+		if (!videoEl) return;
+		const vw = videoEl.videoWidth;
+		const vh = videoEl.videoHeight;
+		if (vw > 0 && vh > 0 && (vw !== streamW || vh !== streamH)) {
+			streamW = vw;
+			streamH = vh;
+			log?.(`Stream ${vw}x${vh} (${vw >= vh ? 'landscape' : 'portrait'})`);
+		}
+	}
+
 	function scheduleFrame() {
 		rafId = requestAnimationFrame(onFrame);
 	}
 
 	async function onFrame(ts: number) {
-		if (status !== 'live' || !videoEl) {
+		if (status !== 'live' || !videoEl || !detector) {
 			scheduleFrame();
 			return;
 		}
@@ -140,7 +244,7 @@
 
 		// Skip if a previous detect call is still running, or the parent
 		// pipeline is busy with a full capture.
-		if (isQuickBusy() || busy || videoEl.readyState < 2) {
+		if (detector.busy || busy || videoEl.readyState < 2) {
 			drawOverlay();
 			scheduleFrame();
 			return;
@@ -148,39 +252,99 @@
 
 		const vw = videoEl.videoWidth;
 		const vh = videoEl.videoHeight;
-		if (vw === 0 || vh === 0 || !analyzeCanvas) {
+		if (vw === 0 || vh === 0 || !analyzeCanvas || !scratchCanvas) {
 			scheduleFrame();
 			return;
 		}
-		if (analyzeCanvas.width !== vw || analyzeCanvas.height !== vh) {
-			analyzeCanvas.width = vw;
-			analyzeCanvas.height = vh;
+		updateStreamSize();
+
+		// Keep the full-resolution frame that is about to be analysed, so the
+		// best frame of the scene can be captured pixel-for-pixel later — the
+		// video has moved on by the time the asynchronous detection result
+		// arrives.
+		if (scratchCanvas.width !== vw || scratchCanvas.height !== vh) {
+			scratchCanvas.width = vw;
+			scratchCanvas.height = vh;
 		}
-		const ctx = analyzeCanvas.getContext('2d');
+		const sctx = scratchCanvas.getContext('2d');
+		if (!sctx) {
+			scheduleFrame();
+			return;
+		}
+		sctx.drawImage(videoEl, 0, 0, vw, vh);
+
+		// Downscale into the small analysis canvas; the detector reads its
+		// pixels back once (and transfers them to the worker).
+		const analyzeScale = Math.min(1, ANALYZE_EDGE / Math.max(vw, vh));
+		const aw = Math.max(1, Math.round(vw * analyzeScale));
+		const ah = Math.max(1, Math.round(vh * analyzeScale));
+		if (analyzeCanvas.width !== aw || analyzeCanvas.height !== ah) {
+			analyzeCanvas.width = aw;
+			analyzeCanvas.height = ah;
+		}
+		const ctx = analyzeCanvas.getContext('2d', { willReadFrequently: true });
 		if (!ctx) {
 			scheduleFrame();
 			return;
 		}
-		ctx.drawImage(videoEl, 0, 0, vw, vh);
+		ctx.drawImage(scratchCanvas, 0, 0, aw, ah);
 
+		let quality: FrameQuality = { sharpness: 0, glare: 0, score: 0 };
 		try {
-			lastRects = await detectCardsQuick(analyzeCanvas);
+			const result = await detector.detect(analyzeCanvas, { coordScale: vw / aw });
+			lastRects = result.rects;
+			quality = result.quality;
 		} catch (err) {
 			log?.(`live detect error: ${err}`);
 			lastRects = [];
 		}
+		if (status !== 'live') return; // stopped while the frame was analysed
 
-		updateTrackers(lastRects);
+		const now = ts;
+		stabilizer.update(lastRects, now);
+		const edgeMargin = Math.max(4, EDGE_MARGIN_FRAC * Math.min(vw, vh));
+		cutOff = lastRects.map((r) => touchesFrameEdge(r.rect, vw, vh, edgeMargin));
 		lastRectCount = lastRects.length;
 		drawOverlay();
 
-		const stable = sceneIsStable();
-		stableProgress = stableScore();
+		const stable = stabilizer.isStable(lastRects, now);
+		stableProgress = stabilizer.progress(lastRects, now);
+		const sceneId = lastRects.length ? sceneSignature(lastRects, sceneCellPx(vw, vh)) : '';
+
+		// Best-frame bookkeeping. The selector only compares frames of the same
+		// scene, so a sharp frame from before the cards were put down never
+		// stands in for the scene that is captured.
+		if (!sceneId) {
+			resetBestFrame();
+			qualityHint = '';
+		} else {
+			if (sceneId !== bestSceneId) {
+				bestFrames.reset();
+				bestSceneId = sceneId;
+			}
+			qualityHint = bestFrames.hint(quality, now);
+			if (bestFrames.offer(quality, now) && bestCanvas) {
+				// Promote the analysed frame: swap the canvases instead of copying pixels.
+				[bestCanvas, scratchCanvas] = [scratchCanvas, bestCanvas];
+				bestRects = lastRects;
+				bestQuality = quality;
+				bestAt = now;
+			}
+		}
+
+		const anyCutOff = cutOff.some(Boolean);
+		if (lastRects.length > MAX_AUTO_CAPTURE_RECTS) {
+			holdReason = 'too many rectangles';
+		} else if (anyCutOff) {
+			holdReason = 'card cut off at the edge';
+		} else {
+			holdReason = '';
+		}
+
 		if (stable) {
-			const sceneId = computeSceneId(lastRects);
 			if (sceneId !== lastCapturedSceneId && !needSceneChange) {
-				if (autoCapture && !busy) {
-					triggerCapture(sceneId);
+				if (autoCapture && !busy && !holdReason) {
+					triggerCapture(sceneId, lastRects, now);
 				}
 			} else if (sceneId !== lastCapturedSceneId) {
 				// Scene already changed enough that we can re-arm.
@@ -196,12 +360,28 @@
 		scheduleFrame();
 	}
 
-	function captureNow() {
-		const sceneId = computeSceneId(lastRects);
-		triggerCapture(sceneId || `manual-${Date.now()}`);
+	/** Quantisation cell for the scene fingerprint: ~1/64 of the long edge (30 px at 1080p). */
+	function sceneCellPx(vw: number, vh: number): number {
+		return Math.max(16, Math.round(Math.max(vw, vh) / 64));
 	}
 
-	function triggerCapture(sceneId: string) {
+	function captureNow() {
+		const vw = videoEl?.videoWidth ?? 0;
+		const vh = videoEl?.videoHeight ?? 0;
+		const now = performance.now();
+		// Only hand over the tracked rectangles when they are known to be
+		// steady; a forced capture mid-motion should run full detection.
+		const stable = stabilizer.isStable(lastRects, now);
+		const sceneId = sceneSignature(lastRects, sceneCellPx(vw, vh));
+		triggerCapture(sceneId || `manual-${Date.now()}`, stable ? lastRects : [], now);
+	}
+
+	/**
+	 * Hand a frame to the pipeline: the best-scoring frame of the current
+	 * scene when one exists (same rectangles, chosen for sharpness and lack
+	 * of glare), otherwise the live frame as it is right now.
+	 */
+	function triggerCapture(sceneId: string, rects: QuickRect[], now: number) {
 		if (!videoEl || !captureCanvas) return;
 		const vw = videoEl.videoWidth;
 		const vh = videoEl.videoHeight;
@@ -210,138 +390,67 @@
 		captureCanvas.height = vh;
 		const ctx = captureCanvas.getContext('2d');
 		if (!ctx) return;
-		ctx.drawImage(videoEl, 0, 0, vw, vh);
+		const best = bestCanvas && bestQuality && bestSceneId === sceneId && rects.length > 0
+			&& bestCanvas.width === vw && bestCanvas.height === vh
+			? { canvas: bestCanvas, quality: bestQuality }
+			: null;
+		let handedRects = rects;
+		if (best) {
+			ctx.drawImage(best.canvas, 0, 0);
+			handedRects = bestRects;
+			log?.(`Best frame of the scene: sharpness ${best.quality.sharpness.toFixed(0)}, glare ${(best.quality.glare * 100).toFixed(1)}%, ${Math.round(now - bestAt)} ms old`);
+		} else {
+			ctx.drawImage(videoEl, 0, 0, vw, vh);
+		}
 		lastCapturedSceneId = sceneId;
 		needSceneChange = true;
-		log?.(`Live capture (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, scene=${sceneId})`);
-		onCapture(captureCanvas);
+		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
+		onCapture(captureCanvas, [...handedRects]);
 	}
 
 	function drawOverlay() {
-		if (!overlayEl || !videoEl || !containerEl) return;
+		if (!overlayEl || !videoEl) return;
 		const vw = videoEl.videoWidth;
 		const vh = videoEl.videoHeight;
 		if (vw === 0 || vh === 0) return;
 		const dispW = videoEl.clientWidth;
 		const dispH = videoEl.clientHeight;
-		if (overlayEl.width !== dispW || overlayEl.height !== dispH) {
-			overlayEl.width = dispW;
-			overlayEl.height = dispH;
+		if (dispW === 0 || dispH === 0) return;
+		// Render at device resolution so the outlines stay crisp on phones.
+		const dpr = window.devicePixelRatio || 1;
+		const pxW = Math.round(dispW * dpr);
+		const pxH = Math.round(dispH * dpr);
+		if (overlayEl.width !== pxW || overlayEl.height !== pxH) {
+			overlayEl.width = pxW;
+			overlayEl.height = pxH;
 		}
 		const ctx = overlayEl.getContext('2d');
 		if (!ctx) return;
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, dispW, dispH);
-		const sx = dispW / vw;
-		const sy = dispH / vh;
+
+		// The <video> uses object-fit: contain, so the stream is letterboxed
+		// inside the element box whenever the aspect ratios differ. Map through
+		// the same fit (uniform scale + offset) — scaling x and y independently
+		// squashed a portrait card into a landscape outline.
+		const fit = fitContain(vw, vh, dispW, dispH);
+		const now = performance.now();
 		ctx.lineWidth = 3;
-		for (const rect of lastRects) {
-			const tracker = findTrackerFor(rect);
-			const isStable = tracker && tracker.centroids.length >= STABLE_FRAMES && trackerDrift(tracker) < STABLE_DRIFT_PX;
-			ctx.strokeStyle = isStable ? '#22c55e' : '#facc15';
+		for (let i = 0; i < lastRects.length; i++) {
+			const rect = lastRects[i];
+			const isStable = stabilizer.isRectStable(rect, now);
+			ctx.strokeStyle = cutOff[i] ? '#ef4444' : isStable ? '#22c55e' : '#facc15';
 			ctx.beginPath();
-			for (let i = 0; i < 4; i++) {
-				const [x, y] = rect.corners[i];
-				const px = x * sx;
-				const py = y * sy;
-				if (i === 0) ctx.moveTo(px, py);
+			for (let k = 0; k < 4; k++) {
+				const [x, y] = rect.corners[k];
+				const px = fit.x + x * fit.scale;
+				const py = fit.y + y * fit.scale;
+				if (k === 0) ctx.moveTo(px, py);
 				else ctx.lineTo(px, py);
 			}
 			ctx.closePath();
 			ctx.stroke();
 		}
-	}
-
-	function rectCentroid(r: QuickRect): { x: number; y: number } {
-		return { x: r.rect.x + r.rect.width / 2, y: r.rect.y + r.rect.height / 2 };
-	}
-
-	function updateTrackers(rects: QuickRect[]) {
-		const now = performance.now();
-		const used = new Set<number>();
-		for (const rect of rects) {
-			const c = rectCentroid(rect);
-			let best: Tracker | null = null;
-			let bestDist = TRACKER_MAX_DIST;
-			for (const t of trackers) {
-				if (used.has(t.id)) continue;
-				const last = t.centroids[t.centroids.length - 1];
-				const d = Math.hypot(c.x - last.x, c.y - last.y);
-				if (d < bestDist) {
-					bestDist = d;
-					best = t;
-				}
-			}
-			if (best) {
-				best.centroids.push(c);
-				if (best.centroids.length > STABLE_FRAMES) best.centroids.shift();
-				best.lastSeenAt = now;
-				used.add(best.id);
-			} else {
-				trackers.push({ id: nextTrackerId++, centroids: [c], lastSeenAt: now });
-			}
-		}
-		// Drop trackers we haven't seen for >500 ms.
-		trackers = trackers.filter((t) => now - t.lastSeenAt < 500);
-	}
-
-	function findTrackerFor(rect: QuickRect): Tracker | null {
-		const c = rectCentroid(rect);
-		let best: Tracker | null = null;
-		let bestDist = TRACKER_MAX_DIST;
-		for (const t of trackers) {
-			const last = t.centroids[t.centroids.length - 1];
-			const d = Math.hypot(c.x - last.x, c.y - last.y);
-			if (d < bestDist) {
-				bestDist = d;
-				best = t;
-			}
-		}
-		return best;
-	}
-
-	function trackerDrift(t: Tracker): number {
-		if (t.centroids.length < 2) return Infinity;
-		let maxDx = 0;
-		let maxDy = 0;
-		const first = t.centroids[0];
-		for (const c of t.centroids) {
-			maxDx = Math.max(maxDx, Math.abs(c.x - first.x));
-			maxDy = Math.max(maxDy, Math.abs(c.y - first.y));
-		}
-		return Math.max(maxDx, maxDy);
-	}
-
-	function sceneIsStable(): boolean {
-		if (lastRects.length === 0) return false;
-		for (const rect of lastRects) {
-			const t = findTrackerFor(rect);
-			if (!t || t.centroids.length < STABLE_FRAMES) return false;
-			if (trackerDrift(t) >= STABLE_DRIFT_PX) return false;
-		}
-		return true;
-	}
-
-	function stableScore(): number {
-		if (lastRects.length === 0) return 0;
-		let minFrac = 1;
-		for (const rect of lastRects) {
-			const t = findTrackerFor(rect);
-			if (!t) return 0;
-			const frac = Math.min(1, t.centroids.length / STABLE_FRAMES);
-			if (frac < minFrac) minFrac = frac;
-		}
-		return minFrac;
-	}
-
-	function computeSceneId(rects: QuickRect[]): string {
-		// Quantize centroids to a 30-px grid so tiny jitter doesn't change the id.
-		const parts = rects
-			.map((r) => {
-				const c = rectCentroid(r);
-				return `${Math.round(c.x / 30)},${Math.round(c.y / 30)}`;
-			})
-			.sort();
-		return parts.join('|');
 	}
 
 	onMount(() => {
@@ -353,24 +462,32 @@
 	});
 </script>
 
-<div class="space-y-3">
-	<div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden border border-[var(--color-border)]">
+<div class="space-y-3" data-detector={detectorMode}>
+	<!-- The box takes the stream's aspect ratio (portrait on an upright phone),
+	     capped in height so the controls stay reachable; any remaining
+	     letterbox is accounted for by the overlay's fitContain mapping. -->
+	<div
+		class="relative w-full max-h-[70vh] bg-black rounded-lg overflow-hidden border border-[var(--color-border)]"
+		style="aspect-ratio: {streamAspect};"
+	>
 		<!-- svelte-ignore a11y_media_has_caption -->
 		<video
 			bind:this={videoEl}
 			autoplay
 			playsinline
 			muted
-			class="w-full block aspect-video object-contain"
+			onloadedmetadata={updateStreamSize}
+			onresize={updateStreamSize}
+			class="block w-full h-full object-contain"
 		></video>
 		<canvas bind:this={overlayEl} class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
-		{#if status === 'requesting'}
+		{#if status === 'loading' || status === 'requesting'}
 			<div class="absolute inset-0 flex items-center justify-center text-white text-sm bg-black/60">
-				Requesting camera...
+				{status === 'loading' ? 'Loading card detection...' : 'Requesting camera...'}
 			</div>
 		{:else if status === 'error'}
 			<div class="absolute inset-0 flex flex-col items-center justify-center text-white text-sm bg-black/70 p-4 text-center">
-				<p class="font-medium mb-2">Camera unavailable</p>
+				<p class="font-medium mb-2">{errorTitle}</p>
 				<p class="text-xs text-white/70 mb-3">{errorMsg}</p>
 				<button onclick={start} class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-3 py-1 rounded text-xs">
 					Try again
@@ -378,8 +495,16 @@
 			</div>
 		{/if}
 		{#if status === 'live' && lastRectCount > 0}
-			<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-white text-xs">
-				{lastRectCount} card{lastRectCount === 1 ? '' : 's'} · stability {Math.round(stableProgress * 100)}%
+			<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-white text-xs" data-quality-hint={qualityHint}>
+				{lastRectCount} card{lastRectCount === 1 ? '' : 's'} · steady {Math.round(stableProgress * 100)}%
+				{#if holdReason}
+					<span class="text-red-300"> · {holdReason}</span>
+				{/if}
+				{#if qualityHint === 'blurry'}
+					<span class="text-yellow-300"> · blurry, hold still</span>
+				{:else if qualityHint === 'glare'}
+					<span class="text-yellow-300"> · glare on the card, tilt it a little</span>
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -414,6 +539,6 @@
 	</div>
 
 	<p class="text-xs text-[var(--color-text-muted)]">
-		Hold one or more cards in front of the camera. Yellow outlines mean detected; green means stable. With auto-capture enabled, identification fires automatically once the scene settles. Move the cards out of frame and back in to capture again.
+		Hold one or more cards upright in front of the camera, fully inside the frame. Yellow outlines mean detected, green means steady, red means the card is cut off at the edge (move back a little). With auto-capture enabled, identification fires as soon as the scene holds still and uses the sharpest recent frame; the badge warns about blur and glare. Move the cards out of frame and back in to capture again.
 	</p>
 </div>

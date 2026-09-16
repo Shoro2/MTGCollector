@@ -2,7 +2,8 @@
 	import type { PageData } from './$types';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { formatPrice, scryfallSrcset } from '$lib/utils';
+	import { scryfallSrcset, type PriceFields } from '$lib/utils';
+	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
 	let { data }: { data: PageData } = $props();
@@ -439,9 +440,7 @@
 						<p class="truncate text-sm font-semibold text-[var(--color-text)]">{card.name}</p>
 						<div class="mt-1 flex items-center justify-between gap-2">
 							<span class="set-code truncate text-[var(--color-text-muted)]">{card.set_name}</span>
-							{#if card.price_eur || card.price_usd}
-								<span class="price text-xs font-semibold text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null, card.price_usd as number | null)}</span>
-							{/if}
+							<PriceTag card={card as PriceFields} class="price text-xs font-semibold text-[var(--color-accent)]" hideEmpty />
 						</div>
 					</div>
 				</a>

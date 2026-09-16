@@ -1,0 +1,109 @@
+{
+ "written": "2026-09-16T17:43:09.239Z",
+ "photos": {
+  "20260403_114602(1).jpg": {
+   "detected": 4,
+   "identity": 4,
+   "printing": 4,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 2.9
+  },
+  "20260403_120150(1).jpg": {
+   "detected": 15,
+   "identity": 15,
+   "printing": 15,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 5.9
+  },
+  "20260403_121351(1).jpg": {
+   "detected": 10,
+   "identity": 10,
+   "printing": 10,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 5
+  },
+  "20260405_154748.jpg": {
+   "detected": 15,
+   "identity": 15,
+   "printing": 15,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 5.7
+  },
+  "DSC00847.JPG": {
+   "detected": 15,
+   "identity": 15,
+   "printing": 15,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 2.6
+  },
+  "DSC00853.JPG": {
+   "detected": 15,
+   "identity": 15,
+   "printing": 15,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 3.9
+  },
+  "DSC00854.JPG": {
+   "detected": 15,
+   "identity": 14,
+   "printing": 14,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 1,
+   "extra": 0,
+   "likely": 1,
+   "conflict": 0,
+   "wallSeconds": 3.8
+  },
+  "DSC00855(1).JPG": {
+   "detected": 15,
+   "identity": 15,
+   "printing": 15,
+   "unresolvedPrinting": 0,
+   "wrongIdentity": 0,
+   "wrongPrinting": 0,
+   "missing": 0,
+   "extra": 0,
+   "likely": 0,
+   "conflict": 0,
+   "wallSeconds": 3.6
+  }
+ }
+}

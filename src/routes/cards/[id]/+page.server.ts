@@ -1,5 +1,6 @@
 import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
+import { getUsdToEurRate } from '$lib/server/exchange-rate';
 
 const CARD_COLUMNS = `id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
 	colors, color_identity, keywords, set_code, set_name, collector_number, rarity,
@@ -24,7 +25,7 @@ export async function load({ params, locals, depends }) {
 	let reprints: Array<Record<string, unknown>> = [];
 	if (card.oracle_id) {
 		reprints = sqlite
-			.prepare('SELECT id, set_code, set_name, collector_number, price_eur, price_usd, image_uri FROM cards WHERE oracle_id = ? AND id != ? ORDER BY released_at DESC LIMIT 30')
+			.prepare('SELECT id, set_code, set_name, collector_number, price_eur, price_usd, price_eur_foil, price_usd_foil, image_uri FROM cards WHERE oracle_id = ? AND id != ? ORDER BY released_at DESC LIMIT 30')
 			.all(card.oracle_id, params.id) as Array<Record<string, unknown>>;
 	}
 
@@ -57,5 +58,8 @@ export async function load({ params, locals, depends }) {
 		? sqlite.prepare('SELECT id FROM wishlist_cards WHERE card_id = ? AND user_id = ?').get(params.id, userId) as { id: number } | undefined
 		: undefined;
 
-	return { card, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null };
+	// Cached for 6 h server-side; used to sanity-check the EUR price against the USD one.
+	const usdToEur = await getUsdToEurRate();
+
+	return { card, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null, usdToEur };
 }
