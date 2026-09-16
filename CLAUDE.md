@@ -14,6 +14,7 @@ npm run import-cards         # Download Scryfall bulk data (required first time,
 npm run dev                  # Start dev server at http://localhost:5173
 npm run build                # Production build (node adapter)
 npm run build:worker         # Bundle the live-scanner detection worker (runs automatically before dev/build)
+npm run hash-art             # Art-hash index for the scanner (resumable; --status, --limit N, --retry-failed, --export/--import file)
 npm run check                # TypeScript + Svelte validation
 ```
 
@@ -125,6 +126,7 @@ src/
 │   │   ├── paddle.ts                # PaddleOCR PP-OCRv4 recognition via onnxruntime-web (lazy, second name engine)
 │   │   ├── ctc.ts                   # ctcDecode(): greedy CTC decoding of the recognition output (pure)
 │   │   ├── timeout.ts               # withTimeout(): deadline for the lazily loaded OCR engines (a stalled CDN must not hang a scan)
+│   │   ├── phash.ts                 # 64-bit DCT perceptual hash of the art box, Hamming distance, gray/resize helpers (shared by server job and scanner)
 │   │   └── resolve.ts               # resolveCard(): evidence fusion -> identity / printing / finish decisions with states; nameIdentifies()
 │   ├── server/
 │   │   ├── auth.ts                  # OAuth, sessions, user CRUD
@@ -132,6 +134,8 @@ src/
 │   │   ├── exchange-rate.ts         # USD→EUR rate (frankfurter.dev, 6h cache)
 │   │   ├── images.ts                # Card image downloader
 │   │   ├── price-updater.ts         # Scryfall bulk price updates
+│   │   ├── art-hash.ts              # Art-hash job: fetch Scryfall images, hash the art box into cards.art_hash / card_faces.art_hash, export/import
+│   │   ├── hash-art.ts              # CLI for the art-hash job (npm run hash-art)
 │   │   ├── scan-logs.ts             # Server-side scan logs: data/scan-logs/<day>/*.log, 30-day retention, list/read for /admin
 │   │   ├── schema.ts               # Drizzle ORM table definitions
 │   │   └── seed.ts                  # Scryfall import script
@@ -369,7 +373,7 @@ Status: WP2.1/WP2.2 were part of the Phase 1 fusion; WP2.3 (binarised and gray r
 
 #### Phase 3 — Visual reference matching (~3–5 days)
 
-- **WP3.1 Art hash index (server).** A job computes a 64-bit DCT perceptual hash of the art region of every printing's image (fixed art box for standard frames, whole card for showcase/borderless/full-art), stored in `cards.art_hash` and served as a compact table (~1 MB gzipped, cached). Images come from Scryfall with the existing rate limit (~100k images, hours, once; the `unique_artwork` list halves it); decoding needs `sharp` (new dependency). Disk and time budget are an owner decision.
+- **WP3.1 Art hash index (server) — done 2026-09-16.** `npm run hash-art` (`src/lib/server/art-hash.ts`) fetches every printing's Scryfall image (the `small` rendition, 146×204, a fifth of the bytes; the stored size as fallback), cuts the **same fixed art box** for every frame (`ART_BOX` in `src/lib/scanner/phash.ts`: x 8–92 %, y 11.5–53 % — what matters is that the reference and the scan cut the same region, not that it is exactly the art on every frame), resizes to 32×32 gray, and stores the 64-bit DCT hash as 16 hex characters in `cards.art_hash` (migration `0021`; back faces of double-faced cards in `card_faces.art_hash`, `'-'` marks an image that could not be hashed). One image at a time with the catalogue's 200 ms spacing, newest sets first, resumable (`art_hash IS NULL`), 114 420 images ≈ 6.3 h once; `--export` / `--import` move the hashes between databases as a small JSON file (dev PC → host), later runs only touch new cards. `sharp` decodes the images (new dependency). Measured on real images: the same artwork across printings 0–10 bits apart (MID vs Double Feature reprint 10, Persistent Specimen VOW vs J25 0), different artwork 26–32. The compact table for the client is WP3.2.
 - **WP3.2 Client hash lookup.** Hash of the warped card's art region (plain canvas DCT, no OpenCV needed), Hamming search (≤ 10 bits) over the table → identity candidates with distances → fusion evidence. Same artwork gives the same hash: this decides *identity*, the footer decides the *printing*.
 - **WP3.3 Feature verification for the top-K candidates** (ORB/AKAZE + RANSAC homography): the vendored OpenCV.js 4.9 build exposes no features2d symbols, so this needs a custom build or a server-side verifier; optional, the hash alone should carry identity for most cards.
 - Acceptance: identity ≥ 100/104 on the eight photos with 0 wrong identities; the hold-out set reported separately; printing rules unchanged.
