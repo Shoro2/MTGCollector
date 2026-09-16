@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SceneStabilizer, sceneSignature } from './stability';
+import { SceneStabilizer, sceneDiffers, sceneSignature } from './stability';
 
 // A card ~600 px tall in a 1080x1920 portrait phone frame.
 const card = (x: number, y: number, w = 420, h = 600) => ({ rect: { x, y, width: w, height: h } });
@@ -152,5 +152,29 @@ describe('sceneSignature', () => {
 
 	it('is empty for an empty scene', () => {
 		expect(sceneSignature([], 30)).toBe('');
+	});
+});
+
+describe('sceneDiffers — what counts as a new scene after a capture', () => {
+	it('ignores hand jitter of a few percent of the card', () => {
+		expect(sceneDiffers([card(300, 600)], [card(312, 590)])).toBe(false);
+	});
+
+	it('counts a card moved by half its short edge as a new scene', () => {
+		expect(sceneDiffers([card(300, 600)], [card(520, 600)])).toBe(true);
+	});
+
+	it('counts a changed number of cards as a new scene', () => {
+		expect(sceneDiffers([card(300, 600)], [card(300, 600), card(800, 600)])).toBe(true);
+	});
+
+	it('treats an empty frame as a change either way, and two empty frames as none', () => {
+		expect(sceneDiffers([card(300, 600)], [])).toBe(true);
+		expect(sceneDiffers([], [card(300, 600)])).toBe(true);
+		expect(sceneDiffers([], [])).toBe(false);
+	});
+
+	it('matches cards by nearest centroid regardless of order', () => {
+		expect(sceneDiffers([card(300, 600), card(800, 600)], [card(805, 598), card(297, 603)])).toBe(false);
 	});
 });

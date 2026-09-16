@@ -75,7 +75,7 @@ Google OAuth with session cookies:
 3. `hooks.server.ts` — validates session on every request, sets `locals.user`
 4. Sessions expire after 30 days
 
-**Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`
+**Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`, `/api/health`, `/api/scan-log` (POST; its GET is admin-only)
 **Protected routes**: `/collection`, `/wishlist`, `/prices`, `/tags` — redirect to `/login`
 **Admin routes**: `/admin`, `/admin/api/*` — redirect non-admins to `/`. User must have `isAdmin: true` in `App.Locals`.
 
@@ -132,6 +132,7 @@ src/
 │   │   ├── exchange-rate.ts         # USD→EUR rate (frankfurter.dev, 6h cache)
 │   │   ├── images.ts                # Card image downloader
 │   │   ├── price-updater.ts         # Scryfall bulk price updates
+│   │   ├── scan-logs.ts             # Server-side scan logs: data/scan-logs/<day>/*.log, 30-day retention, list/read for /admin
 │   │   ├── schema.ts               # Drizzle ORM table definitions
 │   │   └── seed.ts                  # Scryfall import script
 │   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
@@ -144,6 +145,7 @@ src/
     ├── api/
     │   ├── import/+server.ts        # Admin DB-init trigger
     │   ├── ocr/+server.ts           # Google Vision batch OCR endpoint
+    │   ├── scan-log/+server.ts      # POST: /scan uploads its debug log (public, rate-limited); GET: admin list / read
     │   └── prices/
     │       ├── +server.ts           # Price update trigger
     │       ├── card/+server.ts      # Single card price history API
@@ -176,6 +178,7 @@ src/
 | `/collection/scan` | Retired in Phase 4 — redirects to `/scan` (hooks.server.ts) |
 | `/api/prices/data` | Bulk prices data (stats, topCards, profitHistory, usdToEur) — used by `/prices` for async loading |
 | `/api/ocr` | Google Vision batch OCR endpoint (TEXT_DETECTION, max 16 images) |
+| `/api/scan-log` | POST (public, 30/min per address, ≤ 512 KB): the scan page stores its debug log server-side; GET (admin): `?limit=` list, `?name=` one log |
 | `/api/import` | Admin-only DB init trigger |
 
 ## Important Patterns
@@ -205,7 +208,7 @@ src/
 11. Manual search fallback for unidentified cards
 12. Select all / import all buttons for bulk adding (auth required) — only *importable* cards: identity confirmed and exactly one printing established (`isImportable()`); nothing is imported via the first list position.
 13. **Copy for Moxfield**: generates text in `1 Name (SET) number` format for importable cards, appends `*F*` only for a confirmed foil finish
-14. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing.
+14. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing. **Every scan also uploads its log to the server** (`POST /api/scan-log`, text only, never a photo; fire-and-forget at the end of `processImage`, plus a `sendBeacon` when a live session is left without a capture so its `[live]` lines survive): `src/lib/server/scan-logs.ts` stores it as `data/scan-logs/<UTC day>/<HHMMSS>-<id>.log` — one JSON header line (mode, source, summary, counts, wall time, user agent, user id when signed in, detector, "Scan complete" tail, best-frame count) followed by the text — keeps 30 days, and `/admin` lists the last 50 with one-click viewing. The files are readable over SSH without opening the database, which is the point: a phone scan can be analysed without copying the log by hand.
 
 ### Live Scanner (camera mode, `/scan` → "Live camera")
 
@@ -219,7 +222,7 @@ src/
 - **Guards:** a rect within 1.5% of the frame edge is drawn red ("card cut off at the edge") and blocks auto-capture; more than 12 tracked rects also block it ("too many rectangles"). Manual "Capture now" always works.
 - **Capture hands the tracked rects to the pipeline.** `onCapture(canvas, rects)` → `processImage(canvas, presetRects)` builds the card candidates directly from them and skips the six full-resolution strategies (1–3 s on a phone). A manual capture while the scene is still moving passes no rects, so full detection runs as a fallback.
 - **Pre-warming:** OpenCV.js loads *before* the camera is requested; if the CDN script fails, the component shows "Card detection unavailable" with a retry button instead of streaming a preview that can never detect anything. `loadOpenCV()` refuses re-attempts for 2 s after a failure (`force: true` for user-initiated retries) so no caller can re-inject the script tag several times a second. The Tesseract worker pool is created as soon as live mode is selected (`$effect` in `/scan`), so the first capture doesn't pay worker spawn + traineddata download on top of the OCR.
-- **Re-arm:** `sceneSignature()` (centroids quantised to ~1/64 of the frame) prevents capturing the same layout twice; moving the cards out of frame and back re-arms.
+- **Re-arm:** after a capture the auto-capture stays off until the layout really changed — the cards left the frame (picked up and put back), a card moved by at least half its short edge, or the number of cards changed (`sceneDiffers()` in `stability.ts`, pure + unit-tested). The first version re-armed as soon as the scene fingerprint (`sceneSignature()`, centroids quantised to ~30 px cells) differed, which hand jitter does all the time: a phone captured the same card three times in a row, and because every jitter also reset the best-frame selector, the repeat captures came from worse frames with an unreadable footer. The best-frame bookkeeping uses the same coarse comparison now; the fingerprint only labels the scene in the log.
 
 ### Price Change Indicator
 
@@ -280,6 +283,7 @@ The app's state is two files under `data/`:
 
 - `data/mtg.db` — primary SQLite database (+ the transient `-wal`/`-shm` companions when the DB is open).
 - `data/secret-key.hex` — AES-256 key used to encrypt per-user Google Vision API keys. Lose this file and existing users have to re-enter their key from `/settings`.
+- `data/scan-logs/` — uploaded scanner debug logs, transient (30 days), not worth backing up.
 
 Recommended backup flow (safe while the app is running, because SQLite is in WAL mode):
 
@@ -412,6 +416,7 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 
 ### Done
 
+- Server-side scan logs (`/api/scan-log`, `data/scan-logs/`, `/admin` list) so phone scans can be analysed without copying the log; live auto-capture re-arms on a real layout change instead of the jittery fingerprint (a phone had captured the same card three times, the repeats without a readable footer).
 - Round 10 — the full catalogue: ground truth of the eight photos verified against the database (eleven corrections, `seed-cards.json` now exported from the catalogue), the harness drives two dev servers (`MTG_DB_PATH`, `DISABLE_PRICE_UPDATES`, `HARNESS_URL`, `rescore.mjs`, `conflict` bucket), and the name channel was hardened for a 38k-name pool: art-series records excluded, fuzzy candidates ranked server-side, `nameIdentifies()`, footer-versus-uncertain-name rules, runner-up margin, top-3 candidates per pass, engine-load deadlines. Full catalogue 78 / 55 with 23 wrong → 95 / 70 with 0 wrong; seed baseline unchanged at 103 / 103.
 - Phase 4 of the programme: grid inference as a validated hypothesis (`grid.ts`: oriented dimension filter, lattice indexing by neighbour links or 1-D clustering, affine/homography mapping, evidence per cell, no fill to a count), best-frame capture with blur/glare hints in the live scanner (`quality.ts`), per-frame detection in a Web Worker with its own OpenCV copy and a main-thread fallback (`quick-rects.ts`, `detect-worker.ts`, bundled by `scripts/build-detect-worker.mjs`), `/collection/scan` retired in favour of `/scan`. Eight photos: 101 → 103 of 104, 0 wrong.
 - Phase 2 of the programme: binarised and gray raw-line name passes, PaddleOCR PP-OCRv4 as a lazily loaded last name engine (WASM, CDN or self-hosted), padded collector numbers and lookalike set-code guard, edit-distance name fallback, up to three one-tap suggestions (structural number, one digit off with matching rarity, partial name), Vision retry with name and strip. Eight photos: identity and printing 90 → 101 of 104, 0 wrong.

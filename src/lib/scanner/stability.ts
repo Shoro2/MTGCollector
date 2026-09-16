@@ -210,3 +210,35 @@ export function sceneSignature(rects: TrackableRect[], cellPx: number): string {
 		.sort()
 		.join('|');
 }
+
+/**
+ * Whether a tracked layout differs from a captured one by more than hand
+ * jitter: a different number of rects, or a rect whose nearest counterpart
+ * moved by at least `minMoveFrac` of its short edge (half a card by default).
+ * The fingerprint above quantises centroids to ~30 px cells, which a hand
+ * crosses constantly — used alone to re-arm the auto-capture it took the same
+ * card three times in a row on a phone. Two empty frames are the same scene.
+ */
+export function sceneDiffers(captured: TrackableRect[], current: TrackableRect[], minMoveFrac = 0.5): boolean {
+	if (captured.length !== current.length) return true;
+	const used = new Set<number>();
+	for (const a of captured) {
+		const ca = centroid(a);
+		let best = -1;
+		let bestDist = Infinity;
+		current.forEach((b, i) => {
+			if (used.has(i)) return;
+			const cb = centroid(b);
+			const d = Math.hypot(cb.x - ca.x, cb.y - ca.y);
+			if (d < bestDist) {
+				bestDist = d;
+				best = i;
+			}
+		});
+		if (best === -1) return true;
+		used.add(best);
+		const shortEdge = Math.max(1, Math.min(a.rect.width, a.rect.height));
+		if (bestDist >= minMoveFrac * shortEdge) return true;
+	}
+	return false;
+}
