@@ -300,9 +300,14 @@ Recommended backup flow (safe while the app is running, because SQLite is in WAL
 ```bash
 # Consistent snapshot of the DB, even under load (the directory is not part of the checkout)
 mkdir -p backups && sqlite3 data/mtg.db ".backup 'backups/mtg-$(date +%Y%m%d-%H%M%S).db'"
+# Snapshots are never overwritten (time-stamped names) and each is a full copy of the database:
+# keep the two newest, or five deploys in two days leave 17 GB behind (3.4 GB each, 2026-09-17)
+ls -1t backups/mtg-*.db | tail -n +3 | xargs -r rm --
 # And the secret key alongside it
 cp data/secret-key.hex backups/secret-key-$(date +%Y%m%d-%H%M%S).hex
 ```
+
+A pre-deploy snapshot is a safety net for the deploy itself (a migration gone wrong), not the backup: the user data leaves the host every night in its own dump (see the vault's deployment notes), and the catalogue can be re-imported from Scryfall. That is why two snapshots are plenty.
 
 For Docker deployments, mount `/app/data` as a volume and include it in your host's backup job. `.backup` creates a consistent copy even while writers are active — prefer it over `cp mtg.db`, which can capture a torn page mid-write.
 
