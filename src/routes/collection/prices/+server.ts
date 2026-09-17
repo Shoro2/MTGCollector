@@ -2,32 +2,13 @@ import { json } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { priceDataCache } from '$lib/server/cache';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
-import * as XLSX from 'xlsx';
-
-// One parsed price row. We resolve cardId + foil later, then apply the
-// update based on whether the user chose overwrite vs fill-only mode.
-interface PriceRow {
-	cardId?: string;
-	foil: 0 | 1;
-	priceEur: number;
-	// For diagnostics when a row cannot be matched to a card.
-	label: string;
-}
+import { parseCardtrader, parseNumber, type PriceRow } from '$lib/server/cardtrader-xls';
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024;
 const MAX_XLS_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_BYTES = 1 * 1024 * 1024;
 
 const TEXT_LINE_REGEX = /^\s*(\d+)\s+(.+?)\s+\(([A-Za-z0-9]+)\)\s+(\S+?)\s+([\d.,]+)\s*([EeDd])\s*$/;
-
-function parseNumber(v: unknown): number | null {
-	if (typeof v === 'number' && isFinite(v)) return v;
-	if (typeof v === 'string') {
-		const n = parseFloat(v.replace(',', '.'));
-		return isNaN(n) ? null : n;
-	}
-	return null;
-}
 
 async function parseTextBody(
 	text: string,
@@ -135,87 +116,6 @@ async function parseCardmarket(
 	return { rows, parseErrors, parseErrorCount };
 }
 
-async function parseCardtrader(
-	bytes: ArrayBuffer,
-	findBySetNum: (set: string, num: string) => { id: string } | undefined,
-	findByName: (name: string) => { id: string } | undefined,
-	findByNameAndNum: (name: string, num: string) => { id: string } | undefined
-): Promise<{ rows: PriceRow[]; parseErrors: string[]; parseErrorCount: number }> {
-	let workbook: XLSX.WorkBook;
-	try {
-		workbook = XLSX.read(bytes, { type: 'array' });
-	} catch (err) {
-		return { rows: [], parseErrors: [`Could not read Excel file: ${(err as Error).message}`], parseErrorCount: 1 };
-	}
-
-	const sheet = workbook.Sheets[workbook.SheetNames[0]];
-	if (!sheet) {
-		return { rows: [], parseErrors: ['Workbook contains no sheets'], parseErrorCount: 1 };
-	}
-
-	const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { raw: true });
-	const parseErrors: string[] = [];
-	let parseErrorCount = 0;
-	const rows: PriceRow[] = [];
-
-	for (const record of records) {
-		const itemName = String(record['Item Name'] ?? '').trim();
-		const setCodeRaw = String(record['Set Code'] ?? '').trim();
-		const collectorNumberRaw = record['Collector Number'];
-		const collectorNumber = collectorNumberRaw != null ? String(collectorNumberRaw).trim() : '';
-		const priceCents = parseNumber(record['Price in EUR Cents']);
-		const foilVal = record['Foil/Reverse'];
-		const foil: 0 | 1 = foilVal === true || foilVal === 1 || foilVal === 'true' ? 1 : 0;
-
-		if (!itemName || priceCents == null) {
-			parseErrorCount++;
-			if (parseErrors.length < 20) {
-				parseErrors.push(`${itemName || '(no name)'} — ${setCodeRaw} #${collectorNumber}`);
-			}
-			continue;
-		}
-
-		const priceEur = priceCents / 100;
-		// Strip variant suffixes like "(Borderless)" for name-based matching
-		// while preserving the original for the error label.
-		const baseName = itemName.replace(/\s*\([^)]+\)\s*$/, '').trim();
-
-		let card: { id: string } | undefined;
-
-		if (collectorNumber) {
-			const setCode = setCodeRaw.toLowerCase();
-			card = findBySetNum(setCode, collectorNumber);
-			// Cardtrader prefixes collector-booster sets with C (e.g. CINR for
-			// Innistrad Remastered collectors). Scryfall's set for those same
-			// cards is the base set code with collector numbers past the main run.
-			if (!card && setCode.length > 2 && setCode.startsWith('c')) {
-				card = findBySetNum(setCode.slice(1), collectorNumber);
-			}
-			if (!card && /^\d+$/.test(collectorNumber)) {
-				const trimmed = String(parseInt(collectorNumber, 10));
-				if (trimmed !== collectorNumber) {
-					card = findBySetNum(setCodeRaw.toLowerCase(), trimmed);
-					if (!card && setCode.length > 2 && setCode.startsWith('c')) {
-						card = findBySetNum(setCode.slice(1), trimmed);
-					}
-				}
-			}
-			if (!card) card = findByNameAndNum(baseName, collectorNumber);
-		}
-		if (!card) card = findByName(baseName);
-		if (!card) card = findByName(itemName);
-
-		rows.push({
-			cardId: card?.id,
-			foil,
-			priceEur,
-			label: `${itemName} (${setCodeRaw}) ${collectorNumber}`.trim()
-		});
-	}
-
-	return { rows, parseErrors, parseErrorCount };
-}
-
 export async function POST({ request, locals }) {
 	if (!locals.user) {
 		return json({ success: false, message: 'Not authenticated' }, { status: 401 });
@@ -285,7 +185,7 @@ export async function POST({ request, locals }) {
 			return json({ success: false, message: 'XLS too large (>10 MB)' }, { status: 413 });
 		}
 		const bytes = await file.arrayBuffer();
-		parsed = await parseCardtrader(bytes, findBySetNum, findByName, findByNameAndNum);
+		parsed = parseCardtrader(bytes, findBySetNum, findByName, findByNameAndNum);
 	}
 
 	const { rows, parseErrors, parseErrorCount } = parsed;
