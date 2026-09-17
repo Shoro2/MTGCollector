@@ -1,5 +1,5 @@
 {
- "written": "2026-09-16T21:17:53.205Z",
+ "written": "2026-09-17T07:32:06.421Z",
  "photos": {
   "20260403_114602(1).jpg": {
    "detected": 4,
@@ -12,7 +12,7 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 5.2
+   "wallSeconds": 4.5
   },
   "20260403_120150(1).jpg": {
    "detected": 15,
@@ -25,7 +25,7 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 23.3
+   "wallSeconds": 18.6
   },
   "20260403_121351(1).jpg": {
    "detected": 10,
@@ -38,20 +38,20 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 15.5
+   "wallSeconds": 13.6
   },
   "20260405_154748.jpg": {
    "detected": 15,
    "identity": 14,
-   "printing": 12,
-   "unresolvedPrinting": 2,
+   "printing": 13,
+   "unresolvedPrinting": 1,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
    "missing": 1,
    "extra": 0,
    "likely": 1,
    "conflict": 0,
-   "wallSeconds": 17.4
+   "wallSeconds": 14.7
   },
   "DSC00847.JPG": {
    "detected": 15,
@@ -64,13 +64,13 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 7.4
+   "wallSeconds": 6.7
   },
   "DSC00853.JPG": {
    "detected": 15,
    "identity": 15,
-   "printing": 11,
-   "unresolvedPrinting": 4,
+   "printing": 12,
+   "unresolvedPrinting": 3,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
    "missing": 0,
@@ -82,15 +82,15 @@
   "DSC00854.JPG": {
    "detected": 15,
    "identity": 15,
-   "printing": 8,
-   "unresolvedPrinting": 7,
+   "printing": 10,
+   "unresolvedPrinting": 5,
    "wrongIdentity": 0,
    "wrongPrinting": 0,
    "missing": 0,
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 8.4
+   "wallSeconds": 7.2
   },
   "DSC00855(1).JPG": {
    "detected": 15,
@@ -103,7 +103,7 @@
    "extra": 0,
    "likely": 0,
    "conflict": 0,
-   "wallSeconds": 5.7
+   "wallSeconds": 5.3
   }
  }
 }
