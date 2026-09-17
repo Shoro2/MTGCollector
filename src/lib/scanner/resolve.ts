@@ -80,6 +80,18 @@ export const NAME_CONTRADICT = 0.3;
 /** An art hash this close (bits) is the same artwork: the same picture across printings measured 0-12, different pictures 26+. */
 export const ART_CONFIRM = 10;
 /**
+ * An artwork match this close identifies a card with no other evidence. From
+ * here up to ART_CONFIRM the match needs support — a name candidate for the
+ * same card, or a footer reading that fits one of its printings. On a phone
+ * (2026-09-17) a 10-bit match of the *rotated* hash confirmed "Caduceus, Staff
+ * of Hermes" for a Rabid Attack whose name bar was unreadable, although the
+ * footer had read its number, 96, correctly and Caduceus is #2 / #173. With
+ * 114k references and two hashes per card a chance match at 10 bits is not
+ * rare enough to stand alone; on the measured photos every art-only
+ * confirmation that mattered sat at 4-6 bits.
+ */
+export const ART_CONFIRM_ALONE = 6;
+/**
  * Up to this distance the artwork counts as evidence that a name candidate can
  * corroborate (and the server's search radius). Measured against 8.5k hashes:
  * the nearest artwork was the right card at 2–12 bits in every case and a
@@ -350,15 +362,45 @@ export function resolveCard(input: ResolveInput): Decision {
 		return { row: null, candidates: pool, state: 'unknown' };
 	};
 	if (artBest) reasons.push(`art: "${artBest.name}" ${artBest.distance} bits (${artBest.rows.length} printing(s) with this artwork)${artRunnerUp ? `, next "${artRunnerUp.name}" ${artRunnerUp.distance} bits` : ''}`);
+	// What the footer says about an art-matched name. Only structurally parsed numbers count: equal
+	// to one of the name's printings the footer agrees (so does a real set code the name was printed
+	// in); compatible with none of them — not even one digit off — it contradicts.
+	const artFooter = (name: string): 'agrees' | 'contradicts' | 'silent' => {
+		const printings = printingsOf(name);
+		if (printings.length === 0) return 'silent';
+		const structural = ranked.filter(({ r }) => r.collectorNumber !== '' && isStructural(r.numberSource));
+		if (structural.some(({ r }) => printings.some((p) => sameNumber(r, p)))) return 'agrees';
+		if (ranked.some(({ r }) => r.setCode !== '' && input.isKnownSet(r.setCode) && printings.some((p) => String(p.set_code).toLowerCase() === r.setCode.toLowerCase()))) return 'agrees';
+		if (structural.some(({ r }) => !printings.some((p) => numberCompatible(r.collectorNumber, String(p.collector_number))))) return 'contradicts';
+		// In a spread the set most of the other cards belong to supports the match as well: a chance
+		// match among 114k references lands in that one set about once in a hundred times.
+		if (input.majoritySet && printings.some((p) => String(p.set_code).toLowerCase() === input.majoritySet!.toLowerCase())) return 'agrees';
+		return 'silent';
+	};
+	// An art match the footer contradicts and no name supports is dropped for good (no one-tap offer either).
+	let artIgnored = false;
 	if (artStrong && artBest) {
 		if (best && best.score >= NAME_CERTAIN && nameIdentifies(best, input.nameText) && best.name !== artBest.name) {
 			reasons.push(`conflict: name says "${best.name}" ${best.score.toFixed(2)}, artwork says "${artBest.name}"`);
 			return done(best.name, 'conflict', null, [...artBest.rows, ...printingsOf(best.name)], 'conflict');
 		}
-		const p = artPrinting(artBest);
-		reasons.push(`art identifies "${artBest.name}"${best && best.name === artBest.name ? ` (name agrees ${best.score.toFixed(2)})` : ''}`);
-		return done(artBest.name, 'confirmed', p.row, p.candidates, p.state);
+		const nameAgrees = byScore.find((c) => c.score >= NAME_LIKELY && c.name === artBest.name);
+		const footer = artFooter(artBest.name);
+		if (footer === 'contradicts' && !nameAgrees) {
+			artIgnored = true;
+			reasons.push(`art "${artBest.name}" ${artBest.distance} bits dropped: the footer's number fits none of its printings and no name supports it`);
+		} else if (nameAgrees || footer === 'agrees' || artBest.distance <= ART_CONFIRM_ALONE) {
+			const p = artPrinting(artBest);
+			const why = nameAgrees ? `name agrees ${nameAgrees.score.toFixed(2)}` : footer === 'agrees' ? 'the footer or the majority set fits one of its printings' : `${artBest.distance} bits, close enough on its own`;
+			reasons.push(`art identifies "${artBest.name}" (${why})`);
+			return done(artBest.name, 'confirmed', p.row, p.candidates, p.state);
+		} else {
+			// 7-10 bits with nothing to support it: the name and footer rules go first, the
+			// artwork stays a rival for an uncertain name (1d) and a one-tap offer at the end (3d).
+			reasons.push(`art "${artBest.name}" ${artBest.distance} bits has no support from the name or the footer: not confirmed on its own`);
+		}
 	}
+	const artRival = artStrong && artBest && !artIgnored ? artBest : null;
 	// 0b. A looser or ambiguous artwork plus a name candidate naming the same
 	// card: two independent channels agree.
 	if (artBest) {
@@ -427,6 +469,13 @@ export function resolveCard(input: ResolveInput): Decision {
 				}
 				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} contradicted by ${contradictions.map((r) => `[${r.variant}] ${r.setCode}#${r.collectorNumber}`).join(', ')} -> likely`);
 				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, printings, 'likely');
+			}
+			// 1d'. An unsupported close artwork that names another card: two uncertain
+			// channels disagree, so nothing is confirmed. The artwork goes first — on the
+			// measured photos it was right at up to 10 bits where names below 0.8 were not.
+			if (artRival && artRival.name !== best.name) {
+				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} vs artwork "${artRival.name}" ${artRival.distance} bits: neither is supported -> likely`);
+				return done(artRival.name, 'likely', artRival.rows.length === 1 ? artRival.rows[0] : null, [...artRival.rows, ...printings], 'likely');
 			}
 			// 1d. A runner-up candidate too close to call: offer both. Both are
 			// measured on the whole name text, without the junk-tolerant prefix
@@ -500,7 +549,7 @@ export function resolveCard(input: ResolveInput): Decision {
 	// 3d. Artwork alone, without a name or a footer to confirm it: one tap, the
 	// printings with that picture (and the next artwork when it was close).
 	// Only a close match: a looser one names a different card too often.
-	if (artBest && artBest.distance <= ART_CONFIRM) {
+	if (artBest && artBest.distance <= ART_CONFIRM && !artIgnored) {
 		const candidates = artUnambiguous ? artBest.rows : artRanked.flatMap((g) => g.rows);
 		reasons.push(`art "${artBest.name}" ${artBest.distance} bits${artUnambiguous || !artRunnerUp ? '' : ` vs "${artRunnerUp.name}" ${artRunnerUp.distance}`} without other evidence -> likely`);
 		return done(artBest.name, 'likely', artBest.rows.length === 1 && artUnambiguous ? artBest.rows[0] : null, candidates, 'likely');

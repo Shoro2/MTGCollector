@@ -157,7 +157,9 @@ tuned away, all logged for the roadmap:
   the name identifies these cards and the printing stays open.
 - **A black-bordered card filling the frame on a dark cloth** (single-card
   photo; **fixed 2026-09-17** by the coarse fallback, Strategy 7 — the card is
-  now identified with its printing, hold-out identity 19 / 26, printing 7 / 26): all six strategies return the image frame itself as the card, the
+  now identified with its printing; hold-out identity 18 / 26, printing 7 / 26
+  since art-only matches of 7–10 bits need support: the flavor-name Counterspell
+  is a one-tap offer again, after a phone confirmed a wrong card that way): all six strategies return the image frame itself as the card, the
   warp is the whole photo and the name window lands on the rules text — in
   single *and* multiple mode. The live scanner's edge guard would refuse such a
   frame; the upload path needs a "card = whole image" fallback.

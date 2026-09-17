@@ -272,12 +272,69 @@ describe('resolveCard — art-hash evidence (Phase 3)', () => {
 		expect(all.printing.candidates).toEqual([pool[4], pool[5], showcase]);
 	});
 
-	it('beats an uncertain name that reads differently', () => {
+	it('beats an uncertain name that reads differently when the match is close enough to stand alone', () => {
 		const d = resolveCard(base({
 			nameCandidates: [{ name: 'Llanowar Cavalry', score: 0.63, pass: 'rotated binarized' }], nameText: 'pean Zia Cavalry',
-			artMatches: [art(pool[0], 7)]
+			artMatches: [art(pool[0], 5)]
 		}));
 		expect(d.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });
+	});
+
+	it('confirms nothing when an unsupported 7-10 bit artwork and an uncertain name disagree: one tap, artwork first', () => {
+		const d = resolveCard(base({
+			nameCandidates: [{ name: 'Llanowar Cavalry', score: 0.63, pass: 'rotated binarized' }], nameText: 'pean Zia Cavalry',
+			artMatches: [art(pool[0], 8)]
+		}));
+		expect(d.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'likely' });
+		expect(d.printing.candidates.map((r) => r.name)).toEqual(['Mechanized Ninja Cavalry', 'Llanowar Cavalry']);
+	});
+
+	it('does not confirm a 7-10 bit artwork on its own, and drops it when the footer number fits none of its printings (phone, 2026-09-17)', () => {
+		// Rabid Attack SOS #96: name bar unreadable, footer "J 0096" read twice, the rotated hash matched
+		// "Caduceus, Staff of Hermes" (ACR #2 / #173) at 10 bits and was confirmed.
+		const caduceus = [row('Caduceus, Staff of Hermes', 'acr', '2', 'rare'), row('Caduceus, Staff of Hermes', 'acr', '173', 'rare')];
+		const phone = resolveCard(base({
+			nameText: 'l  wopuons coos woo,',
+			printingsByName: (n) => (n === 'Caduceus, Staff of Hermes' ? caduceus : []),
+			artMatches: [art(caduceus[0], 10, true), art(caduceus[1], 10, true)],
+			footer: [
+				reading({ collectorNumber: '96', numberSource: 'padded', setCode: 'rrr', text: 'RRR... J 0096' }),
+				reading({ collectorNumber: '96', numberSource: 'padded', setCode: 'eee', text: 'EEE J 0096', variant: 'small' })
+			]
+		}));
+		expect(phone.identity.name).not.toBe('Caduceus, Staff of Hermes');
+		expect(phone.identity.state).not.toBe('confirmed');
+		expect(phone.printing.candidates.map((r) => r.name)).not.toContain('Caduceus, Staff of Hermes');
+		expect(phone.reasons.join(' ')).toContain('dropped');
+		// the same match without any footer: a one-tap offer, never a confirmation
+		const alone = resolveCard(base({ printingsByName: (n) => (n === 'Caduceus, Staff of Hermes' ? caduceus : []), artMatches: [art(caduceus[0], 10, true), art(caduceus[1], 10, true)] }));
+		expect(alone.identity).toMatchObject({ name: 'Caduceus, Staff of Hermes', state: 'likely' });
+	});
+
+	it('lets the majority set of a spread support a 7-10 bit artwork, but not against a contradicting footer number', () => {
+		const supported = resolveCard(base({ artMatches: [art(pool[0], 8)], majoritySet: 'tmt' }));
+		expect(supported.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });
+		const otherSet = resolveCard(base({ artMatches: [art(pool[0], 8)], majoritySet: 'mid' }));
+		expect(otherSet.identity.state).toBe('likely');
+		const contradicted = resolveCard(base({
+			artMatches: [art(pool[0], 8)], majoritySet: 'tmt',
+			footer: [reading({ collectorNumber: '96', numberSource: 'padded', text: 'J 0096' })]
+		}));
+		expect(contradicted.identity.state).not.toBe('confirmed');
+	});
+
+	it('confirms a 7-10 bit artwork that the footer or a partial name supports', () => {
+		const byFooter = resolveCard(base({
+			artMatches: [art(pool[0], 9)],
+			footer: [reading({ setCode: 'tmt', collectorNumber: '156', numberSource: 'rarity', rarity: 'c', text: 'C 0156 TMT EN' })]
+		}));
+		expect(byFooter.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });
+		expect(byFooter.printing).toMatchObject({ row: pool[0], state: 'confirmed' });
+		const byName = resolveCard(base({
+			nameCandidates: [{ name: 'Mechanized Ninja Cavalry', score: 0.45, pass: 'paddle' }], nameText: 'Mechan Nin',
+			artMatches: [art(pool[0], 9)]
+		}));
+		expect(byName.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });
 	});
 
 	it('raises a conflict against a certain name that reads differently', () => {
