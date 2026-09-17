@@ -35,6 +35,7 @@ export const POST: RequestHandler = async ({ request, locals, getClientAddress }
 		wallMs: num(body.wallMs),
 		userAgent: request.headers.get('user-agent') ?? '',
 		userId: locals.user?.id ?? null,
+		version: str(body.version),
 		text
 	});
 	return json({ ok: true, name });

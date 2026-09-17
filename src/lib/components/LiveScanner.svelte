@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { createQuickDetector, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
+	import { version } from '$app/environment';
+	import { createQuickDetector, DETECT_WORKER_URL, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { SceneStabilizer, sceneDiffers, sceneSignature } from '$lib/scanner/stability';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
@@ -123,7 +124,9 @@
 		}
 		// The per-frame detector (a Web Worker with its own OpenCV copy, or the
 		// main thread as fallback) starts while the camera permission is pending.
-		const detectorReady = createQuickDetector({ log: (m) => log?.(m) });
+		// The worker script has a fixed URL: tie it to this build, or a cached copy outlives the deploy.
+		log?.(`app version ${version}`);
+		const detectorReady = createQuickDetector({ workerUrl: `${DETECT_WORKER_URL}?v=${encodeURIComponent(version)}`, log: (m) => log?.(m) });
 
 		status = 'requesting';
 		try {

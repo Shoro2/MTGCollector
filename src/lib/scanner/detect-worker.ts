@@ -9,7 +9,7 @@
  *
  * Protocol (all messages are plain objects):
  *   page -> worker  { type: 'init', openCvUrl }
- *   worker -> page  { type: 'ready' } | { type: 'error', message }
+ *   worker -> page  { type: 'ready', build } | { type: 'error', message }
  *   page -> worker  { type: 'detect', id, width, height, buffer, opts }
  *   worker -> page  { type: 'result', id, rects, quality, ms, error? }
  */
@@ -67,13 +67,17 @@ function loadOpenCVInWorker(url: string): Promise<void> {
 	});
 }
 
+/** Build time of this bundle, injected by scripts/build-detect-worker.mjs. */
+declare const __WORKER_BUILD__: string | undefined;
+const WORKER_BUILD = typeof __WORKER_BUILD__ === 'string' ? __WORKER_BUILD__ : 'unbundled';
+
 scope.onmessage = async (e) => {
 	const msg = e.data;
 	if (msg.type === 'init') {
 		try {
 			await loadOpenCVInWorker(msg.openCvUrl);
 			cv = scope.cv;
-			scope.postMessage({ type: 'ready' });
+			scope.postMessage({ type: 'ready', build: WORKER_BUILD });
 		} catch (err) {
 			scope.postMessage({ type: 'error', message: (err as Error).message ?? String(err) });
 		}
