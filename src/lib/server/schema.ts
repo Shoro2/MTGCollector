@@ -50,6 +50,8 @@ export const users = sqliteTable('users', {
 	email: text('email').notNull(),
 	name: text('name').notNull(),
 	avatarUrl: text('avatar_url'),
+	// Legacy, unused since the Google Vision retry was removed (2026-09-17). The column stays so existing
+	// databases and the positional INSERTs of the nightly user-data dump keep loading.
 	googleVisionApiKey: text('google_vision_api_key'),
 	createdAt: text('created_at').$defaultFn(() => new Date().toISOString())
 });

@@ -241,59 +241,6 @@
 		{/if}
 	</div>
 
-	<!-- Google Vision API Usage -->
-	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-		<h2 class="text-lg font-semibold mb-1">Google Vision API (user-supplied keys)</h2>
-		<p class="text-xs text-[var(--color-text-muted)] mb-4">
-			Each user provides their own Google Cloud Vision API key in their settings. Quota and billing are handled by the user's own Google Cloud project.
-		</p>
-		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
-			<div class="min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Requests (diesen Monat)</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.thisMonth)}</p>
-			</div>
-			<div class="min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Bilder (diesen Monat)</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.thisMonthImages)}</p>
-			</div>
-			<div class="min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Requests (gesamt)</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.total)}</p>
-			</div>
-			<div class="min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Bilder (gesamt)</p>
-				<p class="text-xl sm:text-2xl font-bold break-words">{formatNum(data.visionUsage.totalImages)}</p>
-			</div>
-		</div>
-		{#if data.visionUsage.recentCalls.length > 0}
-			<details>
-				<summary class="text-sm text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)]">Letzte API-Calls ({data.visionUsage.recentCalls.length})</summary>
-				<div class="mt-2 overflow-x-auto">
-					<table class="w-full text-sm">
-						<thead>
-							<tr class="text-left text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
-								<th class="py-1 pr-4">Zeitpunkt</th>
-								<th class="py-1 pr-4">Requests</th>
-								<th class="py-1 pr-4">Bilder</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each data.visionUsage.recentCalls as call}
-								<tr class="border-b border-[var(--color-border)]">
-									<td class="py-1 pr-4">{formatDate(call.created_at)}</td>
-									<td class="py-1 pr-4">{call.request_count}</td>
-									<td class="py-1 pr-4">{call.image_count}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			</details>
-		{:else}
-			<p class="text-sm text-[var(--color-text-muted)]">Noch keine API-Calls.</p>
-		{/if}
-	</div>
-
 	<!-- DB Overview -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
 		<h2 class="text-lg font-semibold mb-4">Database Overview</h2>

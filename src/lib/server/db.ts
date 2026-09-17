@@ -73,6 +73,7 @@ const MIGRATIONS: Migration[] = [
 		}
 	},
 	{
+		// Legacy column, unused since 2026-09-17 (Vision retry removed); kept for existing databases and dumps.
 		id: '0005_users_google_vision_api_key',
 		run: (db) => addColumnIfMissing(db, 'users', 'google_vision_api_key', 'TEXT')
 	},
@@ -164,6 +165,7 @@ const MIGRATIONS: Migration[] = [
 		}
 	},
 	{
+		// Legacy table (per-user Vision usage), no longer written or read; kept for existing databases and dumps.
 		id: '0009_api_usage_table',
 		run: (db) => {
 			db.exec(`

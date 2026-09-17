@@ -202,28 +202,12 @@
 	let manualResults = $state<Array<Record<string, unknown>>>([]);
 	let manualCardIndex = $state<number | null>(null);
 
-	// Toggle for Google Vision retry on cards Tesseract failed to identify.
-	// Persisted in localStorage; only meaningful when the user has stored their
-	// own Vision API key in /settings.
-	let visionRetryEnabled = $state(true);
-	let visionRetriedCount = $state(0);
-
 	onMount(() => {
-		try {
-			const stored = localStorage.getItem('mtg-scan-vision-retry');
-			if (stored !== null) visionRetryEnabled = stored === 'true';
-		} catch { /* localStorage unavailable */ }
 		try {
 			const storedMode = localStorage.getItem('mtg-scan-mode');
 			if (storedMode === 'single' || storedMode === 'multiple' || storedMode === 'live') {
 				scanMode = storedMode;
 			}
-		} catch { /* localStorage unavailable */ }
-	});
-
-	$effect(() => {
-		try {
-			localStorage.setItem('mtg-scan-vision-retry', String(visionRetryEnabled));
 		} catch { /* localStorage unavailable */ }
 	});
 
@@ -320,7 +304,6 @@
 			debugLog = [];
 			manualResults = [];
 			manualCardIndex = null;
-			visionRetriedCount = 0;
 			processImage(file);
 		}
 	}
@@ -1749,70 +1732,7 @@
 			}
 			detectedCards = [...detectedCards];
 
-			// Phase 3b: Optional Google Vision retry. If the user has stored a personal
-			// API key in /settings AND the toggle on this page is enabled, send the
-			// name band and the collector strip of every card that is not settled
-			// (identity or printing) to Vision: the name text becomes one more name
-			// candidate, the strip one more reading — the only reading whose foil
-			// hint (★ vs •) is trusted — and the fusion runs again.
 			if (superseded()) return;
-			const userHasVisionKey = !!data.user?.hasVisionApiKey;
-			if (userHasVisionKey && visionRetryEnabled) {
-				const failed: Array<{ card: typeof detectedCards[number]; index: number }> = [];
-				for (let i = firstIdx; i < detectedCards.length; i++) {
-					const c = detectedCards[i];
-					if (!(c.status === 'found' && c.printingState === 'confirmed')) failed.push({ card: c, index: i });
-				}
-				if (failed.length > 0) {
-					log(`Phase 3b: Vision retry for ${failed.length} card(s) [${failed.map(f => `Card ${f.index + 1}`).join(', ')}]`);
-					const retried: typeof failed = [];
-					const visionNames: Array<{ i: number; cleanName: string }> = [];
-					// /api/ocr accepts up to 16 images per request: two per card
-					// (name band, collector strip), so eight cards per request.
-					for (let batchStart = 0; batchStart < failed.length; batchStart += 8) {
-						const batch = failed.slice(batchStart, batchStart + 8);
-						scanProgress = `Retrying ${batch.length} card${batch.length === 1 ? '' : 's'} with Google Vision...`;
-						try {
-							const res = await fetch('/api/ocr', {
-								method: 'POST',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ images: batch.flatMap(({ card }) => [card.nameUrl, card.bottomUrl]) })
-							});
-							if (res.ok) {
-								const visionData = await res.json();
-								for (let j = 0; j < batch.length; j++) {
-									const { card, index: cardIdx } = batch[j];
-									const nameText = cleanOcr((visionData.results?.[2 * j] ?? '').toString());
-									const stripText = cleanOcr((visionData.results?.[2 * j + 1] ?? '').toString());
-									if (!nameText && !stripText) continue;
-									log(`Card ${cardIdx + 1}: Vision name="${nameText}" strip="${stripText}" (Tesseract strip was="${card.ocrText}")`);
-									if (stripText) card.readings.push(readingOf(stripText, 'vision', true));
-									const cleanName = cleanNameOf(nameText);
-									if (cleanName.length >= 2) {
-										visionNames.push({ i: cardIdx - firstIdx, cleanName });
-										if (realWordCount(cleanName) > realWordCount(card.nameText)) card.nameText = cleanName;
-									}
-									retried.push(batch[j]);
-									visionRetriedCount++;
-								}
-							}
-						} catch { /* keep Tesseract result for this batch */ }
-					}
-					if (visionNames.length > 0 && !superseded()) await acceptNameMatches(visionNames, 'vision');
-					if (retried.length > 0 && !superseded()) {
-						await prefetch(retried.map((f) => f.card), majoritySet);
-						for (const { card, index } of retried) {
-							resolveOne(card, index + 1, majoritySet);
-							log(`Card ${index + 1}: after Vision retry -> ${card.status}, printing ${card.printingState}`);
-						}
-						detectedCards = [...detectedCards];
-					}
-				} else {
-					log('Phase 3b: Vision retry skipped (no unsettled cards)');
-				}
-			} else {
-				log(`Phase 3b: Vision retry ${!userHasVisionKey ? 'no API key' : 'disabled by toggle'}`);
-			}
 
 			const newSlice = detectedCards.slice(firstIdx);
 			const identifiedCount = newSlice.filter((c) => c.status === 'found').length;
@@ -2105,31 +2025,11 @@
 			For best results, place the card(s) on a plain white background — a sheet of white paper works perfectly. When scanning multiple cards, leave a small gap between each card so the detector can separate them.
 		</p>
 
-		{#if data.user?.hasVisionApiKey}
-			<label class="flex items-center gap-2 mt-3 cursor-pointer select-none">
-				<input
-					type="checkbox"
-					bind:checked={visionRetryEnabled}
-					class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
-				/>
-				<span class="text-xs text-[var(--color-text-muted)]">
-					Retry unrecognized cards with Google Vision API (uses your personal key)
-				</span>
-			</label>
-		{/if}
-
 		<p class="text-xs text-[var(--color-text-muted)] mt-2">
 			<svg class="inline w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
 			</svg>
-			Card recognition runs locally in your browser using Tesseract.
-			{#if data.user?.hasVisionApiKey}
-				When the toggle above is on, cards that local OCR can't identify are retried via Google's Vision API using your personal key.
-			{:else}
-				Optionally, add your own
-				<a href="/settings" class="underline hover:text-[var(--color-primary)]">Google Vision API key</a>
-				in Settings to retry unrecognized cards via Google's Vision API.
-			{/if}
+			Card recognition runs locally in your browser; no photo leaves your device.
 			<a href="/datenschutz#m-ocr" class="underline hover:text-[var(--color-primary)]">Learn more</a>
 		</p>
 	{/if}
@@ -2144,16 +2044,6 @@
 		<!-- Live captures have no imagePreview; still show the final "Done! x of y identified." line. -->
 		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-sm text-[var(--color-text-muted)]">
 			{scanProgress}
-		</div>
-	{/if}
-
-	<!-- Post-scan note about Google Vision retries -->
-	{#if !scanning && visionRetriedCount > 0}
-		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-xs text-[var(--color-text-muted)]">
-			<svg class="inline w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-			</svg>
-			{visionRetriedCount} card{visionRetriedCount === 1 ? '' : 's'} retried with Google Vision using your personal API key.
 		</div>
 	{/if}
 

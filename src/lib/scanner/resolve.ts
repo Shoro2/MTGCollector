@@ -3,7 +3,7 @@
  *
  * The OCR phases produce evidence, never decisions: name candidates with
  * scores from every name pass, and one collector-line reading per footer
- * variant (4x / 2x strip, both orientations, Google Vision). This module turns
+ * variant (4x / 2x strip, both orientations). This module turns
  * them into an identity decision and a printing decision, each with a state:
  *
  *   confirmed  the evidence singles out the card / printing
@@ -22,9 +22,9 @@ import { hammingDistance } from './phash';
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
 export type NameCandidate = { name: string; score: number; pass: string };
 export type FooterReading = CollectorInfo & {
-	/** Which crop produced the reading: 'primary', 'small', 'rotated', 'rotated small', 'vision'. */
+	/** Which crop produced the reading: 'primary', 'small', 'rotated', 'rotated small'. */
 	variant: string;
-	/** Whether the reading's foil hint comes from an engine that tells ★ from • (Vision). */
+	/** Whether the reading's foil hint comes from an engine that tells ★ from •. None in use does (Tesseract cannot; the Google Vision retry that could is gone), so this is false everywhere today. */
 	trustFoil: boolean;
 	text: string;
 };
