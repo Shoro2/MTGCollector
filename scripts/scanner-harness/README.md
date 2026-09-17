@@ -138,10 +138,11 @@ on them; the printing metric does.
 column above):** identity **16 / 26**, printing **5 / 26**, 11 printings
 open, 4 `likely`, **0 wrong**, 10 missing; the negative photo (sleeved backs,
 a deck box) yields two unidentified rectangles and no identification, as it
-should. **With Phase 3 (art hashes of 20 sets):** identity **18 / 26**,
-printing 5 / 26, 13 open, 3 `likely`, **0 wrong** — the two flavor-name cards
-(Koma, Counterspell) are recognised by their artwork; their printings stay
-open until the remaining printings of those names are hashed. Failure classes the development set did not contain — none of them
+should. **With Phase 3 (full art-hash table, 2026-09-17):** identity
+**18 / 26**, printing 6 / 26, 12 open, 3 `likely`, **0 wrong** — the two
+flavor-name cards (Koma, Counterspell) are recognised by their artwork; most
+of the open printings are much-reprinted cards whose footer the strip crop
+misses (see the classes below). Failure classes the development set did not contain — none of them
 tuned away, all logged for the roadmap:
 
 - **Flavor names** (Universes Beyond): the card prints "The Monstrous
@@ -175,17 +176,17 @@ distractors) — and finally **Round 10, the same photos against the full
 Scryfall catalogue** (115,459 printings, 38k distinct names, tokens and
 The List / Double Feature reprints included), which is what production sees.
 
-| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis | Round 10, seeded DB | **Round 10, full DB** (identity / printing) | **Phase 3, full DB + art hashes of 20 sets** (identity / printing) |
+| Photo | Layout | Before | Detection + windows | OCR scale + plausibility | Evidence fusion (identity / printing) | Phase 2 passes + PaddleOCR | Phase 4 grid hypothesis | Round 10, seeded DB | **Round 10, full DB** (identity / printing) | **Phase 3, full DB + art-hash table** (identity / printing) |
 |-------|--------|--------|---------------------|--------------------------|----------------------------------------|----------------------------|-------------------------|---------------------|---------------------------------------------|---|
 | 2x2 upright (phone) | 4 cards | 4/4 | 4/4 | 4/4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 | 4 / 4 |
 | 3x5 sideways, touching cards (phone) | 15 | 4 of 12 detected | 8/15 | 11/15 | 12 / 12 | 14 / 14 | 15 / 15 | 15 / 15 | 14 / 11, 3 printings open, 1 likely | 15 / 13, 2 open |
 | 2x5 sideways, touching (phone, EXIF-rotated) | 10 | 0 of 6 detected | 8/10 | 8/10 | 8 / 8 | 9 / 9 | 10 / 10 | 10 / 10 | 10 / 10 | 10 / 10 |
-| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 | 15 / 15 | 14 / 12, 2 open, 1 likely | 14 / 12, 2 open, 1 likely |
+| 3x5 sideways (phone, EXIF-rotated) | 15 | 2/15 | 10/15 | 12/15 | 12 / 12 | 15 / 15 | 15 / 15 | 15 / 15 | 14 / 12, 2 open, 1 likely | 14 / 13, 1 open, 1 likely |
 | 3x5 foils under glare (camera) | 15 | 10/15 | 11/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 15 / 12, 3 open | 15 / 15 |
-| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 | 15 / 15 | 13 / 8, 5 open, 2 likely | 15 / 11, 4 open |
-| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 13 / 7, 6 open, 2 likely | 15 / 8, 7 open |
+| 5x3 sideways, other direction (camera) | 15 | 10/15 | 12/15 | 12/15 | 13 / 13 | 15 / 15 | 15 / 15 | 15 / 15 | 13 / 8, 5 open, 2 likely | 15 / 12, 3 open |
+| 3x5 upright (camera) | 15 | 12/15 incl. one wrong card | 11/15 | 12/15 | 13 / 13 + 2 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 14 / 14 + 1 likely | 13 / 7, 6 open, 2 likely | 15 / 10, 5 open |
 | 3x5 upright MID/VOW (camera) | 15 | 12/15 | 12/15 | 14/15 | 14 / 14 | 15 / 15 | 15 / 15 | 15 / 15 | 12 / 6, 6 open, 3 likely | 15 / 6, 9 open |
-| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s | **103 / 103 of 104, 1 likely, none wrong**, 33 s | **95 / 70 of 104, 25 printings open, 9 likely, none wrong**, 89 s | **103 / 79 of 104, 24 printings open, 1 likely, none wrong**, 90 s |
+| **Total** | 104 | 44/104, 1 wrong | 76/104, 2 wrong* | 87/104 names, none wrong, 64 s | 90 / 90 of 104, 2 likely, none wrong, 65 s | **101 / 101 of 104, 1 likely, none wrong**, 79 s | **103 / 103 of 104, 1 likely, none wrong**, 76.9 s | **103 / 103 of 104, 1 likely, none wrong**, 33 s | **95 / 70 of 104, 25 printings open, 9 likely, none wrong**, 89 s | **103 / 83 of 104, 20 printings open, 1 likely, none wrong**, 78 s |
 
 The fusion columns are measured with the canonical seed (double-faced names)
 and the printing-level metric; the earlier columns counted names only. The
@@ -248,6 +249,12 @@ the artwork alone (without an agreeing name) never produces a one-tap offer
 and the radius is 12. Result on the eight photos: identity 95 → **103**,
 printing 70 → **79** of 104, 1 `likely`, **0 wrong**; the seeded DB with the
 same hashes imported (`npm run hash-art -- --export/--import`) 104 / 104.
+Re-measured against the **full table** on 2026-09-17 (112 772 printings +
+1 594 back faces; the column above): **103 / 83**, 20 printings open, 0 wrong
+— more printings hashed means more different-artwork variants drop out of the
+candidate lists. Over both photo sets every nearest artwork at ≤ 10 bits was
+the right card (91 of 91 against 114k hashes); at 12 bits only 10 of 16 were,
+which is why a 12-bit match counts only together with an agreeing name.
 The one miss is a small, sideways Dawnhart Rejuvenator whose hash lands more
 than 12 bits from every reference (it stays a `likely` of Dawnhart Geist from
 the name channel).
