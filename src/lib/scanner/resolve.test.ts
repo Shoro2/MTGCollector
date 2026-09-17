@@ -147,8 +147,8 @@ describe('resolveCard', () => {
 		const tess = resolveCard(base({ footer: [reading({ setCode: 'tmt', collectorNumber: '156', numberSource: 'rarity', foilFromText: true, text: 'C 0156 TMT * EN' })] }));
 		expect(tess.finish).toBe('unknown');
 		expect(tess.language).toBe('EN');
-		const vision = resolveCard(base({ footer: [reading({ setCode: 'tmt', collectorNumber: '156', numberSource: 'rarity', foilFromText: true, trustFoil: true, variant: 'vision', text: 'C 0156 TMT ★ EN' })] }));
-		expect(vision.finish).toBe('foil');
+		const trusted = resolveCard(base({ footer: [reading({ setCode: 'tmt', collectorNumber: '156', numberSource: 'rarity', foilFromText: true, trustFoil: true, variant: 'trusted engine', text: 'C 0156 TMT ★ EN' })] }));
+		expect(trusted.finish).toBe('foil');
 	});
 });
 

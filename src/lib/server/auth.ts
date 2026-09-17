@@ -9,7 +9,6 @@ export type SessionUser = {
 	email: string;
 	avatarUrl: string | null;
 	isAdmin: boolean;
-	hasVisionApiKey: boolean;
 };
 
 export function getGoogleClient() {
@@ -57,10 +56,10 @@ export function validateSession(sessionId: string): SessionUser | null {
 	}
 
 	const row = sqlite.prepare(
-		`SELECT u.id, u.name, u.email, u.avatar_url, u.google_vision_api_key
+		`SELECT u.id, u.name, u.email, u.avatar_url
 		 FROM sessions s JOIN users u ON s.user_id = u.id
 		 WHERE s.id = ? AND s.expires_at > ?`
-	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null; google_vision_api_key: string | null } | undefined;
+	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null } | undefined;
 
 	if (!row) {
 		sessionCache.delete(sessionId);
@@ -72,8 +71,7 @@ export function validateSession(sessionId: string): SessionUser | null {
 		name: row.name,
 		email: row.email,
 		avatarUrl: row.avatar_url,
-		isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail,
-		hasVisionApiKey: !!row.google_vision_api_key
+		isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail
 	};
 	sessionCache.set(sessionId, { user, at: Date.now() });
 	cacheSweep();

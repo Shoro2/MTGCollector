@@ -116,7 +116,7 @@
 		<div class="kpi-card">
 			<p class="kpi-label">Scanner</p>
 			<p class="kpi-value">OCR</p>
-			<p class="kpi-subtle">local first, Vision optional</p>
+			<p class="kpi-subtle">runs in your browser</p>
 		</div>
 	</div>
 
