@@ -325,6 +325,9 @@
 		}
 	}
 
+	/** The live scanner's exported methods (result cue). */
+	let liveScanner = $state<{ notifyResult: (identified: boolean) => void } | null>(null);
+
 	async function handleLiveCapture(canvas: HTMLCanvasElement, rects: QuickRect[] = []) {
 		// Don't reset detectedCards — captures accumulate. Skip if a previous
 		// capture is still being identified (the LiveScanner's busy prop also
@@ -909,6 +912,7 @@
 			if (cardContours.length === 0) {
 				log('No cards detected');
 				scanProgress = 'No cards detected. Try a clearer photo.';
+				if (scanMode === 'live') liveScanner?.notifyResult(false);
 				scanning = false;
 				src.delete(); gray.delete();
 				return;
@@ -1814,6 +1818,8 @@
 			const identifiedCount = newSlice.filter((c) => c.status === 'found').length;
 			const likelyCount = newSlice.filter((c) => c.status === 'likely' || c.status === 'conflict').length;
 			log(`Scan complete: ${identifiedCount}/${newSlice.length} identified${likelyCount ? `, ${likelyCount} to confirm` : ''}`);
+			// Second cue of a live capture (the first one sounded at the capture): everything identified, or look at the screen.
+			if (scanMode === 'live') liveScanner?.notifyResult(newSlice.length > 0 && identifiedCount === newSlice.length);
 			scanProgress = `Done! ${identifiedCount} of ${newSlice.length} identified${likelyCount ? `, ${likelyCount} to confirm` : ''}.`;
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
@@ -2049,7 +2055,7 @@
 				</button>
 			{/if}
 		</div>
-		<LiveScanner onCapture={handleLiveCapture} busy={scanning} log={(m) => log(`[live] ${m}`)} />
+		<LiveScanner bind:this={liveScanner} onCapture={handleLiveCapture} busy={scanning} log={(m) => log(`[live] ${m}`)} />
 	{:else if !imagePreview}
 		<label class="panel flex h-48 cursor-pointer flex-col items-center justify-center border-dashed transition-colors hover:border-[var(--color-primary)]">
 			<svg class="w-12 h-12 text-[var(--color-text-muted)] mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
