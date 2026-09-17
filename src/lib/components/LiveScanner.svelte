@@ -155,9 +155,13 @@
 			// width/height are matched against the sensor's native (landscape)
 			// modes; mobile browsers rotate the frames to the device orientation
 			// afterwards, so a phone held upright yields e.g. 1080x1920.
+			// The resolution is asked for in both cases: with the device id alone a phone came back
+			// from a pause at 480x640 instead of 1080x1080 (the browser's default mode), and the same
+			// happened after switching cameras.
+			const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
 			const constraints: MediaStreamConstraints = activeDeviceId
-				? { video: { deviceId: { exact: activeDeviceId } } }
-				: { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } };
+				? { video: { deviceId: { exact: activeDeviceId }, ...size } }
+				: { video: { facingMode: { ideal: 'environment' }, ...size } };
 			stream = await navigator.mediaDevices.getUserMedia(constraints);
 		} catch (err) {
 			// Fallback: front-facing or any camera.
@@ -663,6 +667,9 @@
 				<input type="checkbox" checked={feedbackPrefs.vibration} onchange={(e) => setFeedbackPref('vibration', (e.target as HTMLInputElement).checked)} class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]" />
 				<span class="text-[var(--color-text-muted)]">Vibration</span>
 			</label>
+		{:else if status === 'live'}
+			<!-- Firefox removed navigator.vibrate (disabled on Android since 79, gone in 129); iOS Safari never had it. -->
+			<span class="text-xs text-[var(--color-text-muted)]" title="Firefox and iOS Safari do not let web pages vibrate; Chrome on Android does.">No vibration in this browser</span>
 		{/if}
 
 		{#if cameras.length > 1}
