@@ -70,7 +70,9 @@ export function truncateLogText(text: string): string {
 /** The lines worth showing in a list without opening the log. */
 export function summariseLogText(text: string): { detector: string; complete: string; bestFrames: number } {
 	const detector = /detector: ([^\n]+)/.exec(text)?.[1].trim() ?? '';
-	const complete = /Scan complete: ([^\n]+)/.exec(text)?.[1].trim() ?? '';
+	// A live session appends one scan after another to the same log: the last one is the current one.
+	const completes = [...text.matchAll(/Scan complete: ([^\n]+)/g)];
+	const complete = completes.length ? completes[completes.length - 1][1].trim() : '';
 	const bestFrames = (text.match(/Best frame of the scene/g) ?? []).length;
 	return { detector, complete, bestFrames };
 }

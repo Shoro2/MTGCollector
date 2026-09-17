@@ -12,7 +12,9 @@
 	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
 	import { artBoxOnWarp, hashArtPixels } from '$lib/scanner/phash';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
-	import { loadImage, orderCorners } from '$lib/scanner/geometry';
+	import { loadImage, orderCorners, touchesFrameEdge } from '$lib/scanner/geometry';
+	import { isPlausibleCardQuad, luminanceSpread, sampleQuadLuminance, type Pt } from '$lib/scanner/quad';
+	import { COARSE_LONG_EDGE, COARSE_PASS, findCardQuads, isInnerBoxOf } from '$lib/scanner/quick-rects';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
 	import type { QuickRect } from '$lib/scanner/detect';
@@ -441,7 +443,13 @@
 				function addCandidate(approx: any, minAspect = 0.5, maxAspect = 0.9) {
 					const rect = cv.boundingRect(approx);
 					const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
-					if (aspect > minAspect && aspect < maxAspect) {
+					// Four points are not yet a card: a phone's manual capture warped bow-ties and
+					// triangles with a fourth point (2026-09-17). Convex, corners of 50-130 degrees,
+					// opposite sides alike; the aspect window a little wider than the bounding-box one.
+					const pts: Pt[] = [];
+					for (let k = 0; k < approx.rows; k++) pts.push([approx.data32S[k * 2], approx.data32S[k * 2 + 1]]);
+					const shapely = isPlausibleCardQuad(pts, { minAspect: minAspect - 0.08, maxAspect: Math.min(1, maxAspect + 0.08), minAngle: 50, maxAngle: 130, minOppositeRatio: 0.55 });
+					if (shapely && aspect > minAspect && aspect < maxAspect) {
 						const dominated = allCandidates.some(c => computeIoU(rect, c.rect) > 0.5);
 						if (!dominated) {
 							allCandidates.push({ corners: approx.clone(), area: cv.contourArea(approx), rect });
@@ -645,6 +653,55 @@
 					}
 				}
 				log(`Containment filter: ${allCandidates.length} -> ${cardContours.length} candidates`);
+
+				// === Strategy 7 (fallback for a lone card): coarse-scale Canny ===
+				// On a woven play mat or any dark, textured background the strategies above find
+				// nothing, the image frame, or only the art / text box: the texture's edge mesh fuses
+				// with the card outline. At ~360 px with a strong blur the texture averages out and the
+				// border/background step survives (the live detector's coarse pass, quick-rects.ts).
+				// Only with at most one candidate: in a spread the coarse scale merges touching cards
+				// into card-shaped blobs that would swallow the real cards in the containment filter.
+				if (cardContours.length <= 1) {
+					const div = Math.max(1, Math.round(Math.max(gray.cols, gray.rows) / COARSE_LONG_EDGE));
+					const small = new cv.Mat();
+					try {
+						cv.resize(gray, small, new cv.Size(Math.round(gray.cols / div), Math.round(gray.rows / div)), 0, 0, cv.INTER_AREA);
+						const lone = cardContours[0] ?? null;
+						const loneQuick = lone ? { corners: matCorners(lone.corners), rect: lone.rect, area: lone.area } : null;
+						const framed = (r: { x: number; y: number; width: number; height: number }) => touchesFrameEdge(r, gray.cols, gray.rows, Math.max(gray.cols, gray.rows) * 0.01);
+						let best: { pts: Pt[]; area: number; rect: { x: number; y: number; width: number; height: number } } | null = null;
+						for (const f of findCardQuads(cv, small, { ...COARSE_PASS, minAreaFrac: 0.05, maxAreaFrac: 0.9 })) {
+							const pts = f.quad.map((q) => [Math.round(q[0] * div), Math.round(q[1] * div)] as Pt);
+							const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+							const rect = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+							if (framed(rect)) continue;
+							if (luminanceSpread(sampleQuadLuminance(detSrc.data, detSrc.cols, detSrc.rows, pts, 16, 22, 0.06, 6)) < 30) continue;
+							const area = f.area * div * div;
+							if (!best || area > best.area) best = { pts, area, rect };
+						}
+						if (best) {
+							// It replaces the lone candidate when that one is the image frame itself or one of
+							// the card's own inner boxes; a lone candidate elsewhere stays and the card is added.
+							const replaces = loneQuick !== null && (framed(loneQuick.rect) || isInnerBoxOf(loneQuick, { corners: best.pts, rect: best.rect, area: best.area }) || computeIoU(loneQuick.rect, best.rect) > 0.5);
+							const cornerMat = new cv.Mat(4, 1, cv.CV_32SC2);
+							best.pts.forEach((q, k) => { cornerMat.data32S[k * 2] = q[0]; cornerMat.data32S[k * 2 + 1] = q[1]; });
+							const candidate = { corners: cornerMat, area: best.area, rect: best.rect };
+							if (loneQuick !== null && computeIoU(loneQuick.rect, best.rect) > 0.5 && !framed(loneQuick.rect)) {
+								cornerMat.delete(); // the fine strategies found the same card with sharper corners
+								log('Strategy 7 coarse fallback: same card as the lone candidate, keeping the fine one');
+							} else {
+								if (replaces) cardContours = [];
+								cardContours.push(candidate);
+								allCandidates.push(candidate);
+								log(`Strategy 7 coarse fallback: card outline ${best.pts.map(([x, y]) => `(${x},${y})`).join(' ')}${replaces ? ' replaces the lone candidate (image frame or inner box)' : ''}`);
+							}
+						} else {
+							log('Strategy 7 coarse fallback: nothing card-shaped at the coarse scale');
+						}
+					} finally {
+						small.delete();
+					}
+				}
 
 				// === Size consistency filter: remove detections much smaller than median ===
 				// This catches text-block false positives (e.g. only the text area of a card detected)
