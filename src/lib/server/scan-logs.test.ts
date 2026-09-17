@@ -38,6 +38,8 @@ describe('log text', () => {
 		].join('\n');
 		expect(summariseLogText(text)).toEqual({ detector: 'Web Worker (OpenCV.js off the main thread)', complete: '1/1 identified', bestFrames: 1 });
 		expect(summariseLogText('nothing here')).toEqual({ detector: '', complete: '', bestFrames: 0 });
+		// a live session appends scan after scan to one log: the header reports the last one
+		expect(summariseLogText(['Scan complete: 1/1 identified', '[live] Live capture', 'Scan complete: 0/3 identified'].join('\n')).complete).toBe('0/3 identified');
 	});
 
 	it('reads the JSON header line back and tolerates a damaged one', () => {

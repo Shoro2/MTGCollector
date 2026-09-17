@@ -154,7 +154,8 @@ tuned away, all logged for the roadmap:
   crop catches "SOA • EN ILLUS …" but the number sits on the line above; only
   the name identifies these cards and the printing stays open.
 - **A black-bordered card filling the frame on a dark cloth** (single-card
-  photo): all six strategies return the image frame itself as the card, the
+  photo; **fixed 2026-09-17** by the coarse fallback, Strategy 7 — the card is
+  now identified with its printing, hold-out identity 19 / 26, printing 7 / 26): all six strategies return the image frame itself as the card, the
   warp is the whole photo and the name window lands on the rules text — in
   single *and* multiple mode. The live scanner's edge guard would refuse such a
   frame; the upload path needs a "card = whole image" fallback.
@@ -310,3 +311,56 @@ dev` runs automatically) and the best-frame line (`Best frame of the scene:
 sharpness …, glare …, … ms old`). The LiveScanner root carries
 `data-detector="worker|main"` and the badge `data-quality-hint="blurry|glare|"`
 for assertions.
+
+## The live detector, offline (2026-09-17)
+
+A phone session on a dark woven play mat (scan logs on the host, screenshots)
+showed long waits, the art box or the text box captured as the card,
+four-cornered patches of the mat captured, and bow-tie warps from manual
+captures. The live detector (`src/lib/scanner/quick-rects.ts`) can be run in
+Node on still images — the very code the phone runs per frame:
+
+```bash
+# OpenCV.js is not in the repository; any copy of the 4.9 build works
+npm i --prefix /tmp/cvnode @techstark/opencv-js@4.9.0-release.3
+export OPENCV_JS=/tmp/cvnode/node_modules/@techstark/opencv-js/dist/opencv.js
+
+# what does the detector see in these photos? (overlay PNGs in out/)
+npx tsx scripts/scanner-harness/live-detect-experiment.mjs --out out photo1.jpg photo2.jpg
+
+# labelled frames: real card images on the mat texture of a photo, plain light and plain black
+node scripts/scanner-harness/make-mat-scenes.mjs --out scenes --mat holdout/20260916_203427.jpg
+npx tsx scripts/scanner-harness/live-detect-experiment.mjs --out out --truth scenes/scenes.json [--old old-quick-rects.ts]
+
+# end to end: a still as the camera
+node scripts/scanner-harness/make-still-y4m.mjs scenes/mat-039.jpg mat-039.y4m
+node scripts/scanner-harness/live-harness.mjs mat-039.y4m mat-039.png
+```
+
+The root cause was not low contrast as such: the weave of the mat gives the
+fine Canny edge map a mesh that fuses with the card outline, so no
+four-cornered external contour is left for the card, while the art box, the
+text box and random cells of the mesh are clean rectangles of card-like
+proportions (the art box is 0.73, a card 0.716). At half the resolution with a
+9x9 blur the weave averages out and the step between the black border and the
+mat survives. Result on 102 labelled frames (38 cards, every colour, ten black
+ones; rotated +-7 degrees or sideways, 75-100% brightness, slight blur), found
+= box IoU >= 0.72 (on a dark background the quad sits on the card's inner
+frame, 5% inside the outline, which the pipeline's 5% expansion absorbs):
+
+| Background | Frames | Found before | Found now | False positives before / now |
+|---|---|---|---|---|
+| woven dark mat | 76 | 44 | **72** | 20 / 3 |
+| plain black | 13 | 8 | **13** | 4 / 0 |
+| light table | 13 | 13 | 13 | 0 / 0 |
+
+Detection time per frame rose from 11 to 15 ms on a desktop. The real photos
+are unchanged where the detector worked (the five spreads it read completely,
+15 of 15 each) and
+better where it did not (hold-out spreads 3 -> 6 of 6, 5 -> 6 of 6, 5 -> 6 of
+12; the negative photo 1 -> 0 rectangles; the black card on the dark cloth: a
+patch of the mat -> the card). Still missed: two frames of a dark land, two
+other dark cards; an inner block of a black card is still tracked when no pass
+sees the outline. End to end (`live-harness.mjs`): the black card on the real
+mat photo and a dimmed black card scene are captured within a second and
+identified; the classic two-card fixture still reads 2 / 2.

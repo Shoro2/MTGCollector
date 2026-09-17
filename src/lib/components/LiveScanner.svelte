@@ -81,6 +81,17 @@
 	let bestAt = 0;
 
 	let needSceneChange = false;
+	// Telemetry for the uploaded scan log: every few seconds one line says how many frames were
+	// analysed, in how many a card was found (and by which pass), how long detection took and what
+	// kept auto-capture waiting. A phone session had 10-25 s waits the log could not explain.
+	const STATS_EVERY_MS = 3000;
+	let stats = { since: 0, frames: 0, withRects: 0, fine: 0, coarse: 0, detectMs: 0, waiting: new Map<string, number>() };
+	function flushStats(now: number) {
+		if (stats.frames === 0) return;
+		const top = [...stats.waiting.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}x`).join(', ');
+		log?.(`${((now - stats.since) / 1000).toFixed(1)} s: ${stats.frames} frames, card found in ${stats.withRects} (fine pass ${stats.fine}, coarse pass ${stats.coarse}), detect ${(stats.detectMs / stats.frames).toFixed(0)} ms avg${top ? `; waiting: ${top}` : ''}`);
+		stats = { since: now, frames: 0, withRects: 0, fine: 0, coarse: 0, detectMs: 0, waiting: new Map() };
+	}
 	/** Layout at the last capture; auto-capture re-arms only once the layout really differs from it. */
 	let capturedRects: QuickRect[] = [];
 
@@ -293,6 +304,7 @@
 		ctx.drawImage(scratchCanvas, 0, 0, aw, ah);
 
 		let quality: FrameQuality = { sharpness: 0, glare: 0, score: 0 };
+		const detectStart = performance.now();
 		try {
 			const result = await detector.detect(analyzeCanvas, { coordScale: vw / aw });
 			lastRects = result.rects;
@@ -302,6 +314,14 @@
 			lastRects = [];
 		}
 		if (status !== 'live') return; // stopped while the frame was analysed
+		if (stats.frames === 0 && stats.since === 0) stats.since = ts;
+		stats.frames++;
+		stats.detectMs += performance.now() - detectStart;
+		if (lastRects.length > 0) {
+			stats.withRects++;
+			if (lastRects.some((r) => r.source === 'coarse')) stats.coarse++;
+			else stats.fine++;
+		}
 
 		const now = ts;
 		stabilizer.update(lastRects, now);
@@ -357,7 +377,24 @@
 		if (needSceneChange && (lastRects.length === 0 || sceneDiffers(capturedRects, lastRects))) {
 			needSceneChange = false;
 		}
-		if (stable && !needSceneChange && autoCapture && !busy && !holdReason) {
+		const capturing = stable && !needSceneChange && autoCapture && !busy && !holdReason;
+		if (!capturing) {
+			const why = busy
+				? 'processing the previous capture'
+				: lastRects.length === 0
+					? 'no card found'
+					: holdReason
+						? holdReason
+						: needSceneChange
+							? 'same card as the last capture'
+							: !autoCapture
+								? 'auto-capture off'
+								: 'not steady yet';
+			stats.waiting.set(why, (stats.waiting.get(why) ?? 0) + 1);
+		}
+		if (now - stats.since >= STATS_EVERY_MS) flushStats(now);
+		if (capturing) {
+			flushStats(now);
 			triggerCapture(sceneId, lastRects, now);
 		}
 

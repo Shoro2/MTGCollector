@@ -1,5 +1,5 @@
 {
-  "written": "2026-09-17T07:32:58.731Z",
+  "written": "2026-09-17T17:14:46.263Z",
   "photos": {
     "20260916_202337.jpg": {
       "detected": 6,
@@ -64,20 +64,20 @@
       "extra": 0,
       "likely": 0,
       "conflict": 0,
-      "wallSeconds": 2.7
+      "wallSeconds": 3.1
     },
     "20260916_203427.jpg": {
       "detected": 1,
-      "identity": 0,
-      "printing": 0,
+      "identity": 1,
+      "printing": 1,
       "unresolvedPrinting": 0,
       "wrongIdentity": 0,
       "wrongPrinting": 0,
-      "missing": 1,
+      "missing": 0,
       "extra": 0,
       "likely": 0,
       "conflict": 0,
-      "wallSeconds": 3.4
+      "wallSeconds": 1.9
     }
   }
 }
