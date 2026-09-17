@@ -23,5 +23,8 @@ await build({
 	outfile,
 	sourcemap: false,
 	minify: false,
+	// Reported in the worker's ready message, so a scan log shows which bundle ran. The
+	// script has a fixed URL and sat in a browser cache for hours after a deploy (2026-09-17).
+	define: { __WORKER_BUILD__: JSON.stringify(new Date().toISOString()) },
 	logLevel: 'info'
 });

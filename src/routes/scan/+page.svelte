@@ -12,6 +12,7 @@
 	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
 	import { artBoxOnWarp, hashArtPixels } from '$lib/scanner/phash';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
+	import { version } from '$app/environment';
 	import { loadImage, orderCorners, touchesFrameEdge } from '$lib/scanner/geometry';
 	import { isPlausibleCardQuad, luminanceSpread, sampleQuadLuminance, type Pt } from '$lib/scanner/quad';
 	import { COARSE_LONG_EDGE, COARSE_PASS, findCardQuads, isInnerBoxOf } from '$lib/scanner/quick-rects';
@@ -279,6 +280,7 @@
 			identified,
 			likely,
 			wallMs: Math.round(performance.now() - scanStartTime),
+			version,
 			text: debugLog.join('\n')
 		});
 	}

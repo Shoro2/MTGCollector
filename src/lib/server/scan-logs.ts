@@ -24,6 +24,8 @@ export type ScanLogInput = {
 	wallMs: number;
 	userAgent: string;
 	userId: string | null;
+	/** SvelteKit app version of the page that produced the log (changes with every build). */
+	version?: string;
 	text: string;
 };
 
@@ -32,6 +34,8 @@ export type ScanLogMeta = Omit<ScanLogInput, 'text'> & {
 	at: string;
 	/** Which live detector ran ("Web Worker …" / "main thread (…)"), from the [live] lines. */
 	detector: string;
+	/** Build stamp of the detection worker bundle that ran (empty for uploads and for bundles from before the stamp). */
+	workerBuild: string;
 	/** The "Scan complete: …" tail, when the scan finished. */
 	complete: string;
 	/** Number of best-frame captures in a live session. */
@@ -68,13 +72,14 @@ export function truncateLogText(text: string): string {
 }
 
 /** The lines worth showing in a list without opening the log. */
-export function summariseLogText(text: string): { detector: string; complete: string; bestFrames: number } {
+export function summariseLogText(text: string): { detector: string; workerBuild: string; complete: string; bestFrames: number } {
 	const detector = /detector: ([^\n]+)/.exec(text)?.[1].trim() ?? '';
+	const workerBuild = /worker build ([^\n]+)/.exec(text)?.[1].trim() ?? '';
 	// A live session appends one scan after another to the same log: the last one is the current one.
 	const completes = [...text.matchAll(/Scan complete: ([^\n]+)/g)];
 	const complete = completes.length ? completes[completes.length - 1][1].trim() : '';
 	const bestFrames = (text.match(/Best frame of the scene/g) ?? []).length;
-	return { detector, complete, bestFrames };
+	return { detector, workerBuild, complete, bestFrames };
 }
 
 /** Split a stored file into its JSON header and the log text; a damaged header yields empty metadata. */
@@ -107,6 +112,7 @@ export function writeScanLog(input: ScanLogInput, now = new Date()): { name: str
 		wallMs: count(input.wallMs),
 		userAgent: clip(input.userAgent, 300),
 		userId: typeof input.userId === 'string' ? input.userId.slice(0, 64) : null,
+		version: clip(input.version ?? '', 40),
 		...summariseLogText(text),
 		bytes: Buffer.byteLength(text, 'utf8')
 	};

@@ -36,8 +36,9 @@ describe('log text', () => {
 			'[+2.30s] [live] Best frame of the scene: sharpness 412, glare 0.4%, 120 ms old',
 			'[+5.00s] Scan complete: 1/1 identified'
 		].join('\n');
-		expect(summariseLogText(text)).toEqual({ detector: 'Web Worker (OpenCV.js off the main thread)', complete: '1/1 identified', bestFrames: 1 });
-		expect(summariseLogText('nothing here')).toEqual({ detector: '', complete: '', bestFrames: 0 });
+		expect(summariseLogText(text)).toEqual({ detector: 'Web Worker (OpenCV.js off the main thread)', workerBuild: '', complete: '1/1 identified', bestFrames: 1 });
+		expect(summariseLogText('nothing here')).toEqual({ detector: '', workerBuild: '', complete: '', bestFrames: 0 });
+		expect(summariseLogText('[+2.1s] [live] worker build 2026-09-17T17:27:45.123Z\n[+2.2s] [live] detector: Web Worker').workerBuild).toBe('2026-09-17T17:27:45.123Z');
 		// a live session appends scan after scan to one log: the header reports the last one
 		expect(summariseLogText(['Scan complete: 1/1 identified', '[live] Live capture', 'Scan complete: 0/3 identified'].join('\n')).complete).toBe('0/3 identified');
 	});

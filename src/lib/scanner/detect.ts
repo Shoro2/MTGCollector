@@ -40,7 +40,12 @@ export type QuickDetector = {
 	dispose(): void;
 };
 
-/** Bundled worker script (see scripts/build-detect-worker.mjs); a static file so it stays a classic worker in dev and prod. */
+/**
+ * Bundled worker script (see scripts/build-detect-worker.mjs); a static file so it stays a classic
+ * worker in dev and prod. The URL is fixed, so callers append the app version as a query
+ * (`workerUrl`): behind a CDN the file is served with `max-age=14400`, and a phone ran the old
+ * detector for hours after a deploy while the page itself was new.
+ */
 export const DETECT_WORKER_URL = '/scanner/detect-worker.js';
 const WORKER_INIT_TIMEOUT_MS = 30_000;
 const WORKER_DETECT_TIMEOUT_MS = 5_000;
@@ -110,6 +115,8 @@ function startWorker(url: string, log?: (msg: string) => void): Promise<Worker> 
 		worker.onmessage = (e: MessageEvent) => {
 			const msg = e.data;
 			if (msg?.type === 'ready') {
+				// A bundle without a build stamp predates the stamp: it came out of a cache.
+				log?.(`worker build ${typeof msg.build === 'string' ? msg.build : 'unknown (a bundle from before 2026-09-17, probably cached)'}`);
 				finish(() => resolve(worker));
 			} else if (msg?.type === 'error') {
 				finish(() => {
