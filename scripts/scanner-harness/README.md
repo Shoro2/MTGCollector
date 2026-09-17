@@ -60,6 +60,8 @@ node scripts/scanner-harness/make-synthetic.mjs fixtures/
 # Live mode: a Y4M clip is played as the camera (Chromium fake device)
 node scripts/scanner-harness/make-live-y4m.mjs fixtures/live-scene.y4m
 node scripts/scanner-harness/live-harness.mjs fixtures/live-scene.y4m live-result.png
+# Live UX: capture / result cues, pause (camera released, results stay), resume without a second capture
+node scripts/scanner-harness/live-ux-check.mjs fixtures/live-scene.y4m
 ```
 
 `--expect` takes a JSON map from file name to the card instances in the photo,

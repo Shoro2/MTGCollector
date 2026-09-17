@@ -6,6 +6,7 @@
 	import { SceneStabilizer, sceneDiffers, sceneSignature } from '$lib/scanner/stability';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
 	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
+	import { canVibrate, createScanFeedback, loadFeedbackPrefs, saveFeedbackPrefs, type FeedbackPrefs } from '$lib/scanner/feedback';
 
 	type Props = {
 		/**
@@ -36,7 +37,25 @@
 	let captureCanvas: HTMLCanvasElement | null = null;
 	let detector: QuickDetector | null = null;
 
-	let status = $state<'idle' | 'loading' | 'requesting' | 'live' | 'error'>('idle');
+	// 'paused': the camera is released and the viewfinder collapses, the scanned cards stay on the
+	// page — for looking through the results without the camera running (and draining the phone).
+	let status = $state<'idle' | 'loading' | 'requesting' | 'live' | 'paused' | 'error'>('idle');
+
+	// Cues for scanning without looking at the screen: a tick at the capture, then "identified" or
+	// "not identified". Preferences live in localStorage; vibration is offered where the browser has it.
+	let feedbackPrefs = $state<FeedbackPrefs>({ sound: true, vibration: true });
+	let vibrationAvailable = $state(false);
+	const feedback = createScanFeedback(() => feedbackPrefs);
+	function setFeedbackPref(key: keyof FeedbackPrefs, value: boolean) {
+		feedbackPrefs = { ...feedbackPrefs, [key]: value };
+		saveFeedbackPrefs(feedbackPrefs, typeof localStorage === 'undefined' ? null : localStorage);
+		feedback.unlock();
+		if (value) feedback.play('capture'); // a preview of what was just switched on
+	}
+	/** Called by the page when the pipeline has finished a live capture. */
+	export function notifyResult(identified: boolean) {
+		feedback.play(identified ? 'identified' : 'unresolved');
+	}
 	let errorTitle = $state('');
 	let errorMsg = $state('');
 	let cameras = $state<Array<{ deviceId: string; label: string }>>([]);
@@ -126,7 +145,10 @@
 		// main thread as fallback) starts while the camera permission is pending.
 		// The worker script has a fixed URL: tie it to this build, or a cached copy outlives the deploy.
 		log?.(`app version ${version}`);
-		const detectorReady = createQuickDetector({ workerUrl: `${DETECT_WORKER_URL}?v=${encodeURIComponent(version)}`, log: (m) => log?.(m) });
+		// After a pause the worker is still there: reuse it instead of loading OpenCV into a new one.
+		const detectorReady = detector
+			? Promise.resolve(detector)
+			: createQuickDetector({ workerUrl: `${DETECT_WORKER_URL}?v=${encodeURIComponent(version)}`, log: (m) => log?.(m) });
 
 		status = 'requesting';
 		try {
@@ -176,8 +198,10 @@
 			ready.dispose();
 			return;
 		}
-		detector?.dispose();
-		detector = ready;
+		if (detector !== ready) {
+			detector?.dispose();
+			detector = ready;
+		}
 		detectorMode = detector.mode;
 
 		status = 'live';
@@ -190,7 +214,8 @@
 		scheduleFrame();
 	}
 
-	function stop() {
+	/** Release the camera and stop the frame loop; tracking state goes, the detector stays. */
+	function stopStream() {
 		cancelAnimationFrame(rafId);
 		rafId = 0;
 		if (stream) {
@@ -198,21 +223,47 @@
 			stream = null;
 		}
 		if (videoEl) videoEl.srcObject = null;
-		detector?.dispose();
-		detector = null;
-		detectorMode = '';
 		stabilizer.reset();
 		resetBestFrame();
 		lastRects = [];
 		cutOff = [];
-		needSceneChange = false;
 		stableProgress = 0;
 		holdReason = '';
 		qualityHint = '';
 		lastRectCount = 0;
+	}
+
+	function stop() {
+		stopStream();
+		detector?.dispose();
+		detector = null;
+		detectorMode = '';
+		needSceneChange = false;
 		streamW = 0;
 		streamH = 0;
 		status = 'idle';
+	}
+
+	/**
+	 * Review mode: the camera is switched off (the track is stopped, so the browser's camera
+	 * indicator goes out), the viewfinder collapses and the results below stay. The detection
+	 * worker survives, and so does the memory of the last captured card: resuming over the same
+	 * card does not capture it a second time.
+	 */
+	function pause() {
+		if (status !== 'live') return;
+		flushStats(performance.now());
+		stats.since = 0;
+		stopStream();
+		status = 'paused';
+		log?.('paused: camera released, results stay');
+	}
+
+	async function resume() {
+		if (status !== 'paused') return;
+		feedback.unlock();
+		log?.('resumed');
+		await start();
 	}
 
 	async function switchCamera(deviceId: string) {
@@ -410,6 +461,7 @@
 	}
 
 	function captureNow() {
+		feedback.unlock();
 		const vw = videoEl?.videoWidth ?? 0;
 		const vh = videoEl?.videoHeight ?? 0;
 		const now = performance.now();
@@ -448,6 +500,7 @@
 		}
 		needSceneChange = true;
 		capturedRects = lastRects;
+		feedback.play('capture');
 		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
 		onCapture(captureCanvas, [...handedRects]);
 	}
@@ -498,20 +551,43 @@
 	}
 
 	onMount(() => {
+		feedbackPrefs = loadFeedbackPrefs(typeof localStorage === 'undefined' ? null : localStorage);
+		vibrationAvailable = canVibrate();
+		// The tap on "Live camera" that mounted this component counts as the user gesture on most
+		// browsers; any later tap inside the component unlocks the audio on the stricter ones.
+		feedback.unlock();
 		start();
 	});
 
 	onDestroy(() => {
 		stop();
+		feedback.dispose();
 	});
 </script>
 
-<div class="space-y-3" data-detector={detectorMode}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="space-y-3" data-detector={detectorMode} data-status={status} onpointerdown={() => feedback.unlock()}>
+	{#if status === 'paused'}
+		<div class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+			<div>
+				<p class="text-sm font-medium">Camera paused</p>
+				<p class="text-xs text-[var(--color-text-muted)]">The camera is off. Your scanned cards stay below.</p>
+			</div>
+			<button
+				type="button"
+				onclick={resume}
+				class="ml-auto bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors"
+			>
+				Resume camera
+			</button>
+		</div>
+	{/if}
 	<!-- The box takes the stream's aspect ratio (portrait on an upright phone),
 	     capped in height so the controls stay reachable; any remaining
 	     letterbox is accounted for by the overlay's fitContain mapping. -->
 	<div
 		class="relative w-full max-h-[70vh] bg-black rounded-lg overflow-hidden border border-[var(--color-border)]"
+		class:hidden={status === 'paused'}
 		style="aspect-ratio: {streamAspect};"
 	>
 		<!-- svelte-ignore a11y_media_has_caption -->
@@ -553,7 +629,7 @@
 		{/if}
 	</div>
 
-	<div class="flex flex-wrap items-center gap-2">
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-2" class:hidden={status === 'paused'}>
 		<button
 			type="button"
 			onclick={captureNow}
@@ -563,10 +639,31 @@
 			{busy ? 'Identifying...' : 'Capture now'}
 		</button>
 
+		<button
+			type="button"
+			onclick={pause}
+			disabled={status !== 'live'}
+			title="Switch the camera off and look through the scanned cards"
+			class="border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)] disabled:opacity-50 px-4 py-2 rounded-lg text-sm transition-colors"
+		>
+			Pause camera
+		</button>
+
 		<label class="flex items-center gap-2 cursor-pointer select-none text-sm">
 			<input type="checkbox" bind:checked={autoCapture} class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]" />
 			<span class="text-[var(--color-text-muted)]">Auto-capture when steady</span>
 		</label>
+
+		<label class="flex items-center gap-2 cursor-pointer select-none text-sm">
+			<input type="checkbox" checked={feedbackPrefs.sound} onchange={(e) => setFeedbackPref('sound', (e.target as HTMLInputElement).checked)} class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]" />
+			<span class="text-[var(--color-text-muted)]">Sound</span>
+		</label>
+		{#if vibrationAvailable}
+			<label class="flex items-center gap-2 cursor-pointer select-none text-sm">
+				<input type="checkbox" checked={feedbackPrefs.vibration} onchange={(e) => setFeedbackPref('vibration', (e.target as HTMLInputElement).checked)} class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]" />
+				<span class="text-[var(--color-text-muted)]">Vibration</span>
+			</label>
+		{/if}
 
 		{#if cameras.length > 1}
 			<select
@@ -582,7 +679,7 @@
 		{/if}
 	</div>
 
-	<p class="text-xs text-[var(--color-text-muted)]">
+	<p class="text-xs text-[var(--color-text-muted)]" class:hidden={status === 'paused'}>
 		Hold one or more cards upright in front of the camera, fully inside the frame. Yellow outlines mean detected, green means steady, red means the card is cut off at the edge (move back a little). With auto-capture enabled, identification fires as soon as the scene holds still and uses the sharpest recent frame; the badge warns about blur and glare. Move the cards out of frame and back in to capture again.
 	</p>
 </div>
