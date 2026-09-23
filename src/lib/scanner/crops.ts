@@ -47,14 +47,32 @@ export function leadingDarkRunEnd(values: ArrayLike<number>, darkMax: number, mi
  * Start index of the dark run at the end of `values` (scanning backwards):
  * the first index (from the end) whose value is >= `darkMax`, plus one.
  * Same run-length / scan-depth rules as leadingDarkRunEnd. Null if none.
+ *
+ * With `maxGap` > 0 a bright stretch of at most that many entries is bridged
+ * when the run continues above it: the collector text printed in the bottom
+ * border (white on black) lifts a row mean above the threshold, and without
+ * the bridge the run ended at the artist line, the window slid down and the
+ * number line above it fell out (German War Horn, ORI 243/272, phone
+ * 2026-09-18: the footer read "ORI DE LARS GRANTWEST" three times).
  */
-export function trailingDarkRunStart(values: ArrayLike<number>, darkMax: number, minLen: number, maxScan: number): number | null {
+export function trailingDarkRunStart(values: ArrayLike<number>, darkMax: number, minLen: number, maxScan: number, maxGap = 0): number | null {
 	const n = values.length;
 	const limit = Math.max(0, n - maxScan);
 	let i = n - 1;
-	while (i >= limit && values[i] < darkMax) i--;
+	for (;;) {
+		while (i >= limit && values[i] < darkMax) i--;
+		if (i < limit) return null;
+		// values[i] is bright: bridge it when a dark entry follows within maxGap
+		let j = i - 1;
+		while (j >= limit && j >= i - maxGap && values[j] >= darkMax) j--;
+		if (maxGap > 0 && j >= limit && j >= i - maxGap && values[j] < darkMax && n - 1 - i >= minLen) {
+			i = j;
+			continue;
+		}
+		break;
+	}
 	const runLen = n - 1 - i;
-	if (runLen < minLen || i < limit) return null;
+	if (runLen < minLen) return null;
 	return i + 1;
 }
 
@@ -107,7 +125,8 @@ export function cropWindowsFromProfiles(
 	// A real border is at least ~1% of the card; scan at most 25% (top/left)
 	// or 20% (bottom) in case the warp carries a lot of dark background.
 	const top = leadingDarkRunEnd(rowMeansCenter, darkThreshold(rowMeansCenter), Math.round(H * 0.01), Math.round(H * 0.25));
-	const bottom = trailingDarkRunStart(rowMeansLeft, darkThreshold(rowMeansLeft), Math.round(H * 0.01), Math.round(H * 0.2));
+	// The bottom border carries the collector text: bridge a text line (≤ 2.5% of the warp).
+	const bottom = trailingDarkRunStart(rowMeansLeft, darkThreshold(rowMeansLeft), Math.round(H * 0.01), Math.round(H * 0.2), Math.round(H * 0.025));
 	const left = leadingDarkRunEnd(colMeans, darkThreshold(colMeans), Math.round(W * 0.01), Math.round(W * 0.25));
 	if (top === null && bottom === null) return fixed;
 

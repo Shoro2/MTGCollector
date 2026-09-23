@@ -1,5 +1,5 @@
 {
-  "written": "2026-09-17T18:18:19.595Z",
+  "written": "2026-09-23T19:05:59.000Z",
   "photos": {
     "20260916_202337.jpg": {
       "detected": 6,
@@ -12,7 +12,7 @@
       "extra": 0,
       "likely": 1,
       "conflict": 0,
-      "wallSeconds": 16.4
+      "wallSeconds": 18.5
     },
     "20260916_202915.jpg": {
       "detected": 6,
@@ -25,20 +25,20 @@
       "extra": 0,
       "likely": 2,
       "conflict": 0,
-      "wallSeconds": 9.8
+      "wallSeconds": 11.5
     },
     "20260916_203317.jpg": {
       "detected": 12,
-      "identity": 8,
-      "printing": 1,
-      "unresolvedPrinting": 7,
+      "identity": 9,
+      "printing": 3,
+      "unresolvedPrinting": 6,
       "wrongIdentity": 0,
       "wrongPrinting": 0,
-      "missing": 4,
+      "missing": 3,
       "extra": 0,
-      "likely": 1,
+      "likely": 0,
       "conflict": 0,
-      "wallSeconds": 16.5
+      "wallSeconds": 19
     },
     "20260916_203408.jpg": {
       "detected": 2,
@@ -51,7 +51,7 @@
       "extra": 2,
       "likely": 0,
       "conflict": 0,
-      "wallSeconds": 4.5
+      "wallSeconds": 4.7
     },
     "20260916_202956.jpg": {
       "detected": 1,
@@ -64,7 +64,7 @@
       "extra": 0,
       "likely": 0,
       "conflict": 0,
-      "wallSeconds": 3.1
+      "wallSeconds": 2.9
     },
     "20260916_203427.jpg": {
       "detected": 1,
@@ -77,7 +77,7 @@
       "extra": 0,
       "likely": 0,
       "conflict": 0,
-      "wallSeconds": 1.9
+      "wallSeconds": 1.5
     }
   }
 }
