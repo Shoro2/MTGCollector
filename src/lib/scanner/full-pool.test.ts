@@ -515,6 +515,31 @@ describe('resolveCard — cards printed in another language (phone, 2026-09-18)'
 		expect(lone.printing.candidates.map((r) => r.name)).toContain('Kothophed, Soul Hoarder');
 	});
 
+	it('identifies a German card by its printed name and keeps its language (names imported)', () => {
+		const footer = [reading({ setCode: 'ori', collectorNumber: '', numberSource: 'none', language: 'DE', text: 'ORI DE LARS GRANTWEST' })];
+		const d = resolveCard(de({
+			nameCandidates: [{ name: 'Briarhorn', score: 0.6, pass: 'raw-line', lang: 'en' }, { name: 'War Horn', score: 0.7, pass: 'raw-line gray', lang: 'de' }],
+			nameText: 'Kriegshom', footer
+		}));
+		expect(d.identity).toMatchObject({ name: 'War Horn', state: 'confirmed' });
+		expect(d.printing).toMatchObject({ row: warHorn, state: 'confirmed' });
+		expect(d.language).toBe('DE');
+		// no footer language: the printed name's language is the card's
+		const byName = resolveCard(de({ nameCandidates: [{ name: 'War Horn', score: 1, pass: 'primary', lang: 'de' }], nameText: 'Kriegshorn' }));
+		expect(byName.identity).toMatchObject({ name: 'War Horn', state: 'confirmed' });
+		expect(byName.language).toBe('DE');
+	});
+
+	it('ignores an uncertain German name on an English card', () => {
+		// An English footer (a real set, EN): a German printed name the English text happens to resemble is a coincidence.
+		const d = resolveCard(de({
+			nameCandidates: [{ name: 'War Horn', score: 0.65, pass: 'primary', lang: 'de' }], nameText: 'Kriegsheim',
+			footer: [reading({ setCode: 'lci', collectorNumber: '', numberSource: 'none', language: 'EN', text: 'LCI EN' })]
+		}));
+		expect(d.identity.name).not.toBe('War Horn');
+		expect(d.language).toBe('EN');
+	});
+
 	it('does not join a name with a stray digit when the structural reading fits none of its printings', () => {
 		// Infinite Obliteration (ORI #103, German "Endlose Auslöschung"): the upright strip read
 		// "103/272 R", the rotated strip junk with a "5" — which joined Endless Atlas C18 #55 (0.47).

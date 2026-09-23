@@ -8,7 +8,7 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
-	import { rankNameMatches, realWordCount } from '$lib/scanner/similarity';
+	import { rankNameMatches, realWordCount, setPrintedAliasSource, type PrintedAlias } from '$lib/scanner/similarity';
 	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
 	import { artBoxOnWarp, hashArtPixels } from '$lib/scanner/phash';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
@@ -123,17 +123,40 @@
 	const BOTTOM_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&';
 
 	/** Record a name-search candidate of a card (every pass, accepted or not) as evidence for the fusion. */
-	function noteNameCandidate(card: { nameCandidates: NameCandidate[] }, best: { name: string; score: number }, pass: string) {
+	function noteNameCandidate(card: { nameCandidates: NameCandidate[] }, best: { name: string; score: number; lang?: string }, pass: string) {
 		if (!best.name || best.score <= 0) return;
 		const existing = card.nameCandidates.find((c) => c.name === best.name);
 		if (existing) {
 			if (best.score > existing.score) {
 				existing.score = best.score;
 				existing.pass = pass;
+				existing.lang = best.lang;
 			}
 		} else {
-			card.nameCandidates.push({ name: best.name, score: best.score, pass });
+			card.nameCandidates.push({ name: best.name, score: best.score, pass, lang: best.lang });
 		}
+	}
+
+	// Names printed on non-English printings ("Kriegshorn" for War Horn) come with
+	// the server's rows; they are the alias source of the name matching on this
+	// page (rankNameMatches, the fusion). Set in onMount: during SSR the shared
+	// module belongs to the server's own name search.
+	const printedNames = new Map<string, readonly PrintedAlias[]>();
+	/** Remember the printed names attached to the rows of a /scan response; returns the response. */
+	function learnPrinted<T>(data: T): T {
+		const rowsOf = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+		const learn = (row: unknown) => {
+			const r = row as { name?: unknown; printed?: unknown } | null;
+			if (r && typeof r.name === 'string' && Array.isArray(r.printed)) printedNames.set(r.name, r.printed as PrintedAlias[]);
+		};
+		const d = data as { results?: unknown; batch?: unknown } | null;
+		for (const row of rowsOf(d?.results)) learn(row);
+		for (const entry of rowsOf(d?.batch)) {
+			const e = entry as { results?: unknown; matches?: unknown } | null;
+			for (const row of rowsOf(e?.results)) learn(row);
+			for (const m of rowsOf(e?.matches)) learn((m as { row?: unknown } | null)?.row);
+		}
+		return data;
 	}
 
 	/** Set most confirmed cards of a scan belong to (at least 3 cards and 60%), else null. */
@@ -201,6 +224,13 @@
 	let manualMode = $state<'set' | 'name'>('set');
 	let manualResults = $state<Array<Record<string, unknown>>>([]);
 	let manualCardIndex = $state<number | null>(null);
+
+	onMount(() => {
+		// Client only: onMount never runs during SSR (onDestroy does), so the server's
+		// own alias source is never touched from here.
+		setPrintedAliasSource((name) => printedNames.get(name) ?? []);
+		return () => setPrintedAliasSource(null);
+	});
 
 	onMount(() => {
 		try {
@@ -1183,7 +1213,7 @@
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ queries: namesToSearch.map((n) => n.cleanName) })
 					});
-					const data = await res.json();
+					const data = learnPrinted(await res.json());
 					primaryBatch = Array.isArray(data?.batch) ? data.batch : [];
 				} catch (err) {
 					log(`Batch name search error: ${err}`);
@@ -1229,7 +1259,7 @@
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ queries: fallbackWords.map((f) => f.word) })
 					});
-					const data = await res.json();
+					const data = learnPrinted(await res.json());
 					fallbackBatch = Array.isArray(data?.batch) ? data.batch : [];
 				} catch (err) {
 					log(`Batch fallback search error: ${err}`);
@@ -1277,7 +1307,7 @@
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ queries: items.map((q) => q.cleanName) })
 					});
-					const data = await res.json();
+					const data = learnPrinted(await res.json());
 					batch = Array.isArray(data?.batch) ? data.batch : [];
 				} catch (err) {
 					log(`${tag}: batch search error: ${err}`);
@@ -1594,13 +1624,13 @@
 					const nameList = [...names];
 					for (let start = 0; start < nameList.length; start += 50) {
 						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printings: nameList.slice(start, start + 50) }) });
-						const data = await res.json();
+						const data = learnPrinted(await res.json());
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) printingsCache.set(entry.name, entry.results ?? []);
 					}
 					for (let start = 0; start < lookups.length; start += 100) {
 						const chunk = lookups.slice(start, start + 100);
 						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lookups: chunk }) });
-						const data = await res.json();
+						const data = learnPrinted(await res.json());
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) {
 							lookupCache.set(lookupKey(entry.setCode, entry.collectorNumber), entry.results ?? []);
 							knownSets.set(String(entry.setCode).toLowerCase(), !!entry.setKnown);
@@ -1611,7 +1641,7 @@
 					for (let start = 0; start < artCards.length; start += 50) {
 						const chunk = artCards.slice(start, start + 50);
 						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artHashes: chunk.map((c) => ({ hash: c.artHash, alt: c.artHashAlt })) }) });
-						const data = await res.json();
+						const data = learnPrinted(await res.json());
 						const batch = Array.isArray(data?.batch) ? data.batch : [];
 						chunk.forEach((c, k) => {
 							const matches = Array.isArray(batch[k]?.matches) ? batch[k].matches : [];
@@ -1629,13 +1659,13 @@
 					const artNames = [...new Set(cards.flatMap((c) => (c.artMatches ?? []).map((m) => String(m.row.name))))].filter((n) => !printingsCache.has(n));
 					for (let start = 0; start < artNames.length; start += 50) {
 						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ printings: artNames.slice(start, start + 50) }) });
-						const data = await res.json();
+						const data = learnPrinted(await res.json());
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) printingsCache.set(entry.name, entry.results ?? []);
 					}
 					for (let start = 0; start < near.length; start += 100) {
 						const chunk = near.slice(start, start + 100);
 						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ near: chunk }) });
-						const data = await res.json();
+						const data = learnPrinted(await res.json());
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) nearCache.set(nearKey(entry.setCode, entry.collectorNumber, entry.rarity ?? ''), entry.results ?? []);
 					}
 					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s), ${artCards.length} art hash(es)`);
@@ -1756,12 +1786,14 @@
 	// loadImage, fixOcrDigits, stripLeadingZeros, parseCollectorInfo,
 	// similarity, bestNameMatch, orderCorners all come from src/lib/scanner/.
 
-	async function addToCollection(cardId: string, cardName: string, foil: boolean = false) {
+	async function addToCollection(cardId: string, cardName: string, foil: boolean = false, language = '') {
 		adding = cardId;
+		// The language the scan established (footer code with a real set, or a printed
+		// name matched in that language); the collection falls back to English.
 		await fetch('/collection', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ cardId, quantity: 1, condition: 'near_mint', foil })
+			body: JSON.stringify({ cardId, quantity: 1, condition: 'near_mint', foil, ...(language ? { language: language.toLowerCase() } : {}) })
 		});
 		adding = null;
 		addedCards = [...addedCards, { id: cardId, name: cardName }];
@@ -1819,7 +1851,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ setCode: manualSetCode.trim().toLowerCase(), collectorNumber: manualNumber.trim() })
 			});
-			const data = await res.json();
+			const data = learnPrinted(await res.json());
 			manualResults = data.results;
 		} else {
 			if (manualQuery.trim().length < 2) return;
@@ -1828,7 +1860,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ query: manualQuery.trim() })
 			});
-			const data = await res.json();
+			const data = learnPrinted(await res.json());
 			manualResults = data.results;
 		}
 	}
@@ -1863,7 +1895,7 @@
 				const id = result.id as string;
 				const name = result.name as string;
 				if (!addedCards.some(a => a.id === id)) {
-					await addToCollection(id, name, card.foil);
+					await addToCollection(id, name, card.foil, card.language);
 				}
 			}
 		}
@@ -2236,7 +2268,7 @@
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 											{:else}
 												<button
-													onclick={(e) => { e.stopPropagation(); addToCollection(result.id as string, result.name as string, card.foil); }}
+													onclick={(e) => { e.stopPropagation(); addToCollection(result.id as string, result.name as string, card.foil, card.language); }}
 													disabled={adding === result.id}
 													class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
 												>
@@ -2319,7 +2351,7 @@
 															{#if isAdded}
 																<span class="text-green-400 text-xs">Added!</span>
 															{:else}
-																<button onclick={() => addToCollection(result.id as string, result.name as string, card.foil)}
+																<button onclick={() => addToCollection(result.id as string, result.name as string, card.foil, card.language)}
 																	class="bg-green-600 hover:bg-green-700 px-2 py-0.5 rounded text-xs">Add</button>
 															{/if}
 														{/if}

@@ -15,6 +15,7 @@ export function normalizeName(s: string): string {
 		.normalize('NFD') // split accented chars into base char + combining mark
 		.replace(/[̀-ͯ]/g, '') // drop the combining marks so accents fold to ASCII
 		.toLowerCase()
+		.replace(/ß/g, 'ss') // German sharp s (printed names since the import of non-English names)
 		.replace(/æ/g, 'ae') // ligatures NFD doesn't decompose
 		.replace(/œ/g, 'oe')
 		.replace(/ø/g, 'o')
@@ -97,15 +98,56 @@ export function prefixSimilarity(ocr: string, candidate: string): number {
 /** Slight penalty so a clean full-string match always beats a prefix match. */
 const PREFIX_MATCH_WEIGHT = 0.97;
 
+/** A card's name as printed on a non-English printing (Scryfall's `printed_name`); the catalogue's own names are English. */
+export type PrintedAlias = { alias: string; lang: string };
+
+let printedAliasSource: ((name: string) => readonly PrintedAlias[]) | null = null;
+
+/**
+ * Where nameAliases() finds a card's printed names in other languages: on the
+ * server the index of the imported names (`npm run import-names`), on the scan
+ * page the names that came with the server's rows. Without a source a card has
+ * its English aliases only — how the scanner behaved before the import.
+ */
+export function setPrintedAliasSource(source: ((name: string) => readonly PrintedAlias[]) | null): void {
+	printedAliasSource = source;
+}
+
+/** The printed names of a canonical card name in other languages (empty without a source). */
+export function printedAliases(name: string): readonly PrintedAlias[] {
+	return printedAliasSource?.(name) ?? [];
+}
+
 /**
  * Names a physical card can show for one database record: the canonical name
  * and, for double-faced / split / adventure cards stored as "Front // Back",
- * each face on its own. The scanner reads a face; the database stores the
- * canonical string.
+ * each face on its own — plus the names printed on its non-English printings
+ * ("Kriegshorn" for War Horn). The scanner reads a face; the database stores
+ * the canonical string.
  */
 export function nameAliases(name: string): string[] {
+	const own = ownAliases(name);
+	const printed = printedAliases(name);
+	return printed.length === 0 ? own : [...own, ...printed.map((p) => p.alias)];
+}
+
+/** The catalogue's own (English) aliases of a name: the canonical string and each face. */
+export function ownAliases(name: string): string[] {
 	const faces = name.split(' // ').map((f) => f.trim()).filter(Boolean);
 	return faces.length > 1 ? [name, ...faces] : [name];
+}
+
+/** Language of an alias of `name`: 'en' for the catalogue's name and faces, the printed language for an imported name. */
+export function aliasLanguage(name: string, alias: string): string {
+	return printedAliases(name).find((p) => p.alias === alias)?.lang ?? 'en';
+}
+
+/** Character bigrams of a normalised name (the prefilter of the edit-distance scans). */
+export function bigramsOf(norm: string): Set<string> {
+	const out = new Set<string>();
+	const compact = norm.replace(/\s+/g, ' ');
+	for (let i = 0; i < compact.length - 1; i++) out.add(compact.slice(i, i + 2));
+	return out;
 }
 
 /**
@@ -138,7 +180,7 @@ export function nameScore(query: string, name: string): number {
 export function bestNameMatch(
 	results: Array<Record<string, unknown>>,
 	query: string
-): { name: string; score: number } {
+): { name: string; score: number; lang?: string } {
 	return rankNameMatches(results, query, 1)[0] ?? { name: '', score: 0 };
 }
 
@@ -147,22 +189,23 @@ export function bestNameMatch(
  * first, at most `limit`; names scoring 0 are dropped. On a tie the record
  * whose *canonical* string produced the score outranks one matched only
  * through a face alias ("Negate" before "Negate // Negate"); otherwise the
- * input order (the server's relevance) decides.
+ * input order (the server's relevance) decides. `lang` is the language of the
+ * alias that matched ('en', or e.g. 'de' for a printed German name).
  */
 export function rankNameMatches(
 	results: Array<Record<string, unknown>>,
 	query: string,
 	limit = 3
-): Array<{ name: string; score: number }> {
+): Array<{ name: string; score: number; lang: string }> {
 	const seen = new Set<string>();
-	const ranked: Array<{ name: string; score: number; canonical: boolean; order: number }> = [];
+	const ranked: Array<{ name: string; score: number; lang: string; canonical: boolean; order: number }> = [];
 	for (const r of results) {
 		const name = r.name as string;
 		if (seen.has(name)) continue;
 		seen.add(name);
 		const { alias, score } = bestAlias(query, name);
-		if (score > 0) ranked.push({ name, score, canonical: alias === name, order: ranked.length });
+		if (score > 0) ranked.push({ name, score, lang: aliasLanguage(name, alias), canonical: alias === name, order: ranked.length });
 	}
 	ranked.sort((a, b) => b.score - a.score || Number(b.canonical) - Number(a.canonical) || a.order - b.order);
-	return ranked.slice(0, limit).map(({ name, score }) => ({ name, score }));
+	return ranked.slice(0, limit).map(({ name, score, lang }) => ({ name, score, lang }));
 }

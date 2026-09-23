@@ -1,12 +1,10 @@
 import { sqlite } from './db.js';
 import { priceDataCache, setsCache } from './cache.js';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { parseScryfallBulkStream } from './bulk-stream.js';
-import { fetchDefaultCardsBulkMeta, scryfallFetch } from './scryfall.js';
+import { downloadBulkFile, fetchDefaultCardsBulkMeta } from './scryfall.js';
 
 const dataDir = join(process.cwd(), 'data');
 const tempFilePrefix = 'scryfall-prices-temp';
@@ -149,62 +147,6 @@ function sweepTempFiles(keep: string): void {
 	} catch { /* data dir may not exist yet */ }
 }
 
-/**
- * Download the bulk file with both a stall watchdog (no bytes for
- * DOWNLOAD_STALL_MS) and a hard overall cap. Node's `fetch` can leave a body
- * stream pending indefinitely, and an unbounded wait here never settles the
- * promise, so the `finally` that releases the lock never runs.
- */
-async function downloadBulkFile(url: string, target: string, runSignal: AbortSignal): Promise<void> {
-	const controller = new AbortController();
-	const abort = (reason: Error) => controller.abort(reason);
-	const onRunAbort = () => abort(new Error('Price update aborted'));
-	runSignal.addEventListener('abort', onRunAbort, { once: true });
-
-	let stallTimer: NodeJS.Timeout | undefined;
-	const armStall = () => {
-		clearTimeout(stallTimer);
-		stallTimer = setTimeout(
-			() => abort(new Error(`Bulk download stalled — no data for ${DOWNLOAD_STALL_MS / 1000}s`)),
-			DOWNLOAD_STALL_MS
-		);
-	};
-	const hardTimer = setTimeout(
-		() => abort(new Error(`Bulk download exceeded ${DOWNLOAD_MAX_MS / 60_000} min`)),
-		DOWNLOAD_MAX_MS
-	);
-
-	try {
-		armStall();
-		const response = await scryfallFetch(url, { signal: controller.signal });
-		if (!response.ok || !response.body) {
-			throw new Error(`Download failed: ${response.status}`);
-		}
-
-		let bytes = 0;
-		const watchdog = new Transform({
-			transform(chunk, _enc, cb) {
-				bytes += chunk.length;
-				armStall();
-				cb(null, chunk);
-			}
-		});
-
-		mkdirSync(dataDir, { recursive: true });
-		await pipeline(
-			Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-			watchdog,
-			createWriteStream(target),
-			{ signal: controller.signal }
-		);
-		console.log(`[price-updater] Download complete (${Math.round(bytes / 1024 / 1024)} MB), parsing prices...`);
-	} finally {
-		clearTimeout(stallTimer);
-		clearTimeout(hardTimer);
-		runSignal.removeEventListener('abort', onRunAbort);
-	}
-}
-
 export async function runPriceUpdate(): Promise<{ updated: number; inserted: number; snapshotted: number }> {
 	const run = beginRun();
 	const priceDataPath = join(dataDir, `${tempFilePrefix}-${run.id}.jsonl.gz`);
@@ -219,7 +161,13 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 
 		const sizeNote = bulk.downloadSize ? `, ~${Math.round(bulk.downloadSize / 1024 / 1024)} MB` : '';
 		console.log(`[price-updater] Downloading bulk data (${bulk.updatedAt}${sizeNote})...`);
-		await downloadBulkFile(bulk.downloadUri, priceDataPath, run.controller.signal);
+		const bytes = await downloadBulkFile(bulk.downloadUri, priceDataPath, {
+			signal: run.controller.signal,
+			stallMs: DOWNLOAD_STALL_MS,
+			maxMs: DOWNLOAD_MAX_MS,
+			abortMessage: 'Price update aborted'
+		});
+		console.log(`[price-updater] Download complete (${Math.round(bytes / 1024 / 1024)} MB), parsing prices...`);
 
 		// Stream-parse the gzipped JSONL payload so memory stays flat instead of
 		// spiking on the decompressed document. Price updates are applied in

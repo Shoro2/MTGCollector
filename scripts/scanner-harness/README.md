@@ -410,12 +410,16 @@ card is common):
 | before | 17 | 0 | 1 | 3 | 6 | 1 |
 | language rule, without the footer checks | 17 | **4** | 2 | 1 | 3 | 1 |
 | with the footer checks (shipped) | **18** | **0** | 2 | 2 | 5 | 1 |
+| plus the printed German names (`npm run import-names`) | **27** | **0** | 0 | 0 | 0 | 1 |
 
 The language rule removed the name veto that had been hiding footer
 misreads (ORI #136 for #236, #194 for #104, #132 for #137); the footer checks
 (the rarity letter of every strip, disagreeing strips, a contradicting
 artwork, artwork + exact footer number) are what make it safe. The
 development set is unchanged (103 / 83 of 104, 0 wrong); the hold-out set
-went from 18 / 7 to 19 / 9 of 26 through the footer window, 0 wrong. The
+went from 18 / 7 to 19 / 9 of 26 through the footer window, 0 wrong. With the printed
+names imported (2026-09-24) every captured scene is confirmed and the
+printing is settled in 24 of 27 (15 before): the German name identifies the
+card, the footer or the name's single printing picks the printing. The
 black card that is never found at 1920x1080 (the fake camera's frame, where
 the card is half as tall as on the phone) is the known dark-mat limitation.

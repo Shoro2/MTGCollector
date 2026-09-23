@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { similarity, bestNameMatch, normalizeName, prefixSimilarity, looksLikeOcrJunk, nameAliases, nameScore } from './similarity';
+import { similarity, bestNameMatch, normalizeName, prefixSimilarity, looksLikeOcrJunk, nameAliases, nameScore, rankNameMatches, aliasLanguage, setPrintedAliasSource } from './similarity';
 
 describe('similarity', () => {
 	it('returns 1 for identical strings', () => {
@@ -125,5 +125,39 @@ describe('nameAliases / face-aware scoring', () => {
 		expect(best.name).toBe('Beloved Beggar // Generous Soul');
 		expect(best.score).toBeCloseTo(1, 5);
 		expect(nameScore('Generous Soul', 'Beloved Beggar // Generous Soul')).toBeCloseTo(1, 5);
+	});
+});
+
+describe('printed names of non-English printings', () => {
+	const printed: Record<string, Array<{ alias: string; lang: string }>> = { 'War Horn': [{ alias: 'Kriegshorn', lang: 'de' }] };
+	const withSource = (fn: () => void) => {
+		setPrintedAliasSource((name) => printed[name] ?? []);
+		try {
+			fn();
+		} finally {
+			setPrintedAliasSource(null);
+		}
+	};
+
+	it('adds the printed names to a card\'s aliases and tells their language', () => {
+		withSource(() => {
+			expect(nameAliases('War Horn')).toEqual(['War Horn', 'Kriegshorn']);
+			expect(aliasLanguage('War Horn', 'Kriegshorn')).toBe('de');
+			expect(aliasLanguage('War Horn', 'War Horn')).toBe('en');
+			expect(nameScore('Kriegshorn', 'War Horn')).toBe(1);
+		});
+		expect(nameAliases('War Horn')).toEqual(['War Horn']);
+	});
+
+	it('ranks a German read by its printed name and reports the language', () => {
+		withSource(() => {
+			const ranked = rankNameMatches([{ name: 'Briarhorn' }, { name: 'War Horn' }], 'Kriegshorn', 2);
+			expect(ranked[0]).toEqual({ name: 'War Horn', score: 1, lang: 'de' });
+			expect(ranked[1]).toMatchObject({ name: 'Briarhorn', lang: 'en' });
+		});
+	});
+
+	it('folds the German sharp s', () => {
+		expect(normalizeName('Insekten-Scheußlichkeit')).toBe('insekten scheusslichkeit');
 	});
 });
