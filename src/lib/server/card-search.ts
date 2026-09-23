@@ -1,7 +1,9 @@
 import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
-import { nameAliases, normalizeName, rankNameMatches, similarity } from '../scanner/similarity.js';
+import { bigramsOf, normalizeName, ownAliases, rankNameMatches, setPrintedAliasSource, similarity } from '../scanner/similarity.js';
+import { PrintedNameIndex } from './printed-name-index.js';
+import { allPrintedNames } from './printed-names.js';
 
 const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity, art_hash`;
 // Art-series records are not playable cards: Scryfall lists them as
@@ -74,6 +76,45 @@ function runFts(query: string, limit = 20): CardRow[] {
 /** FTS5 term for a word: quoted so punctuation can't break the query, prefix-matched. */
 const term = (w: string) => `"${w.replace(/"/g, '')}"*`;
 
+// Names printed on non-English printings (`npm run import-names`): an index
+// rebuilt when the table changes, and the alias source of the shared name
+// matching, so rankNameMatches() and the fuzzy scan score "Kriegshorn" against
+// War Horn. Refreshed once per request (refreshPrintedNames), never per alias.
+let printed: { count: number; index: PrintedNameIndex } | null = null;
+const printedSource = (name: string) => printed?.index.aliasesOf(name) ?? [];
+
+/** The printed-name index, reloaded when the number of stored names changed (an import). */
+export function refreshPrintedNames(): PrintedNameIndex {
+	let count = 0;
+	try {
+		count = (sqlite.prepare('SELECT COUNT(*) AS c FROM card_names').get() as { c: number }).c;
+	} catch {
+		count = 0; // table not migrated yet
+	}
+	if (!printed || printed.count !== count) printed = { count, index: new PrintedNameIndex(count > 0 ? allPrintedNames() : []) };
+	// (Re)claim the shared alias source on every request: the module is shared with
+	// whatever else runs in the server process, and a stale source would silently
+	// drop every printed name from the ranking.
+	setPrintedAliasSource(printedSource);
+	return printed.index;
+}
+
+/** Rows with the printed names of their card attached (`printed`), so the scan page scores a German read against them too. */
+export function withPrinted<T extends CardRow>(rows: T[]): T[] {
+	const index = refreshPrintedNames();
+	if (index.size === 0) return rows;
+	for (const row of rows) {
+		const aliases = index.aliasesOf(String(row.name));
+		if (aliases.length > 0) (row as CardRow).printed = aliases;
+	}
+	return rows;
+}
+
+const uniqueRows = (rows: CardRow[]): CardRow[] => {
+	const seen = new Set<unknown>();
+	return rows.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+};
+
 /**
  * Resolve a card by its (probably OCR'd) name. Tries cheapest paths first:
  * exact match → FTS5 prefix match on all words (indexed) → substring LIKE →
@@ -89,6 +130,31 @@ export function searchByName(query: string): SearchResult {
 	const cleaned = query.trim();
 	if (cleaned.length < 2) return { results: [], matchType: 'none' };
 
+	// Printed names of non-English printings (`npm run import-names`). A name
+	// equal to one once normalised is the card ("Endlose Ausloschung" -> Infinite
+	// Obliteration). A close one only joins when it explains the text better than
+	// the English answer does: a German name bar meets the English pool by
+	// coincidence ("Kriegshorn" -> Briarhorn 0.60), and English text meets the
+	// ~30k German names the same way — adding every close German name put "Aura
+	// Mutation" (German "Aura-Mutation") next to a correct 0.79 read of
+	// Retro-Mutation and turned it into a one-tap choice.
+	const printedIndex = refreshPrintedNames();
+	const printedHits = printedIndex.size > 0 ? printedIndex.match(cleaned) : [];
+	const printedRowsOf = (hits: typeof printedHits) => hits.flatMap((h) => printingsByName(h.name).slice(0, ROWS_PER_NAME));
+	const exactPrinted = printedHits.filter((h) => h.score === 1);
+
+	const english = searchEnglishName(cleaned);
+	if (exactPrinted.length > 0) {
+		return { results: uniqueRows([...(english.matchType === 'exact' ? english.results : []), ...printedRowsOf(exactPrinted)]), matchType: 'exact' };
+	}
+	const englishBest = english.results.length > 0 ? (rankNameMatches(english.results, cleaned, 1)[0]?.score ?? 0) : 0;
+	const better = printedHits.filter((h) => h.score > englishBest);
+	if (better.length === 0) return english;
+	return { results: uniqueRows([...printedRowsOf(better), ...english.results]), matchType: english.matchType === 'none' ? 'fuzzy' : english.matchType };
+}
+
+/** The search over the catalogue's own (English) names and faces; see searchByName. */
+function searchEnglishName(cleaned: string): SearchResult {
 	const exact = exactStmt().all(cleaned, `${cleaned} //%`, cleaned) as CardRow[];
 	if (exact.length > 0) return { results: exact, matchType: 'exact' };
 
@@ -149,27 +215,25 @@ export function searchByName(query: string): SearchResult {
 }
 
 type NameEntry = { name: string; norm: string; bigrams: Set<string> };
-let nameIndex: { cardCount: number; entries: NameEntry[] } | null = null;
+let nameIndex: { key: string; entries: NameEntry[] } | null = null;
 
-function bigramsOf(norm: string): Set<string> {
-	const out = new Set<string>();
-	const compact = norm.replace(/\s+/g, ' ');
-	for (let i = 0; i < compact.length - 1; i++) out.add(compact.slice(i, i + 2));
-	return out;
-}
-
-/** Distinct canonical names with their aliases, rebuilt when the card count changes (imports). */
+/**
+ * Distinct canonical names with their faces, rebuilt when the card count changes
+ * (imports). The printed names of other languages have their own index
+ * (PrintedNameIndex), searched on every query in searchByName().
+ */
 function nameEntries(): NameEntry[] {
 	const cardCount = (sqlite.prepare('SELECT COUNT(*) AS c FROM cards').get() as { c: number }).c;
-	if (nameIndex && nameIndex.cardCount === cardCount) return nameIndex.entries;
+	const key = String(cardCount);
+	if (nameIndex && nameIndex.key === key) return nameIndex.entries;
 	const entries: NameEntry[] = [];
 	for (const { name } of sqlite.prepare(`SELECT DISTINCT name FROM cards WHERE ${NOT_ART_SERIES}`).all() as Array<{ name: string }>) {
-		for (const alias of nameAliases(name)) {
+		for (const alias of ownAliases(name)) {
 			const norm = normalizeName(alias);
 			if (norm.length >= 3) entries.push({ name, norm, bigrams: bigramsOf(norm) });
 		}
 	}
-	nameIndex = { cardCount, entries };
+	nameIndex = { key, entries };
 	return entries;
 }
 

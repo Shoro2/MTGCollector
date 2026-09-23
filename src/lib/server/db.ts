@@ -312,6 +312,24 @@ const MIGRATIONS: Migration[] = [
 			addColumnIfMissing(db, 'cards', 'art_hash', 'TEXT');
 			addColumnIfMissing(db, 'card_faces', 'art_hash', 'TEXT');
 		}
+	},
+	{
+		// Scanner: the names printed on non-English printings (Scryfall's
+		// all-cards bulk), filled by `npm run import-names`
+		// (src/lib/server/printed-names.ts). `name` is the catalogue's canonical
+		// English name; the table is catalogue data, not user data.
+		id: '0022_card_names',
+		run: (db) => {
+			db.exec(`
+				CREATE TABLE IF NOT EXISTS card_names (
+					name TEXT NOT NULL,
+					lang TEXT NOT NULL,
+					printed_name TEXT NOT NULL,
+					PRIMARY KEY (lang, printed_name, name)
+				)
+			`);
+			db.exec('CREATE INDEX IF NOT EXISTS idx_card_names_name ON card_names(name)');
+		}
 	}
 ];
 

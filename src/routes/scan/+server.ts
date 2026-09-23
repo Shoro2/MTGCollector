@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySetNumber, cardsById } from '$lib/server/card-search';
+import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySetNumber, cardsById, withPrinted } from '$lib/server/card-search';
 import { searchArt, type ArtSearchHit } from '$lib/server/art-index';
 import type { CardRow } from '$lib/server/card-search';
 import { ART_LIKELY } from '$lib/scanner/resolve';
@@ -27,7 +27,10 @@ export async function POST({ request }) {
 		const queries = (body.queries as unknown[])
 			.filter((q): q is string => typeof q === 'string')
 			.slice(0, 50);
-		const batch = queries.map((q) => ({ query: q, ...searchByName(q) }));
+		const batch = queries.map((q) => {
+			const r = searchByName(q);
+			return { query: q, ...r, results: withPrinted(r.results) };
+		});
 		return json({ batch });
 	}
 
@@ -38,12 +41,10 @@ export async function POST({ request }) {
 	// only answers that question.
 	if (Array.isArray(body.lookups)) {
 		const lookups = (body.lookups as unknown[]).filter(isLookup).slice(0, 100);
-		const batch = lookups.map((l) => ({
-			setCode: l.setCode,
-			collectorNumber: l.collectorNumber,
-			setKnown: isKnownSet(l.setCode),
-			...(l.collectorNumber ? searchBySetNumber(l.setCode, l.collectorNumber) : { results: [], matchType: 'none' })
-		}));
+		const batch = lookups.map((l) => {
+			const r = l.collectorNumber ? searchBySetNumber(l.setCode, l.collectorNumber) : { results: [], matchType: 'none' as const };
+			return { setCode: l.setCode, collectorNumber: l.collectorNumber, setKnown: isKnownSet(l.setCode), ...r, results: withPrinted(r.results) };
+		});
 		return json({ batch });
 	}
 
@@ -55,7 +56,7 @@ export async function POST({ request }) {
 			setCode: l.setCode,
 			collectorNumber: l.collectorNumber,
 			rarity: typeof l.rarity === 'string' ? l.rarity : '',
-			results: nearBySetNumber(l.setCode, l.collectorNumber, typeof l.rarity === 'string' ? l.rarity : '')
+			results: withPrinted(nearBySetNumber(l.setCode, l.collectorNumber, typeof l.rarity === 'string' ? l.rarity : ''))
 		}));
 		return json({ batch });
 	}
@@ -72,6 +73,7 @@ export async function POST({ request }) {
 		const batch = items.map((it) => {
 			const hits = searchArt(it.hash, typeof it.alt === 'string' ? it.alt : undefined, ART_LIKELY, 12);
 			const rows = cardsById(hits.map((h) => h.id));
+			withPrinted([...rows.values()]);
 			const matches: Array<ArtSearchHit & { row: CardRow }> = [];
 			for (const h of hits) {
 				const row = rows.get(h.id);
@@ -87,19 +89,21 @@ export async function POST({ request }) {
 	// ten newest rows the name search returns.
 	if (Array.isArray(body.printings)) {
 		const names = (body.printings as unknown[]).filter((n): n is string => typeof n === 'string').slice(0, 50);
-		const batch = names.map((name) => ({ name, results: printingsByName(name) }));
+		const batch = names.map((name) => ({ name, results: withPrinted(printingsByName(name)) }));
 		return json({ batch });
 	}
 
 	const { query, setCode, collectorNumber } = body;
 
 	if (typeof setCode === 'string' && typeof collectorNumber === 'string') {
-		return json(searchBySetNumber(setCode, collectorNumber));
+		const r = searchBySetNumber(setCode, collectorNumber);
+		return json({ ...r, results: withPrinted(r.results) });
 	}
 
 	if (typeof query !== 'string' || query.trim().length < 2) {
 		return json({ results: [], matchType: 'none' });
 	}
 
-	return json(searchByName(query));
+	const r = searchByName(query);
+	return json({ ...r, results: withPrinted(r.results) });
 }

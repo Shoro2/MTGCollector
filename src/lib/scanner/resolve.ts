@@ -20,7 +20,8 @@ import { disambiguateReprints, normalizeCollectorNumber } from './pipeline';
 import { hammingDistance } from './phash';
 
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
-export type NameCandidate = { name: string; score: number; pass: string };
+/** `lang`: language of the name the candidate matched — 'en' (or absent) for the catalogue's name, e.g. 'de' for a printed German name. */
+export type NameCandidate = { name: string; score: number; pass: string; lang?: string };
 export type FooterReading = CollectorInfo & {
 	/** Which crop produced the reading: 'primary', 'small', 'rotated', 'rotated small'. */
 	variant: string;
@@ -226,26 +227,35 @@ export function resolveCard(input: ResolveInput): Decision {
 	const ranked = readings
 		.map((r) => ({ r, strength: strengthOf(r) }))
 		.sort((a, b) => STRENGTH_ORDER[a.strength] - STRENGTH_ORDER[b.strength]);
-	// A card printed in another language carries its name in that language, but the
-	// catalogue holds the English names only: a German name bar matches English names
-	// by coincidence ("Kriegshorn" -> Briarhorn 0.60, "Chandras Entflammen" -> Chandra's
-	// Outrage 0.65, phone scans 2026-09-18). When a footer reading names a real set and
-	// a language other than English, an uncertain name candidate is no evidence — neither
-	// for a card nor against a footer reading or an artwork; the footer and the artwork
-	// decide. A name read at NAME_CERTAIN or better still counts ("Pia und Kiran Nalaar").
-	const foreign = readings.find((r) => r.language !== '' && r.language.toUpperCase() !== 'EN' && r.setCode !== '' && input.isKnownSet(r.setCode)) ?? null;
-	const nameCandidates = foreign ? input.nameCandidates.filter((c) => c.score >= NAME_CERTAIN) : input.nameCandidates;
-	// The name text as evidence against footer hits: a foreign name text contradicts nothing.
-	const contraText = foreign ? '' : input.nameText;
+	// The language the card is printed in, when a footer reading with a real set names it.
+	// A name candidate below NAME_CERTAIN counts only when the name it matched is printed in
+	// that language: a German name bar meets English names by coincidence ("Kriegshorn" ->
+	// Briarhorn 0.60, "Chandras Entflammen" -> Chandra's Outrage 0.65, phone scans
+	// 2026-09-18), an English one German names alike. With the printed names imported
+	// (`npm run import-names`) the German name is a candidate of its own ("Kriegshorn" ->
+	// War Horn 1.00, lang 'de'); without them the footer and the artwork decide. A name read
+	// at NAME_CERTAIN or better counts in any language ("Pia und Kiran Nalaar").
+	const langReading = readings.find((r) => r.language !== '' && r.setCode !== '' && input.isKnownSet(r.setCode)) ?? null;
+	const footerLang = langReading ? langReading.language.toLowerCase() : '';
+	const langOf = (c: NameCandidate) => (c.lang ?? 'en').toLowerCase();
+	const nameCandidates = footerLang ? input.nameCandidates.filter((c) => c.score >= NAME_CERTAIN || langOf(c) === footerLang) : input.nameCandidates;
+	// The name text as evidence against footer hits: a text in another language says nothing about English names.
+	const contraText = footerLang !== '' && footerLang !== 'en' ? '' : input.nameText;
 	const best = [...nameCandidates].sort((a, b) => b.score - a.score)[0] ?? null;
-	const language = readings.find((r) => r.language)?.language ?? '';
+	// The card's language: the footer's (with a real set), else the language of the printed
+	// name the identity was read as ('' when neither says — the collection then assumes English).
+	const languageOf = (name: string | null): string => {
+		if (footerLang) return footerLang.toUpperCase();
+		const c = name ? nameCandidates.find((x) => x.name === name) : undefined;
+		return c && langOf(c) !== 'en' && c.score >= NAME_CONFIRM ? langOf(c).toUpperCase() : '';
+	};
 	const trusted = input.footer.filter((r) => r.trustFoil && (r.setCode || r.collectorNumber));
 	const finish: Finish = trusted.length === 0 ? 'unknown' : trusted.some((r) => r.foilFromText) ? 'foil' : 'nonfoil';
 	const done = (name: string | null, identityState: DecisionState, row: PrintingRow | null, candidates: PrintingRow[], printingState: DecisionState): Decision => ({
 		identity: { name, state: identityState, score: best?.score ?? 0 },
 		printing: { row, candidates, state: printingState },
 		finish,
-		language,
+		language: languageOf(name),
 		reasons
 	});
 	const agrees = (row: PrintingRow) => nameScore(input.nameText, String(row.name)) >= NAME_LIKELY || (best !== null && best.name === row.name && best.score >= NAME_LIKELY);
@@ -350,8 +360,8 @@ export function resolveCard(input: ResolveInput): Decision {
 		return out;
 	};
 	const byScore = [...nameCandidates].sort((a, b) => b.score - a.score);
-	if (foreign && nameCandidates.length < input.nameCandidates.length) {
-		reasons.push(`footer: a ${foreign.language.toUpperCase()} card (${foreign.setCode.toUpperCase()}), the catalogue knows the English names only: ${input.nameCandidates.length - nameCandidates.length} name candidate(s) below ${NAME_CERTAIN} ignored`);
+	if (langReading && nameCandidates.length < input.nameCandidates.length) {
+		reasons.push(`footer: a ${footerLang.toUpperCase()} card (${langReading.setCode.toUpperCase()}): ${input.nameCandidates.length - nameCandidates.length} name candidate(s) below ${NAME_CERTAIN} ignored, they matched a name in another language`);
 	}
 
 	// 0. Art-hash evidence (Phase 3): the artwork of the warped card against the
