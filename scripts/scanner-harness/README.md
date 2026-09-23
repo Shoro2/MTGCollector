@@ -368,3 +368,54 @@ other dark cards; an inner block of a black card is still tracked when no pass
 sees the outline. End to end (`live-harness.mjs`): the black card on the real
 mat photo and a dimmed black card scene are captured within a second and
 identified; the classic two-card fixture still reads 2 / 2.
+
+## German cards on the dark mat (phone session 2026-09-18)
+
+The owner scanned German Magic Origins and Battle for Zendikar cards on the
+dark woven mat: 15 captures, 7 confirmed, 2 one-tap offers (one of them the
+wrong card), 4 unknown, plus three live sessions in which a black card was
+never found. The server-side scan logs showed four failure classes:
+
+- **German names.** The catalogue holds English names only; the name OCR read
+  the German names well ("Schutzbrille der Pyromagi", "Schmerzliche Wahrheit")
+  and matched English names by coincidence ("Krleghon" -> Legion 0.63,
+  "Chandras Entlammen" -> Chandra Ablaze 0.65). A junk read vetoed a correct
+  footer (Kothophed, "104/272 R ... ORI*DE").
+- **The number line of the M15 footer fell out** of the collector window when
+  the artist line was bright enough to end the border's dark run
+  ("ORI DE LARS GRANTWEST", three War Horn captures).
+- **Partial quads of black cards** (aspect 0.78-0.85 instead of ~0.72): no
+  name bar, no usable artwork; only the footer can save such a capture.
+- **A cut-off best frame**: the capture handed over a quad at y = 0 from an
+  older, sharper frame while the capturing frame was clean.
+
+Reproduction without the photos (the scan logs carry no images): the seven
+cards in German on the mat, four poses each, run through the live pipeline
+against the full catalogue:
+
+```bash
+node scripts/scanner-harness/make-mat-scenes.mjs --out de-scenes --mat holdout/20260916_203427.jpg --cards ori/243/de,ori/157/de,ori/236/de,ori/104/de,bfz/120/de,ori/103/de,ori/137/de
+node scripts/scanner-harness/make-still-y4m.mjs de-scenes/mat-001.jpg de-001.y4m
+node scripts/scanner-harness/live-harness.mjs de-001.y4m de-001.png de-001.log
+```
+
+Scryfall's German images themselves hash 2-6 bits away from the English
+reference art (same picture, different print and scan), so German captures
+land at 8-14 bits where English ones land at 0-10. Result on the 28 scenes
+(the synthetic footers are noisier than the phone's: one misread digit per
+card is common):
+
+| | confirmed right | confirmed wrong | one tap, right | one tap, wrong | unknown | no capture |
+|---|---|---|---|---|---|---|
+| before | 17 | 0 | 1 | 3 | 6 | 1 |
+| language rule, without the footer checks | 17 | **4** | 2 | 1 | 3 | 1 |
+| with the footer checks (shipped) | **18** | **0** | 2 | 2 | 5 | 1 |
+
+The language rule removed the name veto that had been hiding footer
+misreads (ORI #136 for #236, #194 for #104, #132 for #137); the footer checks
+(the rarity letter of every strip, disagreeing strips, a contradicting
+artwork, artwork + exact footer number) are what make it safe. The
+development set is unchanged (103 / 83 of 104, 0 wrong); the hold-out set
+went from 18 / 7 to 19 / 9 of 26 through the footer window, 0 wrong. The
+black card that is never found at 1920x1080 (the fake camera's frame, where
+the card is half as tall as on the phone) is the known dark-mat limitation.
