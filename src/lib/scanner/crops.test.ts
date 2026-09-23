@@ -25,6 +25,13 @@ describe('dark run helpers', () => {
 		expect(trailingDarkRunStart([200, 200, 30, 20], 90, 2, 4)).toBe(2);
 		expect(trailingDarkRunStart([200, 200, 200], 90, 1, 3)).toBeNull();
 	});
+	it('bridges a short bright stretch inside the run only when asked to', () => {
+		const v = [200, 200, 200, 20, 20, 120, 120, 20, 20, 20];
+		expect(trailingDarkRunStart(v, 90, 2, 10)).toBe(7);
+		expect(trailingDarkRunStart(v, 90, 2, 10, 2)).toBe(3);
+		expect(trailingDarkRunStart(v, 90, 2, 10, 1)).toBe(7); // the stretch is two entries long
+		expect(trailingDarkRunStart([200, 200, 120, 120, 120, 20, 20], 90, 2, 7, 2)).toBe(5); // the text box itself is never bridged
+	});
 });
 
 describe('cropWindowsFromProfiles', () => {
@@ -51,6 +58,18 @@ describe('cropWindowsFromProfiles', () => {
 		const lineTop = 41 + Math.round(cardH * 0.96), lineBottom = 41 + Math.round(cardH * 0.994);
 		expect(win.bottomY).toBeLessThanOrEqual(lineTop);
 		expect(win.bottomY + win.bottomH).toBeGreaterThanOrEqual(lineBottom);
+	});
+
+	it('keeps both collector lines when the artist line is brighter than the border (M15 frame, phone 2026-09-18)', () => {
+		// Row profile of a German War Horn (ORI 243/272) warped with ~3.5% margin: text box until
+		// row 611, black border 612-679 with the number line at 615-623 (stays dark in the
+		// left-half mean) and the artist line at 629-635 (above the threshold).
+		const rows = profile(23, 68);
+		for (let y = 629; y <= 635; y++) rows[y] = 110;
+		const win = cropWindowsFromProfiles(rows, rows, cols(17), W, H, false);
+		expect(win.edges.bottom).toBe(612);
+		expect(win.bottomY).toBeLessThanOrEqual(615);
+		expect(win.bottomY + win.bottomH).toBeGreaterThanOrEqual(636);
 	});
 
 	it('falls back to the fixed windows for white-bordered cards', () => {

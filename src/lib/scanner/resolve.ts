@@ -226,7 +226,18 @@ export function resolveCard(input: ResolveInput): Decision {
 	const ranked = readings
 		.map((r) => ({ r, strength: strengthOf(r) }))
 		.sort((a, b) => STRENGTH_ORDER[a.strength] - STRENGTH_ORDER[b.strength]);
-	const best = [...input.nameCandidates].sort((a, b) => b.score - a.score)[0] ?? null;
+	// A card printed in another language carries its name in that language, but the
+	// catalogue holds the English names only: a German name bar matches English names
+	// by coincidence ("Kriegshorn" -> Briarhorn 0.60, "Chandras Entflammen" -> Chandra's
+	// Outrage 0.65, phone scans 2026-09-18). When a footer reading names a real set and
+	// a language other than English, an uncertain name candidate is no evidence — neither
+	// for a card nor against a footer reading or an artwork; the footer and the artwork
+	// decide. A name read at NAME_CERTAIN or better still counts ("Pia und Kiran Nalaar").
+	const foreign = readings.find((r) => r.language !== '' && r.language.toUpperCase() !== 'EN' && r.setCode !== '' && input.isKnownSet(r.setCode)) ?? null;
+	const nameCandidates = foreign ? input.nameCandidates.filter((c) => c.score >= NAME_CERTAIN) : input.nameCandidates;
+	// The name text as evidence against footer hits: a foreign name text contradicts nothing.
+	const contraText = foreign ? '' : input.nameText;
+	const best = [...nameCandidates].sort((a, b) => b.score - a.score)[0] ?? null;
 	const language = readings.find((r) => r.language)?.language ?? '';
 	const trusted = input.footer.filter((r) => r.trustFoil && (r.setCode || r.collectorNumber));
 	const finish: Finish = trusted.length === 0 ? 'unknown' : trusted.some((r) => r.foilFromText) ? 'foil' : 'nonfoil';
@@ -239,21 +250,31 @@ export function resolveCard(input: ResolveInput): Decision {
 	});
 	const agrees = (row: PrintingRow) => nameScore(input.nameText, String(row.name)) >= NAME_LIKELY || (best !== null && best.name === row.name && best.score >= NAME_LIKELY);
 
+	const sameNumber = (r: FooterReading, row: PrintingRow) => r.collectorNumber !== '' && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number));
 	// A number-only hit is plausible unless the printed rarity letter or real
 	// name evidence contradicts it.
-	const plausible = (row: PrintingRow, r: FooterReading): boolean => {
+	const plausible = (row: PrintingRow, r: FooterReading, quiet = false): boolean => {
 		const label = `${r.setCode || '?'}#${r.collectorNumber} -> "${row.name}"`;
+		const log = (msg: string) => { if (!quiet) reasons.push(msg); };
 		if (!rarityAgrees(r.rarity, row.rarity)) {
-			reasons.push(`[${r.variant}] ${label} is ${row.rarity} but the line reads "${r.rarity.toUpperCase()}", rejected`);
+			log(`[${r.variant}] ${label} is ${row.rarity} but the line reads "${r.rarity.toUpperCase()}", rejected`);
 			return false;
 		}
-		const hitScore = nameScore(input.nameText, String(row.name));
+		// The rarity letter is often read by one strip variant only: "136/272 m" (4x) and
+		// "136/272 wm" (2x) for a German Pyromancer's Goggles, ORI #236 mythic — the 2x reading
+		// alone confirmed the common ORI #136. A letter any variant read next to the same number counts.
+		const sibling = input.footer.find((o) => o !== r && o.rarity !== '' && sameNumber(o, row) && !rarityAgrees(o.rarity, row.rarity));
+		if (sibling) {
+			log(`[${r.variant}] ${label} is ${row.rarity} but the [${sibling.variant}] strip reads "${sibling.rarity.toUpperCase()}" next to the same number, rejected`);
+			return false;
+		}
+		const hitScore = nameScore(contraText, String(row.name));
 		if (best && best.score >= NAME_EVIDENCE && best.name !== row.name && hitScore < NAME_CONTRADICT) {
-			reasons.push(`[${r.variant}] ${label} rejected: name OCR points at "${best.name}" (${best.score.toFixed(2)})`);
+			log(`[${r.variant}] ${label} rejected: name OCR points at "${best.name}" (${best.score.toFixed(2)})`);
 			return false;
 		}
-		if (r.numberSource === 'weak' && realWordCount(input.nameText) > 0 && hitScore < NAME_CONTRADICT) {
-			reasons.push(`[${r.variant}] ${label} (weak number) contradicts name OCR "${input.nameText}", rejected`);
+		if (r.numberSource === 'weak' && realWordCount(contraText) > 0 && hitScore < NAME_CONTRADICT) {
+			log(`[${r.variant}] ${label} (weak number) contradicts name OCR "${input.nameText}", rejected`);
 			return false;
 		}
 		return true;
@@ -265,13 +286,18 @@ export function resolveCard(input: ResolveInput): Decision {
 	const setHints = new Set<string>();
 	for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());
 	if (setHints.size === 0 && input.majoritySet) setHints.add(input.majoritySet.toLowerCase());
+	// A structurally parsed number outranks a stray digit: when the footer produced
+	// one, a printing only joins if a structural reading is compatible with it. A
+	// "5" from the rotated strip joined "Endless Atlas" #55 although the upright strip
+	// read "103/272 R" (phone, 2026-09-18: an Infinite Obliteration, ORI #103).
+	const structuralReadings = ranked.filter(({ r }) => r.collectorNumber !== '' && isStructural(r.numberSource));
 	const joinHits = (name: string): PrintingRow[] =>
 		printingsOf(name).filter((row) => {
 			if (setHints.size > 0 && !setHints.has(String(row.set_code).toLowerCase())) return false;
 			const contributing = ranked.filter(({ r }) => r.collectorNumber && numberCompatible(r.collectorNumber, String(row.collector_number)));
-			return contributing.length > 0 && contributing.every(({ r }) => rarityAgrees(r.rarity, row.rarity));
+			if (contributing.length === 0 || !contributing.every(({ r }) => rarityAgrees(r.rarity, row.rarity))) return false;
+			return structuralReadings.length === 0 || contributing.some(({ r }) => isStructural(r.numberSource));
 		});
-	const sameNumber = (r: FooterReading, row: PrintingRow) => r.collectorNumber !== '' && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number));
 	// A partial name and a partial number that agree on exactly one printing.
 	// Two independent signals that agree *exactly* — the number read as printed,
 	// from a strip whose set code is real or whose card exists in one set only —
@@ -323,7 +349,10 @@ export function resolveCard(input: ResolveInput): Decision {
 		}
 		return out;
 	};
-	const byScore = [...input.nameCandidates].sort((a, b) => b.score - a.score);
+	const byScore = [...nameCandidates].sort((a, b) => b.score - a.score);
+	if (foreign && nameCandidates.length < input.nameCandidates.length) {
+		reasons.push(`footer: a ${foreign.language.toUpperCase()} card (${foreign.setCode.toUpperCase()}), the catalogue knows the English names only: ${input.nameCandidates.length - nameCandidates.length} name candidate(s) below ${NAME_CERTAIN} ignored`);
+	}
 
 	// 0. Art-hash evidence (Phase 3): the artwork of the warped card against the
 	// reference hashes. Independent of OCR and the strongest identity signal
@@ -377,6 +406,16 @@ export function resolveCard(input: ResolveInput): Decision {
 		if (input.majoritySet && printings.some((p) => String(p.set_code).toLowerCase() === input.majoritySet!.toLowerCase())) return 'agrees';
 		return 'silent';
 	};
+	// A contradiction strong enough to drop an artwork: a structural number that fits none of the
+	// name's printings, from a strong reading or read the same by two footer variants. A single
+	// medium reading is too often a misread ("RRR M220 ORD" for the 243/272 of a German War Horn
+	// dropped an 8-bit match of the right artwork); the phone's Rabid Attack read "0096" twice.
+	const reliablyContradicted = (name: string): boolean => {
+		const printings = printingsOf(name);
+		const against = ranked.filter(({ r }) => r.collectorNumber !== '' && isStructural(r.numberSource) && !printings.some((p) => numberCompatible(r.collectorNumber, String(p.collector_number))));
+		const n = (r: FooterReading) => normalizeCollectorNumber(r.collectorNumber);
+		return against.some(({ r, strength }) => strength === 'strong' || against.filter((o) => n(o.r) === n(r)).length >= 2);
+	};
 	// An art match the footer contradicts and no name supports is dropped for good (no one-tap offer either).
 	let artIgnored = false;
 	if (artStrong && artBest) {
@@ -386,7 +425,7 @@ export function resolveCard(input: ResolveInput): Decision {
 		}
 		const nameAgrees = byScore.find((c) => c.score >= NAME_LIKELY && c.name === artBest.name);
 		const footer = artFooter(artBest.name);
-		if (footer === 'contradicts' && !nameAgrees) {
+		if (footer === 'contradicts' && !nameAgrees && reliablyContradicted(artBest.name)) {
 			artIgnored = true;
 			reasons.push(`art "${artBest.name}" ${artBest.distance} bits dropped: the footer's number fits none of its printings and no name supports it`);
 		} else if (nameAgrees || footer === 'agrees' || artBest.distance <= ART_CONFIRM_ALONE) {
@@ -410,6 +449,22 @@ export function resolveCard(input: ResolveInput): Decision {
 			const p = artPrinting(g);
 			reasons.push(`art "${g.name}" ${g.distance} bits + name ${agreeing.score.toFixed(2)} (${agreeing.pass}) agree -> confirmed`);
 			return done(g.name, 'confirmed', p.row, p.candidates, p.state);
+		}
+	}
+	// 0c. A looser artwork (up to ART_LIKELY) plus a structural footer number read exactly as one
+	// of its printings — in the set the reading names, or with the printed rarity letter: two
+	// independent channels agree. A German Kothophed hashed 12 bits from ORI #104 while one strip
+	// read "104/272 B ORI DE" and the other "194/272 ... ORIDE" (Pharika's Disciple).
+	for (const g of artRanked) {
+		if (best && best.score >= NAME_CERTAIN && best.name !== g.name) continue; // a certain name that reads differently goes first
+		const pool = printingsOf(g.name);
+		for (const { r } of structuralReadings) {
+			const hit = pool.find((p) => sameNumber(r, p)
+				&& ((r.setCode !== '' && input.isKnownSet(r.setCode) && r.setCode.toLowerCase() === String(p.set_code).toLowerCase()) || (r.rarity !== '' && rarityAgrees(r.rarity, p.rarity))));
+			if (hit) {
+				reasons.push(`art "${g.name}" ${g.distance} bits + [${r.variant}] ${r.setCode || '?'}#${r.collectorNumber} read exactly as ${hit.set_code}#${hit.collector_number} -> confirmed`);
+				return done(g.name, 'confirmed', hit, pool, 'confirmed');
+			}
 		}
 	}
 
@@ -531,6 +586,25 @@ export function resolveCard(input: ResolveInput): Decision {
 		const nameAgrees = agrees(row);
 		const via = viaMajority ? ' via majority set' : '';
 		if (strength === 'strong' && !viaMajority) {
+			// Without a name to check it against, a strong reading only confirms when no other
+			// strong reading names a different card (a German Kothophed read as ORI #194 on one
+			// strip and #104 on the other) and no close artwork names one either.
+			const rivals: PrintingRow[] = [];
+			for (const o of ranked) {
+				if (o.r === r || o.strength !== 'strong') continue;
+				for (const x of input.lookup(o.r.setCode, o.r.collectorNumber)) {
+					if (String(x.name) !== String(row.name) && plausible(x, o.r, true) && !rivals.includes(x)) rivals.push(x);
+				}
+			}
+			// The artwork disagrees when it names another card (up to ART_LIKELY) and the scan does not
+			// resemble this card's own reference art: one digit misread in "137/272 ... ORIDE" confirmed
+			// Bellows Lizard (#132) for a German Chandra's Ignition that hashed 12 bits from its artwork.
+			const own = artDistance(row, input.artHash, input.artHashAlt);
+			if (artBest && !artIgnored && artBest.name !== String(row.name) && (own === null || own > ART_LIKELY)) rivals.push(...artBest.rows);
+			if (rivals.length > 0) {
+				reasons.push(`[${r.variant}] strong reading -> ${row.set_code}#${row.collector_number} "${row.name}", but ${rivals.map((x) => `${x.set_code}#${x.collector_number} "${x.name}"`).slice(0, 3).join(', ')} ${rivals.length === 1 ? 'is' : 'are'} read or seen as well -> likely`);
+				return done(String(row.name), 'likely', row, [row, ...rivals], 'likely');
+			}
 			reasons.push(`[${r.variant}] strong reading -> ${row.set_code}#${row.collector_number} "${row.name}"`);
 			return done(String(row.name), 'confirmed', row, [row], 'confirmed');
 		}

@@ -404,12 +404,18 @@
 			// compared coarsely instead — otherwise every jitter threw the best
 			// frame away and the capture came from whatever frame followed.
 			if (!bestSceneRects || sceneDiffers(bestSceneRects, lastRects)) {
-				bestFrames.reset();
+				// Forget the previous scene's frame entirely: it must not stand in for this
+				// one while no frame of this scene has qualified yet (see the cut-off rule below).
+				resetBestFrame();
 				bestSceneId = sceneId;
 				bestSceneRects = lastRects;
 			}
 			qualityHint = bestFrames.hint(quality, now);
-			if (bestFrames.offer(quality, now) && bestCanvas) {
+			// A frame whose card touches the edge never becomes the best frame: the capture
+			// hands the best frame's rectangles to the pipeline, and a sharper frame from
+			// while the card was still being put down delivered a cut-off quad (phone,
+			// 2026-09-18: "card cut off at the edge" 6x, then a capture of a quad at y=0).
+			if (!cutOff.some(Boolean) && lastRects.length <= MAX_AUTO_CAPTURE_RECTS && bestFrames.offer(quality, now) && bestCanvas) {
 				// Promote the analysed frame: swap the canvases instead of copying pixels.
 				[bestCanvas, scratchCanvas] = [scratchCanvas, bestCanvas];
 				bestRects = lastRects;

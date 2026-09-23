@@ -396,3 +396,137 @@ describe('artPool', () => {
 		expect(artPool([c, a], '0000000000000001')).toEqual([a]);
 	});
 });
+
+describe('resolveCard — cards printed in another language (phone, 2026-09-18)', () => {
+	const kothophed = row('Kothophed, Soul Hoarder', 'ori', '104', 'rare');
+	const sunfire = row('Sunfire Torch', 'lci', '167');
+	const warHorn = row('War Horn', 'ori', '243', 'uncommon');
+	const briarhorn = [row('Briarhorn', 'eve', '111', 'uncommon'), row('Briarhorn', 'mm2', '150', 'uncommon')];
+	const shriekhorn = row('Shriekhorn', 'ktk', '240');
+	const atlas = [row('Endless Atlas', 'c18', '55', 'rare'), row('Endless Atlas', '2xm', '251', 'rare'), row('Endless Atlas', 'cmm', '947', 'rare')];
+	const german = [kothophed, sunfire, warHorn, ...briarhorn, shriekhorn, ...atlas];
+	const de = (o: Partial<ResolveInput>) => base({
+		printingsByName: (n) => german.filter((r) => r.name === n),
+		lookup: (s, n) => german.filter((r) => r.set_code === s.toLowerCase() && r.collector_number === n.replace(/^0+/, '')),
+		isKnownSet: (s) => ['ori', 'lci', 'eve', 'mm2', 'ktk', 'c18', '2xm', 'cmm'].includes(s.toLowerCase()),
+		...o
+	});
+	const art = (r: ReturnType<typeof row>, distance: number) => ({ row: r, distance });
+
+	it('lets a DE footer with a real set confirm its card although the English name OCR points elsewhere', () => {
+		// Kothophed (ORI #104, German): the name bar was outside a partial quad, the junk read
+		// "SNF Ee TC" scored 0.54 against Sunfire Torch and vetoed the correct footer reading.
+		const footer = [
+			reading({ setCode: 'ori', collectorNumber: '104', numberSource: 'fraction', rarity: 'r', language: 'DE', text: 'SRE By N 104/272 R Intro Pack w ORI*DE Tianna X' }),
+			reading({ setCode: 'ori', collectorNumber: '104', numberSource: 'fraction', rarity: 'r', language: 'DE', text: 'RRR N 104/272 R Intro Pack ORI*DE TIANHUA X', variant: 'small' })
+		];
+		const d = resolveCard(de({ nameCandidates: [{ name: 'Sunfire Torch', score: 0.54, pass: 'raw-line gray' }], nameText: 'SNF Ee TC', footer }));
+		expect(d.identity).toMatchObject({ name: 'Kothophed, Soul Hoarder', state: 'confirmed' });
+		expect(d.printing).toMatchObject({ row: kothophed, state: 'confirmed' });
+		expect(d.language).toBe('DE');
+		// the same readings on an English card: the name veto stays
+		const en = resolveCard(de({
+			nameCandidates: [{ name: 'Sunfire Torch', score: 0.54, pass: 'raw-line gray' }], nameText: 'SNF Ee TC',
+			footer: footer.map((r) => ({ ...r, language: 'EN' }))
+		}));
+		expect(en.identity.state).not.toBe('confirmed');
+	});
+
+	it('does not accept an English name the German name bar resembles', () => {
+		// "Kriegshorn" (War Horn) read perfectly and matched Briarhorn 0.60, which then became the
+		// one-tap offer against a footer that names ORI #243 in German.
+		const d = resolveCard(de({
+			nameCandidates: [{ name: 'Briarhorn', score: 0.6, pass: 'raw-line' }, { name: 'Shriekhorn', score: 0.6, pass: 'paddle' }], nameText: 'Kriegshorn',
+			footer: [reading({ setCode: 'ori', collectorNumber: '243', numberSource: 'fraction', rarity: 'u', language: 'DE', text: '243/272 U ORI DE LARS GRANTWEST' })]
+		}));
+		expect(d.identity).toMatchObject({ name: 'War Horn', state: 'confirmed' });
+		expect(d.printing).toMatchObject({ row: warHorn, state: 'confirmed' });
+		expect(d.reasons.join(' ')).toContain('name candidate(s) below 0.8 ignored');
+		// a certain read of a name that is the same in both languages still counts
+		const pia = row('Pia and Kiran Nalaar', 'ori', '157', 'rare');
+		const same = resolveCard(de({
+			printingsByName: (n) => (n === pia.name ? [pia] : []),
+			nameCandidates: [{ name: pia.name, score: 0.95, pass: 'primary' }], nameText: 'Pia und Kiran Nalaar',
+			footer: [reading({ setCode: 'ori', collectorNumber: '157', numberSource: 'fraction', rarity: 'r', language: 'DE', text: '157/272 R ORI DE' })]
+		}));
+		expect(same.identity).toMatchObject({ name: 'Pia and Kiran Nalaar', state: 'confirmed' });
+	});
+
+	it('keeps an artwork that a single misread footer number contradicts', () => {
+		// German War Horn: "RRR JAN IT 0 ORIDE" (set misread) and "RRR M220 ORD" (243/272 misread as a
+		// rarity-prefixed 220) dropped the right 8-bit artwork, and Briarhorn 0.60 became the one-tap offer.
+		const d = resolveCard(de({
+			nameCandidates: [{ name: 'Briarhorn', score: 0.6, pass: 'raw-line' }, { name: 'Shriekhorn', score: 0.6, pass: 'paddle' }], nameText: 'Kriegshorn',
+			footer: [
+				reading({ setCode: 'jan', collectorNumber: '0', numberSource: 'weak', language: 'IT', text: 'RRR JAN IT 0 ORIDE lam Caanrwesy' }),
+				reading({ setCode: 'rrr', collectorNumber: '220', numberSource: 'rarity', rarity: 'm', language: '', text: 'RRR M220 ORD wo Lams Guanrwesy', variant: 'small' })
+			],
+			artMatches: [art(warHorn, 8)]
+		}));
+		expect(d.identity).toMatchObject({ name: 'War Horn', state: 'likely' });
+		expect(d.reasons.join(' ')).not.toContain('dropped');
+		// at 6 bits the artwork identifies the card on its own, a single contradicting number notwithstanding
+		const close = resolveCard(de({ footer: [reading({ setCode: 'rrr', collectorNumber: '220', numberSource: 'rarity', rarity: 'm', text: 'RRR M220 ORD' })], artMatches: [art(warHorn, 6)] }));
+		expect(close.identity).toMatchObject({ name: 'War Horn', state: 'confirmed' });
+	});
+
+	it('reads the rarity letter from any strip variant of the same number', () => {
+		// German Pyromancer's Goggles (ORI #236, mythic): both strips misread 236 as 136; the 4x strip
+		// read the "M", the 2x strip did not — and alone confirmed the common ORI #136.
+		const goggles = row("Pyromancer's Goggles", 'ori', '236', 'mythic');
+		const fury = row("Chandra's Fury", 'ori', '136', 'common');
+		const d = resolveCard(de({
+			printingsByName: (n) => [goggles, fury].filter((r) => r.name === n),
+			lookup: (s, n) => [goggles, fury].filter((r) => r.set_code === s && r.collector_number === n),
+			nameText: 'Schutzbrille der Pyromagi',
+			footer: [
+				reading({ setCode: 'ori', collectorNumber: '136', numberSource: 'fraction', rarity: 'm', language: 'DE', text: '136/272 m 0 ORIDE' }),
+				reading({ setCode: 'ori', collectorNumber: '136', numberSource: 'fraction', rarity: '', language: 'DE', text: 'ET 136/272 wm f ORIDE', variant: 'small' })
+			]
+		}));
+		expect(d.identity.state).not.toBe('confirmed');
+		expect(d.identity.name).not.toBe("Chandra's Fury");
+	});
+
+	it('does not confirm one strip when another strip or the artwork names a different card', () => {
+		const disciple = row("Pharika's Disciple", 'ori', '194', 'common');
+		const cards = [kothophed, disciple];
+		const input = (o: Partial<ResolveInput>) => de({
+			printingsByName: (n) => cards.filter((r) => r.name === n),
+			lookup: (s, n) => cards.filter((r) => r.set_code === s && r.collector_number === n),
+			nameText: 'Kothophed der Seelensammler',
+			...o
+		});
+		const strips = [
+			reading({ setCode: 'ori', collectorNumber: '194', numberSource: 'fraction', language: 'DE', text: '194/272 & or ORIDE' }),
+			reading({ setCode: 'ori', collectorNumber: '104', numberSource: 'fraction', language: 'DE', text: '104/272 B ORI DE', variant: 'small' })
+		];
+		// the strips disagree and nothing else speaks: one tap, both cards offered
+		const split = resolveCard(input({ footer: strips }));
+		expect(split.identity.state).toBe('likely');
+		expect(split.printing.candidates.map((r) => r.name)).toEqual(expect.arrayContaining(['Kothophed, Soul Hoarder', "Pharika's Disciple"]));
+		// the artwork (12 bits) agrees with one strip exactly: confirmed
+		const withArt = resolveCard(input({ footer: strips, artMatches: [art(kothophed, 12)] }));
+		expect(withArt.identity).toMatchObject({ name: 'Kothophed, Soul Hoarder', state: 'confirmed' });
+		expect(withArt.printing.row).toBe(kothophed);
+		// a lone misread strip against the artwork of another card: one tap, not a confirmation
+		const lone = resolveCard(input({ footer: [strips[0]], artMatches: [art(kothophed, 12)] }));
+		expect(lone.identity.state).toBe('likely');
+		expect(lone.printing.candidates.map((r) => r.name)).toContain('Kothophed, Soul Hoarder');
+	});
+
+	it('does not join a name with a stray digit when the structural reading fits none of its printings', () => {
+		// Infinite Obliteration (ORI #103, German "Endlose Auslöschung"): the upright strip read
+		// "103/272 R", the rotated strip junk with a "5" — which joined Endless Atlas C18 #55 (0.47).
+		const d = resolveCard(de({
+			nameCandidates: [{ name: 'Endless Atlas', score: 0.47, pass: 'primary' }], nameText: 'Endlose Ausloschung',
+			footer: [
+				reading({ collectorNumber: '103', numberSource: 'fraction', rarity: 'r', language: '', text: 'i 1LJ1CSCT OPICICT IIISC Bibliothek. 103/272 R SERPS.' }),
+				reading({ collectorNumber: '1', numberSource: 'weak', language: '', text: 'LJ1CSCT OPICICT IISc Bibliothek.', variant: 'small' }),
+				reading({ collectorNumber: '5', numberSource: 'weak', language: '', text: 'ee 5 pr y x rN & aa e i ee te', variant: 'rotated' })
+			]
+		}));
+		expect(d.identity.state).not.toBe('likely');
+		expect(d.reasons.join(' ')).not.toContain('join: name "Endless Atlas"');
+	});
+});

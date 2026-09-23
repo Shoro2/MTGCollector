@@ -4,6 +4,12 @@
 // measured on them with live-detect-experiment.mjs --truth DIR/scenes.json.
 //
 //   node scripts/scanner-harness/make-mat-scenes.mjs --out DIR --mat photo-with-mat.jpg [--mat-region x,y,w,h] [--mat-scale 0.36]
+//   node scripts/scanner-harness/make-mat-scenes.mjs --out DIR --mat photo-with-mat.jpg --cards ori/243/de,bfz/120/de,...
+//
+// --cards replaces the catalogue sample with the named printings (set/number[/lang],
+// images from Scryfall's API, so any language it has) and renders four poses of
+// each on the mat: how the German cards of the 2026-09-18 phone session were
+// reproduced (make-still-y4m.mjs + live-harness.mjs --log then run the pipeline).
 //
 // Why: a phone session (2026-09-17) on a dark woven mat tracked the art box, a
 // text box and patches of the mat instead of the card, and two photos are not
@@ -15,12 +21,13 @@ import sharp from 'sharp';
 import Database from 'better-sqlite3';
 
 const args = process.argv.slice(2);
-let outDir = 'mat-scenes', matPhoto = null, matRegion = null, matScale = 0.36;
+let outDir = 'mat-scenes', matPhoto = null, matRegion = null, matScale = 0.36, cardList = null;
 for (let i = 0; i < args.length; i++) {
 	if (args[i] === '--out') outDir = args[++i];
 	else if (args[i] === '--mat') matPhoto = args[++i];
 	else if (args[i] === '--mat-region') matRegion = args[++i].split(',').map(Number);
 	else if (args[i] === '--mat-scale') matScale = Number(args[++i]);
+	else if (args[i] === '--cards') cardList = args[++i].split(',').map((c) => c.trim()).filter(Boolean);
 }
 if (!matPhoto) throw new Error('--mat <photo> is required');
 mkdirSync(join(outDir, 'cards'), { recursive: true });
@@ -32,14 +39,26 @@ const pick = (colors, n) => db.prepare(`SELECT id, name, set_code, collector_num
 	WHERE layout = 'normal' AND released_at >= '2019-01-01' AND released_at < '2026-01-01' AND colors = ? AND image_uri LIKE '%/normal/%'
 	AND set_code IN ('m20','eld','thb','iko','znr','khm','stx','afr','mid','vow','neo','snc','dmu','bro','one','mom','woe','lci','mkm','otj','blb','dsk','fdn')
 	ORDER BY id LIMIT ? OFFSET 40`).all(colors, n);
-const cards = [...pick('["W"]', 5), ...pick('["U"]', 5), ...pick('["B"]', 10), ...pick('["R"]', 5), ...pick('["G"]', 5), ...pick('[]', 5), ...pick('["G","U"]', 2), ...pick('["R","W"]', 1)];
+const cards = cardList
+	? cardList.map((c) => { const [set_code, collector_number, lang = 'en'] = c.split('/'); return { id: `${set_code}-${collector_number}-${lang}`, set_code, collector_number, lang, name: `${set_code} #${collector_number}` }; })
+	: [...pick('["W"]', 5), ...pick('["U"]', 5), ...pick('["B"]', 10), ...pick('["R"]', 5), ...pick('["G"]', 5), ...pick('[]', 5), ...pick('["G","U"]', 2), ...pick('["R","W"]', 1)];
 let last = 0;
+const pace = async () => { const wait = 120 - (Date.now() - last); if (wait > 0) await new Promise((r) => setTimeout(r, wait)); last = Date.now(); };
 for (const c of cards) {
 	c.png = join(outDir, 'cards', `${c.id}.png`);
+	if (cardList) {
+		// the English name for the ground truth, the image in the requested language
+		const en = db.prepare('SELECT name FROM cards WHERE set_code = ? AND collector_number = ?').get(c.set_code, c.collector_number);
+		if (en) c.name = en.name;
+	}
 	if (existsSync(c.png)) continue;
-	const wait = 120 - (Date.now() - last);
-	if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-	last = Date.now();
+	if (cardList) {
+		await pace();
+		const meta = await (await fetch(`https://api.scryfall.com/cards/${c.set_code}/${c.collector_number}/${c.lang}`, { headers: { 'User-Agent': 'MTGCollector/1.0 (scanner test scenes; github.com/Shoro2/MTGCollector)', Accept: 'application/json' } })).json();
+		if (!meta.image_uris?.png) { console.log('skip', c.id, meta.details ?? 'no image'); c.png = null; continue; }
+		c.image_uri = meta.image_uris.png;
+	}
+	await pace();
 	const url = c.image_uri.replace('/normal/', '/png/').replace('.jpg', '.png');
 	const res = await fetch(url, { headers: { 'User-Agent': 'MTGCollector/1.0 (scanner test scenes; github.com/Shoro2/MTGCollector)', Accept: 'image/*' } });
 	if (!res.ok) { console.log('skip', c.name, res.status); c.png = null; continue; }
@@ -73,7 +92,7 @@ const backgrounds = { mat: matBg, light: await noise([207, 201, 191], 14, 7), bl
 
 // ---- scenes ----
 const scenes = [];
-let seed = 12345;
+let seed = cardList ? 777 : 12345;
 const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 0xffffffff);
 async function scene(card, background, pose, brightness) {
 	const h = pose.h, w = Math.round(h * 745 / 1040);
@@ -89,6 +108,13 @@ async function scene(card, background, pose, brightness) {
 	scenes.push({ file: name, background, brightness, angle: Math.round(angle * 10) / 10, card: { name: card.name, set: card.set_code, number: card.collector_number, colors: card.colors }, corners });
 }
 const upright = { h: 820, base: 0, jitter: 7 }, sideways = { h: 760, base: 90, jitter: 6 }, far = { h: 560, base: 0, jitter: 10 };
+if (cardList) {
+	// four poses per named card on the mat: large, medium and dimmed, far, dark
+	for (const c of usable) for (const [pose, b] of [[upright, 1], [{ h: 700, base: 0, jitter: 5 }, 0.8], [{ h: 620, base: 0, jitter: 10 }, 1], [{ h: 760, base: 0, jitter: 3 }, 0.7]]) await scene(c, 'mat', pose, b);
+	writeFileSync(join(outDir, 'scenes.json'), JSON.stringify(scenes, null, 1));
+	console.log(`${scenes.length} scenes -> ${outDir}`);
+	process.exit(0);
+}
 for (const [i, c] of usable.entries()) {
 	await scene(c, 'mat', upright, i % 2 ? 0.75 : 1);
 	await scene(c, 'mat', i % 3 === 0 ? far : sideways, i % 2 ? 1 : 0.8);
