@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { catalogSeo } from '$lib/seo';
 	import { scryfallSrcset, type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
@@ -9,6 +10,7 @@
 	let { data }: { data: PageData } = $props();
 	let collectedSet = $derived(new Set(data.collectedCardIds));
 	let wishlistSet = $derived(new Set(data.wishlistCardIds));
+	let seo = $derived(catalogSeo(page.url.searchParams, data.page));
 
 	let setSearch = $state('');
 	let setDropdownOpen = $state(false);
@@ -145,10 +147,11 @@
 		goto(`/cards?${params.toString()}`);
 	}
 
-	function goToPage(p: number) {
+	function pageHref(p: number) {
 		const params = new URLSearchParams(page.url.searchParams);
-		params.set('page', p.toString());
-		goto(`/cards?${params.toString()}`);
+		if (p === 1) params.delete('page');
+		else params.set('page', p.toString());
+		return `/cards${params.size ? `?${params}` : ''}`;
 	}
 
 	function setSort(sort: string) {
@@ -206,10 +209,12 @@
 <svelte:head>
 	<title>{pageTitle}</title>
 	<meta name="description" content="Browse and search {data.totalCards.toLocaleString()} Magic: The Gathering cards. Filter by color, type, set, rarity, mana cost, and format legality." />
-	<link rel="canonical" href="https://mtg-collector.com/cards" />
+	<link rel="canonical" href={seo.canonical} />
+	{#if seo.noindex}<meta name="robots" content="noindex, follow" />{/if}
 	<meta property="og:title" content={pageTitle} />
 	<meta property="og:description" content="Browse and search {data.totalCards.toLocaleString()} Magic: The Gathering cards. Filter by color, type, set, rarity, mana cost, and format legality." />
-	<meta property="og:url" content="https://mtg-collector.com/cards" />
+	<meta property="og:url" content={seo.canonical} />
+	<meta property="og:type" content="website" />
 </svelte:head>
 
 <div class="space-y-5">
@@ -453,13 +458,17 @@
 			<span class="tabular text-xs text-[var(--color-text-muted)]">
 				Page {data.page} of {data.totalPages}
 			</span>
-			<div class="flex items-center gap-2">
-				<button onclick={() => goToPage(data.page - 1)} disabled={data.page <= 1} class="btn min-h-8 disabled:cursor-not-allowed disabled:opacity-35">
-					Prev
-				</button>
-				<button onclick={() => goToPage(data.page + 1)} disabled={data.page >= data.totalPages} class="btn min-h-8 disabled:cursor-not-allowed disabled:opacity-35">
-					Next
-				</button>
+			<nav aria-label="Card result pages" class="flex items-center gap-2">
+				{#if data.page > 1}
+					<a href={pageHref(data.page - 1)} rel="prev" class="btn min-h-8">Prev</a>
+				{:else}
+					<span aria-disabled="true" class="btn min-h-8 opacity-35">Prev</span>
+				{/if}
+				{#if data.page < data.totalPages}
+					<a href={pageHref(data.page + 1)} rel="next" class="btn min-h-8">Next</a>
+				{:else}
+					<span aria-disabled="true" class="btn min-h-8 opacity-35">Next</span>
+				{/if}
 				<select
 					aria-label="Results per page"
 					onchange={(e) => setPageSize((e.target as HTMLSelectElement).value)}
@@ -469,7 +478,7 @@
 						<option value={size} selected={data.filters.pageSize === size}>{size} / page</option>
 					{/each}
 				</select>
-			</div>
+			</nav>
 		</div>
 	{/if}
 </div>

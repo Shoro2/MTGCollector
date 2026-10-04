@@ -55,7 +55,6 @@
 <svelte:head>
 	<title>MTG Collector</title>
 	<meta property="og:site_name" content="MTG Collector" />
-	<meta property="og:type" content="website" />
 	<!-- Privacy-friendly analytics by Plausible (self-hosted) -->
 	{@html `<script async src="https://analytics.mtg-collector.com/js/pa-l674T1WUY_KaXYj-1AaIa.js"></script><script>window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()</script>`}
 </svelte:head>

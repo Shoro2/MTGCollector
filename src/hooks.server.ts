@@ -129,7 +129,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(302, '/scan');
 	}
 
-	const isPublic = publicRoutes.some(r => path === r || path.startsWith(r.endsWith('/') ? r : r + '/'));
+	const isSitemap = path === '/sitemap.xml' || /^\/sitemap-[^/]+\.xml$/.test(path);
+	const isPublic = isSitemap || publicRoutes.some(r => path === r || path.startsWith(r.endsWith('/') ? r : r + '/'));
 	const isApi = path.startsWith('/cards/');
 
 	if (!event.locals.user && !isPublic && !isApi && path !== '/') {

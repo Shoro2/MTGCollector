@@ -7,5 +7,6 @@ Disallow: /settings
 Disallow: /prices
 Disallow: /login
 Disallow: /tags
+Disallow: /admin
 
 Sitemap: https://mtg-collector.com/sitemap.xml

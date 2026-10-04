@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { formatPrice } from '$lib/utils';
+	import { SITE_URL, jsonLd } from '$lib/seo';
 	import type { LayoutData } from './$types';
 
 	let { data }: { data: PageData & LayoutData } = $props();
@@ -40,12 +41,21 @@
 </script>
 
 <svelte:head>
-	<title>MTG Collector - Scan Entire Boosters & Track Your MTG Collection</title>
-	<meta name="description" content="Track your Magic: The Gathering collection and scan entire boosters at once. Browse over {data.totalCards.toLocaleString()} MTG cards, monitor prices, and manage your collection with our batch card scanner." />
+	<title>MTG Collector - Card Scanner & Collection Tracker</title>
+	<meta name="description" content="Scan Magic: The Gathering cards, manage your collection, and track prices. Browse card printings, import Moxfield CSV files, and compare value with purchase cost." />
 	<link rel="canonical" href="https://mtg-collector.com/" />
-	<meta property="og:title" content="MTG Collector - Magic: The Gathering Collection Tracker & Price Database" />
-	<meta property="og:description" content="Track your Magic: The Gathering collection, monitor card prices, and browse over {data.totalCards.toLocaleString()} MTG cards. Free online MTG collection manager with price history and card scanner." />
+	<meta property="og:title" content="MTG Collector - Card Scanner & Collection Tracker" />
+	<meta property="og:description" content="Scan Magic: The Gathering cards, manage your collection, and track prices. Browse printings and import your Moxfield collection." />
+	<meta property="og:type" content="website" />
 	<meta property="og:url" content="https://mtg-collector.com/" />
+	{@html `<script type="application/ld+json">${jsonLd({
+		'@context': 'https://schema.org',
+		'@type': 'WebSite',
+		name: 'MTG Collector',
+		url: SITE_URL + '/',
+		description: 'A Magic: The Gathering card scanner, collection tracker and price database.',
+		inLanguage: 'en'
+	})}</script>`}
 </svelte:head>
 
 <div class="space-y-5">
@@ -79,10 +89,10 @@
 		<div>
 			<p class="eyebrow">Portfolio workspace</p>
 			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)] md:text-2xl">
-				{data.user ? `Welcome back, ${data.user.name}` : 'MTG Collector'}
+				{data.user ? `Welcome back, ${data.user.name}` : 'MTG card scanner and collection tracker'}
 			</h1>
 			<p class="mt-1 text-sm text-[var(--color-text-muted)]">
-				A dense collection tracker for cards, prices, scans and wishlist decisions.
+				Scan Magic: The Gathering cards, organize your collection and follow its value over time.
 			</p>
 		</div>
 		<a href="/scan" class="btn btn-primary">
@@ -124,7 +134,7 @@
 		<section class="panel p-5">
 			<div class="mb-4 flex items-center justify-between gap-3">
 				<div>
-					<h2 class="text-sm font-semibold text-[var(--color-text)]">Collection flow</h2>
+					<h2 class="text-sm font-semibold text-[var(--color-text)]">Manage your Magic: The Gathering collection</h2>
 					<p class="mt-1 text-xs text-[var(--color-text-faint)]">Browse, scan, import, price and decide what to collect next.</p>
 				</div>
 				<span class="chip set-code">LIVE DATA</span>
@@ -133,17 +143,17 @@
 				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
 					<p class="eyebrow">1. Find</p>
 					<p class="mt-2 text-sm font-semibold">Search every set</p>
-					<p class="mt-1 text-xs text-[var(--color-text-muted)]">Filter by color, rarity, type, legality and prices.</p>
+					<p class="mt-1 text-xs text-[var(--color-text-muted)]"><a href="/cards" class="text-[var(--color-primary)] hover:underline">Browse card printings</a>, compare reprints and check rules, format legality and reference prices from Scryfall.</p>
 				</div>
 				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
 					<p class="eyebrow">2. Add</p>
 					<p class="mt-2 text-sm font-semibold">Scan or import</p>
-					<p class="mt-1 text-xs text-[var(--color-text-muted)]">OCR spreads, Moxfield CSV, tags, condition and purchase price.</p>
+					<p class="mt-1 text-xs text-[var(--color-text-muted)]"><a href="/scan" class="text-[var(--color-primary)] hover:underline">Scan cards with your camera</a> or a photo, then review the printing. Sign in to save cards or import a Moxfield CSV collection.</p>
 				</div>
 				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
 					<p class="eyebrow">3. Track</p>
 					<p class="mt-2 text-sm font-semibold">Watch value move</p>
-					<p class="mt-1 text-xs text-[var(--color-text-muted)]">Daily snapshots, profit/loss and top-card history.</p>
+					<p class="mt-1 text-xs text-[var(--color-text-muted)]">Record purchase prices, organize cards with tags, and compare your collection's current value with what you paid.</p>
 				</div>
 			</div>
 		</section>

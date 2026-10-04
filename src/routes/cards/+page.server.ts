@@ -1,10 +1,9 @@
-import { db, sqlite } from '$lib/server/db';
-import { cards } from '$lib/server/schema';
-import { sql } from 'drizzle-orm';
+import { sqlite } from '$lib/server/db';
+import { error } from '@sveltejs/kit';
 import { setsCache } from '$lib/server/cache';
 
 export async function load({ url, locals }) {
-	const query = url.searchParams.get('q') || '';
+	const query = (url.searchParams.get('q') || '').trim();
 	const colors = url.searchParams.getAll('color');
 	const colorMode = url.searchParams.get('colorMode') || 'include';
 	const type = url.searchParams.get('type') || '';
@@ -16,7 +15,9 @@ export async function load({ url, locals }) {
 	const sortBy = url.searchParams.get('sort') || 'name';
 	const sortDir = url.searchParams.get('dir') || 'asc';
 	const unique = url.searchParams.get('unique') === '1';
-	const page = parseInt(url.searchParams.get('page') || '1');
+	const pageParam = url.searchParams.get('page') || '1';
+	const page = Number(pageParam);
+	if (!/^\d+$/.test(pageParam) || !Number.isSafeInteger(page) || page < 1) error(404, 'Page not found');
 	const validPageSizes = [40, 75, 100, 200];
 	const pageSizeParam = parseInt(url.searchParams.get('pageSize') || '40');
 	const pageSize = validPageSizes.includes(pageSizeParam) ? pageSizeParam : 40;
@@ -26,7 +27,7 @@ export async function load({ url, locals }) {
 	const params: (string | number)[] = [];
 
 	// Full-text search
-	if (query) {
+	if (query.replace(/['"]/g, '').trim()) {
 		conditions.push(`cards.rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)`);
 		// Escape FTS5 special characters and add prefix matching
 		const ftsQuery = query
@@ -110,6 +111,8 @@ export async function load({ url, locals }) {
 	const countSql = `SELECT COUNT(*) as count FROM cards ${uniqueJoin} ${whereClause}`;
 	const countResult = sqlite.prepare(countSql).get(...params) as { count: number };
 	const totalCards = countResult.count;
+	const totalPages = Math.max(1, Math.ceil(totalCards / pageSize));
+	if (page > totalPages) error(404, 'Page not found');
 
 	// Sort
 	const validSorts: Record<string, string> = {
@@ -129,7 +132,7 @@ export async function load({ url, locals }) {
 	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
 	// Get paginated results
-	const resultSql = `SELECT cards.id, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.price_eur_foil, cards.price_usd_foil, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling} LIMIT ? OFFSET ?`;
+	const resultSql = `SELECT cards.id, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.price_eur_foil, cards.price_usd_foil, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling}, cards.id ASC LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get all unique sets for the filter dropdown (cached, changes only on import)
@@ -161,7 +164,7 @@ export async function load({ url, locals }) {
 		totalCards,
 		page,
 		pageSize,
-		totalPages: Math.ceil(totalCards / pageSize),
+		totalPages,
 		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir, unique, pageSize },
 		sets
 	};
