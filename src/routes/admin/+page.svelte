@@ -42,6 +42,7 @@
 		});
 		const result = await res.json();
 		updateMsg = result.message;
+		if (res.ok) await invalidateAll();
 	}
 
 	// Scan logs uploaded by /scan (see src/lib/server/scan-logs.ts): the newest
@@ -246,11 +247,11 @@
 		<h2 class="text-lg font-semibold mb-4">Database Overview</h2>
 		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">DB Size</p>
-				<p class="text-lg sm:text-xl font-bold break-words">{data.dbStats.dbSizeMB} MB</p>
+				<p class="text-xs text-[var(--color-text-muted)]">DB + WAL Size</p>
+				<p class="text-lg sm:text-xl font-bold break-words">{data.dbStats.dbSizeMB} MiB</p>
 			</div>
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Cards</p>
+				<p class="text-xs text-[var(--color-text-muted)]">Catalogue Printings</p>
 				<p class="text-lg sm:text-xl font-bold break-words">{formatNum(data.dbStats.cardCount)}</p>
 			</div>
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
@@ -295,6 +296,7 @@
 	{#if data.recentSnapshots.length > 0}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
 			<h2 class="text-lg font-semibold mb-4">Recent Price Snapshots</h2>
+			<p class="text-xs text-[var(--color-text-muted)] mb-3">New or changed prices only, grouped by UTC date. Each printing is counted once across languages; this is not the number of cards checked by an update.</p>
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
 					<thead>
@@ -341,7 +343,7 @@
 					<div class="grid grid-cols-3 gap-3 sm:gap-6 text-center text-sm md:ml-auto">
 						<div>
 							<p class="font-bold">{user.collection_count}</p>
-							<p class="text-xs text-[var(--color-text-muted)]">Unique</p>
+							<p class="text-xs text-[var(--color-text-muted)]">Printings</p>
 						</div>
 						<div>
 							<p class="font-bold">{user.total_cards}</p>
@@ -382,7 +384,7 @@
 
 	<!-- Top Sets -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-		<h2 class="text-lg font-semibold mb-4">Top Sets by Card Count</h2>
+		<h2 class="text-lg font-semibold mb-4">Top Sets by Printing Count</h2>
 		<div class="space-y-1">
 			{#each data.topSets as set}
 				{@const maxCount = (data.topSets[0]?.count as number) || 1}

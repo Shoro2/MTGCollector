@@ -9,7 +9,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const { action } = body;
 
 	if (action === 'cleanup_sessions') {
-		const result = sqlite.prepare('DELETE FROM sessions WHERE expires_at < datetime(\'now\')').run();
+		const result = sqlite.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
 		return json({ success: true, message: `Cleaned up ${result.changes} expired sessions` });
 	}
 
