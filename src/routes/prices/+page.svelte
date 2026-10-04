@@ -4,6 +4,8 @@
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
+	import { onMount, tick } from 'svelte';
+	import type { ProfitPoint } from '$lib/server/price-data';
 
 	let { data }: { data: PageData } = $props();
 
@@ -11,9 +13,13 @@
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
 	let topCards = $state<Array<Record<string, unknown>>>([]);
-	let stats = $state({ totalValue: 0, totalPurchaseValue: 0, uniqueCards: 0, totalCards: 0 });
+	let stats = $state({ totalValue: 0, totalPurchaseValue: 0, profitValue: 0, profitCost: 0, profitCopies: 0, uniqueCards: 0, totalCards: 0 });
 	let missingPriceCount = $state(0);
-	let profitHistory = $state<Array<{ recorded_at: string; total_value: number; total_purchase: number }>>([]);
+	let missingMarketCount = $state(0);
+	let estimatedCount = $state(0);
+	let profitHistory = $state<ProfitPoint[]>([]);
+	let chartError = $state<string | null>(null);
+	let active = false;
 	let usdToEur = $state(0.92);
 
 	// One-time repair after a collection re-sync reset every card's added_at.
@@ -29,15 +35,16 @@
 	let modalChartCanvas = $state<HTMLCanvasElement>(null!);
 	let modalChart: Chart | null = null;
 	let modalLoading = $state(false);
+	let modalError = $state<string | null>(null);
+	let modalEmpty = $state(false);
+	let modalEstimated = $state(false);
+	let modalRequest = 0;
 
-	async function loadPricesData(bustCache = false) {
+	async function loadPricesData() {
 		loading = true;
 		loadError = null;
 		try {
-			// After a restore the server cache is invalidated, but the endpoint
-			// still sends a private max-age, so force a fresh fetch to bypass the
-			// browser's HTTP cache and reflect the change immediately.
-			const res = await fetch('/api/prices/data', bustCache ? { cache: 'no-store' } : undefined);
+			const res = await fetch('/api/prices/data', { cache: 'no-store' });
 			if (!res.ok) {
 				loadError = `Failed to load price data (HTTP ${res.status}).`;
 				return;
@@ -46,12 +53,20 @@
 			topCards = result.topCards;
 			stats = result.stats;
 			missingPriceCount = result.missingPriceCount;
+			missingMarketCount = result.missingMarketCount;
+			estimatedCount = result.estimatedCount;
 			profitHistory = result.profitHistory;
 			usdToEur = result.usdToEur;
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : 'Failed to load price data.';
 		} finally {
 			loading = false;
+			await tick();
+			if (!loadError && active) {
+				chartError = null;
+				try { await buildProfitChart(); }
+				catch { chartError = 'The chart could not be loaded. Your totals are still available.'; }
+			}
 		}
 	}
 
@@ -80,8 +95,7 @@
 				result.updated > 0
 					? `Backdated ${result.updated} card${result.updated === 1 ? '' : 's'}. History refreshed below.`
 					: 'Nothing to restore — your cards are already dated as early as the available price data.';
-			await loadPricesData(true);
-			setTimeout(() => buildProfitChart(), 0);
+			await loadPricesData();
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : 'Failed to restore history.';
 		} finally {
@@ -90,20 +104,29 @@
 	}
 
 	async function openCardChart(cardId: string, lang: string = 'en') {
+		const request = ++modalRequest;
 		modalLoading = true;
 		modalOpen = true;
 		modalCard = null;
-		const [res, ChartCtor] = await Promise.all([
-			fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}&lang=${encodeURIComponent(lang)}`),
-			loadChart()
-		]);
-		const result = await res.json();
-		modalLoading = false;
-		if (!result.card) return;
-		modalCard = result.card;
-		setTimeout(() => {
-			if (!modalChartCanvas || !result.history.length) return;
-			modalChart?.destroy();
+		modalError = null;
+		modalEmpty = false;
+		modalEstimated = false;
+		modalChart?.destroy();
+		modalChart = null;
+		try {
+			const [res, ChartCtor] = await Promise.all([
+				fetch(`/api/prices/card?id=${encodeURIComponent(cardId)}&lang=${encodeURIComponent(lang)}`, { cache: 'no-store' }),
+				loadChart()
+			]);
+			if (!res.ok) throw new Error(`Price history unavailable (HTTP ${res.status}).`);
+			const result = await res.json();
+			if (!active || request !== modalRequest) return;
+			modalCard = result.card;
+			modalEstimated = result.fallbackUsed;
+			modalEmpty = !result.history.length;
+			modalLoading = false;
+			await tick();
+			if (request !== modalRequest || !modalChartCanvas?.isConnected || modalEmpty) return;
 			modalChart = new ChartCtor(modalChartCanvas, {
 				type: 'line',
 				data: {
@@ -132,10 +155,15 @@
 					}
 				}
 			});
-		}, 0);
+		} catch (err) {
+			if (active && request === modalRequest) modalError = err instanceof Error ? err.message : 'Price history unavailable.';
+		} finally {
+			if (active && request === modalRequest) modalLoading = false;
+		}
 	}
 
 	function closeModal() {
+		modalRequest++;
 		modalOpen = false;
 		modalChart?.destroy();
 		modalChart = null;
@@ -159,7 +187,7 @@
 
 	function cardProfit(card: Record<string, unknown>): number | null {
 		const base = changeMode === 'purchase' ? card.purchase_price as number | null : prevPrice(card);
-		if (base == null || !base) return null;
+		if (base == null) return null;
 		const cur = currentPrice(card);
 		if (cur == null) return null;
 		return (cur - base) * (card.quantity as number);
@@ -197,8 +225,8 @@
 	});
 
 	let totalChange = $derived(
-		stats.totalPurchaseValue > 0
-			? ((stats.totalValue - stats.totalPurchaseValue) / stats.totalPurchaseValue) * 100
+		stats.profitCost > 0
+			? ((stats.profitValue - stats.profitCost) / stats.profitCost) * 100
 			: null
 	);
 
@@ -216,11 +244,13 @@
 
 	async function buildProfitChart() {
 		profitChart?.destroy();
+		profitChart = null;
 		if (profitHistory.length > 0 && profitChartCanvas) {
 			const ChartCtor = await loadChart();
+			if (!active || !profitChartCanvas?.isConnected) return;
 			const profitData = profitHistory.map((h) => ({
 				date: priceDate(h.recorded_at),
-				profit: (h.total_value ?? 0) - (h.total_purchase ?? 0)
+				profit: h.total_value == null || h.total_purchase == null ? null : h.total_value - h.total_purchase
 			}));
 			profitChart = new ChartCtor(profitChartCanvas, {
 				type: 'line',
@@ -230,8 +260,8 @@
 						{
 							label: 'Profit / Loss (EUR)',
 							data: profitData.map((h) => h.profit),
-							borderColor: profitData.length > 0 && profitData[profitData.length - 1].profit >= 0 ? '#22c55e' : '#ef4444',
-							backgroundColor: profitData.length > 0 && profitData[profitData.length - 1].profit >= 0 ? '#22c55e22' : '#ef444422',
+							borderColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e' : '#ef4444',
+							backgroundColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e22' : '#ef444422',
 							fill: true,
 							tension: 0.3
 						},
@@ -244,7 +274,7 @@
 							pointRadius: 0
 						},
 						{
-							label: 'Current Value (EUR)',
+							label: 'Market Value (EUR)',
 							data: profitHistory.map((h) => h.total_value),
 							borderColor: '#f59e0b',
 							tension: 0.3,
@@ -264,14 +294,13 @@
 		}
 	}
 
-	$effect(() => {
-		loadPricesData().then(() => {
-			// Build chart after data is loaded (need to wait a tick for canvas
-			// to render). Chart.js itself is loaded lazily inside buildProfitChart.
-			setTimeout(() => buildProfitChart(), 0);
-		});
+	onMount(() => {
+		active = true;
+		void loadPricesData();
 
 		return () => {
+			active = false;
+			modalRequest++;
 			profitChart?.destroy();
 			modalChart?.destroy();
 		};
@@ -333,7 +362,7 @@
 				{/each}
 			</div>
 		</div>
-	{:else}
+	{:else if !loadError}
 		{#snippet restoreControl()}
 			<button
 				onclick={restoreHistory}
@@ -356,16 +385,11 @@
 				<p class="kpi-value text-[var(--color-accent)]">{formatPrice(stats.totalValue)}</p>
 			</div>
 			<div class="kpi-card">
-				<p class="kpi-label">Cost Basis</p>
+				<p class="kpi-label">Known Cost Basis</p>
 				<p class="kpi-value">{formatPrice(stats.totalPurchaseValue)}</p>
-				{#if totalChange !== null}
-					<p class="text-sm mt-1 {totalChange > 0 ? 'text-green-400' : totalChange < 0 ? 'text-red-400' : 'text-[var(--color-text-muted)]'}">
-						{totalChange > 0 ? '▲' : totalChange < 0 ? '▼' : '—'} {Math.abs(totalChange).toFixed(1)}%
-					</p>
-				{/if}
 			</div>
 			<div class="kpi-card">
-				<p class="kpi-label">Unique Cards</p>
+				<p class="kpi-label">Unique Printings</p>
 				<p class="kpi-value">{stats.uniqueCards}</p>
 			</div>
 			<div class="kpi-card">
@@ -375,6 +399,30 @@
 		</div>
 
 		<!-- Profit / Loss Chart -->
+		{#if stats.profitCopies > 0}
+			{@const profit = stats.profitValue - stats.profitCost}
+			<div class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-4">
+				<p class="font-medium">Profit / Loss:
+					<span class={profit >= 0 ? 'text-green-400' : 'text-red-400'}>{profit >= 0 ? '+' : ''}{formatPrice(profit)}{#if totalChange !== null} ({totalChange >= 0 ? '+' : ''}{totalChange.toFixed(1)}%){/if}</span>
+				</p>
+				<p class="text-xs text-[var(--color-text-muted)] mt-1">{formatPrice(stats.profitValue)} market value compared with {formatPrice(stats.profitCost)} purchase cost — {stats.profitCopies} copies with both prices.</p>
+			</div>
+		{/if}
+		{#if missingPriceCount > 0 || missingMarketCount > 0}
+			<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 text-sm text-yellow-400" role="status">
+				{#if missingPriceCount > 0}
+					<p>{missingPriceCount} {missingPriceCount === 1 ? 'copy has' : 'copies have'} no purchase price.
+						<a href="/collection" class="underline">Set missing prices</a></p>
+				{/if}
+				{#if missingMarketCount > 0}
+					<p>{missingMarketCount} {missingMarketCount === 1 ? 'copy has' : 'copies have'} no market price and cannot be included in the collection value.</p>
+				{/if}
+				<p>Profit and return include only copies with both prices.</p>
+			</div>
+		{/if}
+		{#if estimatedCount > 0}
+			<p class="text-sm text-[var(--color-text-muted)]">English reference prices are used for {estimatedCount} {estimatedCount === 1 ? 'copy' : 'copies'} without a price in the card's language.</p>
+		{/if}
 		{#if profitHistory.length > 0}
 			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
 				<div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
@@ -386,15 +434,14 @@
 					<p class="text-xs text-green-400 mb-3">{restoreMessage}</p>
 				{/if}
 
-				{#if missingPriceCount > 0}
-					<div class="bg-yellow-900/20 border border-yellow-800 rounded-lg p-3 mb-4 text-sm text-yellow-400 flex items-center gap-2">
-						<span>⚠</span>
-						<span>
-							{missingPriceCount} card{missingPriceCount > 1 ? 's' : ''} in your collection {missingPriceCount > 1 ? 'have' : 'has'} no purchase price set.
-							<a href="/collection" class="underline hover:text-yellow-300">Set missing prices</a>
-						</span>
-					</div>
+				<p class="text-xs text-[var(--color-text-muted)] mb-3">Reconstructed from your current quantities and recorded added dates, using copies with both prices available on each day. USD prices use the current exchange rate.</p>
+				{#if profitHistory.some(point => point.estimated_count > 0)}
+					<p class="text-xs text-[var(--color-text-muted)] mb-3">Some historical values use English reference prices where prices in the card's language are missing.</p>
 				{/if}
+				{#if profitHistory.some(point => point.missing_market_count > 0)}
+					<p class="text-xs text-yellow-400 mb-3">Some dates have incomplete price coverage. Copies without a market price are excluded together with their purchase cost.</p>
+				{/if}
+				{#if chartError}<p class="text-sm text-yellow-400">{chartError}</p>{/if}
 
 				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
 					<canvas bind:this={profitChartCanvas}></canvas>
@@ -402,9 +449,9 @@
 			</div>
 		{:else}
 			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] text-center text-[var(--color-text-muted)]">
-				<p>No price history yet.</p>
-				<p class="text-sm mt-1">Prices update automatically once per day, or click "Update Prices" above.</p>
-				<p class="text-sm mt-3">Re-synced your collection? Its history dates were reset — restore them:</p>
+				<p>{missingPriceCount > 0 ? 'Add purchase prices to see profit and loss.' : 'No collection price history yet.'}</p>
+				<p class="text-sm mt-1">Prices update automatically. Add cards with purchase prices to build this chart.</p>
+				<p class="text-sm mt-3">If a re-sync changed your recorded added dates, you can restore earlier dates:</p>
 				<div class="mt-3 flex flex-col items-center gap-2">
 					{@render restoreControl()}
 					{#if restoreMessage}
@@ -476,7 +523,8 @@
 								</div>
 								<div class="text-right flex-shrink-0">
 									{#if topSort === 'value'}
-										<span class="text-[var(--color-accent)] font-medium">{formatPrice(card.price as number)}</span>
+										<span class="text-[var(--color-accent)] font-medium">{formatPrice(cardValue(card))}</span>
+										{#if (card.quantity as number) > 1}<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(currentPrice(card))} each</p>{/if}
 										{#if priceChange(card)}
 											<p class="text-xs {priceChange(card)!.color}">
 												{priceChange(card)!.direction} {Math.abs(priceChange(card)!.percent).toFixed(1)}%
@@ -489,7 +537,7 @@
 												{profit >= 0 ? '+' : ''}{formatPrice(profit)}
 											</span>
 										{/if}
-										<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
+										<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(cardValue(card))} total</p>
 									{:else}
 										{@const pct = cardProfitPct(card)}
 										{#if pct != null}
@@ -497,8 +545,9 @@
 												{pct >= 0 ? '▲' : '▼'} {Math.abs(pct).toFixed(1)}%
 											</span>
 										{/if}
-										<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(card.price as number)}</p>
+										<p class="text-xs text-[var(--color-text-muted)]">{formatPrice(cardValue(card))} total</p>
 									{/if}
+									{#if card.estimated || (changeMode === 'daily' && card.prev_estimated)}<p class="text-xs text-[var(--color-text-muted)]">English reference</p>{/if}
 								</div>
 							</a>
 							<button
@@ -537,14 +586,19 @@
 						Price History: {modalCard.name}
 						<span class="text-sm text-[var(--color-text-muted)] font-normal">({modalCard.set_name})</span>
 					{:else}
-						Loading...
+						Price History
 					{/if}
 				</h2>
-				<button onclick={closeModal} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
+				<button onclick={closeModal} aria-label="Close price history" class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
 			</div>
 			{#if modalLoading}
 				<p class="text-[var(--color-text-muted)] text-center py-8">Loading price data...</p>
+			{:else if modalError}
+				<p class="text-red-300 py-4" role="alert">{modalError}</p>
+			{:else if modalEmpty}
+				<p class="text-[var(--color-text-muted)] py-4">No recorded prices for this printing yet.</p>
 			{:else if modalCard}
+				{#if modalEstimated}<p class="text-xs text-[var(--color-text-muted)] mb-3">Includes English reference prices where prices in the card's language are missing.</p>{/if}
 				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
 					<canvas bind:this={modalChartCanvas}></canvas>
 				</div>

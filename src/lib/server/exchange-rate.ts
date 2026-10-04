@@ -48,7 +48,9 @@ export async function getUsdToEurRate(): Promise<number> {
 	}
 
 	try {
-		const res = await nativeFetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR');
+		const res = await nativeFetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR', {
+			signal: AbortSignal.timeout(3000)
+		});
 		if (res.ok) {
 			const data = await res.json();
 			const rate = data?.rates?.EUR;

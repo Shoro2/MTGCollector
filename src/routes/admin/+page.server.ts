@@ -2,7 +2,7 @@ import { sqlite } from '$lib/server/db';
 import { getPriceUpdateStatus } from '$lib/server/price-updater';
 import { redirect } from '@sveltejs/kit';
 import { statSync } from 'node:fs';
-import { join } from 'node:path';
+import { recentSnapshots as loadRecentSnapshots, priceHistoryRange } from '$lib/server/admin-stats';
 
 const USERS_PAGE_SIZE = 50;
 
@@ -23,7 +23,7 @@ export async function load({ locals, url }) {
 			COALESCE(sn.active_sessions, 0) as active_sessions
 		FROM users u
 		LEFT JOIN (
-			SELECT user_id, COUNT(*) as collection_count, COALESCE(SUM(quantity), 0) as total_cards
+			SELECT user_id, COUNT(DISTINCT card_id) as collection_count, COALESCE(SUM(quantity), 0) as total_cards
 			FROM collection_cards GROUP BY user_id
 		) cc ON cc.user_id = u.id
 		LEFT JOIN (
@@ -31,51 +31,36 @@ export async function load({ locals, url }) {
 		) wl ON wl.user_id = u.id
 		LEFT JOIN (
 			SELECT user_id, COUNT(*) as active_sessions
-			FROM sessions WHERE expires_at > datetime('now') GROUP BY user_id
+			FROM sessions WHERE expires_at > ? GROUP BY user_id
 		) sn ON sn.user_id = u.id
 		ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
-	).all(USERS_PAGE_SIZE, offset) as Array<Record<string, unknown>>;
+	).all(new Date().toISOString(), USERS_PAGE_SIZE, offset) as Array<Record<string, unknown>>;
 
-	// Database stats — one roundtrip instead of eight.
-	const stats = sqlite.prepare(
-		`SELECT
-			(SELECT COUNT(*) FROM cards) as cardCount,
-			(SELECT COUNT(*) FROM collection_cards) as collectionCount,
-			(SELECT COUNT(*) FROM wishlist_cards) as wishlistCount,
-			(SELECT COUNT(*) FROM price_history) as priceHistoryCount,
-			(SELECT COUNT(*) FROM tags) as tagCount,
-			(SELECT COUNT(*) FROM sessions) as sessionCount,
-			(SELECT COUNT(*) FROM users) as userCount,
-			(SELECT COUNT(*) FROM card_faces) as cardFaceCount`
-	).get() as {
-		cardCount: number; collectionCount: number; wishlistCount: number;
-		priceHistoryCount: number; tagCount: number; sessionCount: number;
-		userCount: number; cardFaceCount: number;
-	};
-	const { cardCount, collectionCount, wishlistCount, priceHistoryCount, tagCount, sessionCount, userCount, cardFaceCount } = stats;
-
-	// Table sizes (row counts + estimated sizes)
+	// Count each table once. FTS shadow tables are implementation details.
 	const tables = sqlite.prepare(
-		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
+		`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
+		 AND name NOT LIKE 'cards_fts_%' AND name != 'cards_fts' ORDER BY name`
 	).all() as Array<{ name: string }>;
+	const tableStats = tables.map(({ name }) => ({ name,
+		rows: (sqlite.prepare(`SELECT COUNT(*) AS c FROM "${name.replaceAll('"', '""')}"`).get() as { c: number }).c
+	}));
+	const counts = new Map(tableStats.map(t => [t.name, t.rows]));
+	const cardCount = counts.get('cards') ?? 0;
+	const collectionCount = counts.get('collection_cards') ?? 0;
+	const wishlistCount = counts.get('wishlist_cards') ?? 0;
+	const priceHistoryCount = counts.get('price_history') ?? 0;
+	const tagCount = counts.get('tags') ?? 0;
+	const sessionCount = counts.get('sessions') ?? 0;
+	const userCount = counts.get('users') ?? 0;
+	const cardFaceCount = counts.get('card_faces') ?? 0;
 
-	const tableStats = tables.map(t => {
-		const count = (sqlite.prepare(`SELECT COUNT(*) as c FROM "${t.name}"`).get() as { c: number }).c;
-		return { name: t.name, rows: count };
-	});
-
-	// DB file size
-	let dbSizeMB = 0;
-	try {
-		const dbPath = join(process.cwd(), 'data', 'mtg.db');
-		const stat = statSync(dbPath);
-		dbSizeMB = Math.round(stat.size / 1024 / 1024 * 10) / 10;
-	} catch { /* */ }
-
-	// Price history date range
-	const priceRange = sqlite.prepare(
-		'SELECT MIN(recorded_at) as earliest, MAX(recorded_at) as latest FROM price_history'
-	).get() as { earliest: string | null; latest: string | null };
+	// Include committed WAL data, and respect MTG_DB_PATH via the connection.
+	let dbBytes = 0;
+	for (const path of [sqlite.name, `${sqlite.name}-wal`]) {
+		try { dbBytes += statSync(path).size; } catch { /* No WAL, or in-memory DB. */ }
+	}
+	const dbSizeMB = Math.round(dbBytes / 1024 / 1024 * 10) / 10;
+	const priceRange = priceHistoryRange(sqlite);
 
 	// Top sets by card count
 	const topSets = sqlite.prepare(
@@ -104,15 +89,7 @@ export async function load({ locals, url }) {
 	// Price update status
 	const priceStatus = getPriceUpdateStatus();
 
-	// Recent price history snapshots (unique dates)
-	const recentSnapshots = sqlite.prepare(
-		`SELECT snapshot_date, COUNT(DISTINCT card_id) as cards_snapshotted
-		 FROM price_history
-		 WHERE snapshot_date IS NOT NULL
-		 GROUP BY snapshot_date
-		 ORDER BY snapshot_date DESC
-		 LIMIT 10`
-	).all() as Array<{ snapshot_date: string; cards_snapshotted: number }>;
+	const recentSnapshots = loadRecentSnapshots(sqlite);
 
 	return {
 		users,

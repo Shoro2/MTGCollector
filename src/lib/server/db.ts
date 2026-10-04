@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
 import { SCHEMA_SQL } from './schema-sql.js';
 import { runMigrations, type Migration } from './migrations.js';
+import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -330,6 +331,10 @@ const MIGRATIONS: Migration[] = [
 			`);
 			db.exec('CREATE INDEX IF NOT EXISTS idx_card_names_name ON card_names(name)');
 		}
+	},
+	{
+		id: '0023_price_history_snapshot_card',
+		run: (db) => db.exec(SNAPSHOT_INDEX_SQL)
 	}
 ];
 
