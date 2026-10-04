@@ -62,7 +62,42 @@ node scripts/scanner-harness/make-live-y4m.mjs fixtures/live-scene.y4m
 node scripts/scanner-harness/live-harness.mjs fixtures/live-scene.y4m live-result.png
 # Live UX: capture / result cues, pause (camera released, results stay), resume without a second capture
 node scripts/scanner-harness/live-ux-check.mjs fixtures/live-scene.y4m
+
+# Live component integration: replacements during processing, no stale cached card,
+# duplicate prevention, pause/resume and manual capture (14 assertions).
+# Uses actual Svelte/canvas/fingerprint code with controlled detector/OCR-busy doubles.
+node scripts/scanner-harness/session-ux-check.mjs
+
+# Card preview: persistent touch dialog, close, viewport fit/zoom/rotation,
+# desktop positioning, portal cleanup and keyboard control (52 assertions).
+node scripts/scanner-harness/preview-ux-check.mjs
+
+# Actual scan page: no printing selected/imported before explicit choice,
+# guest/signed-in UI, export and bulk selection (20 assertions).
+# Run against the full catalogue; uses synth-grid.jpg from make-synthetic.mjs.
+# Signed-in hydration is a browser fixture and every collection write is intercepted.
+node scripts/scanner-harness/printing-ux-check.mjs fixtures/synth-grid.jpg
 ```
+
+On Windows, `PLAYWRIGHT_CHROMIUM_PATH` may point at an installed Chromium browser,
+for example `C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`.
+The component checks require no server, database or OCR downloads. They verify
+UI/capture integration; they do not measure real OpenCV detection or OCR accuracy.
+On 2026-10-04, the same three synthetic photos against the full local catalogue
+before and after the session fixes produced 6/6 identities, 4/6 established
+printings, 2 open printings and no wrong automatic identities or printings.
+The real-photo development/hold-out baselines were not rerun for that change.
+
+`rearm-experiment.mjs <live-log> [output-dir]` downloads the public catalogue
+references for identities in a log (read-only database access, cached images and
+results under ignored `data/`). It measures fingerprint separation, exposure,
+blur and simulated corner errors; the output records image hashes and which
+catalogue reference stood in for an open printing. On the 15 identities from
+the 2026-10-04 live log, same-card outline perturbations reached 24 bits. The
+initial 18-bit replacement threshold was rejected; 26 bits separates 91/105
+clean different-card pairs and none of the tested same-card perturbation pairs.
+Similar content therefore still needs removal/manual capture. These reference
+measurements do not establish real-camera recall or duplicate rates.
 
 `--expect` takes a JSON map from file name to the card instances in the photo,
 each either a printing `{ "name", "set", "number" }` or a plain name (identity

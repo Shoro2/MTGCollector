@@ -19,6 +19,7 @@
 import { assessFrame, type FrameQuality } from './quality.js';
 import { isPlausibleCardQuad, luminanceSpread, polygonOrder, quadSides, sampleQuadLuminance, type Pt } from './quad.js';
 import { touchesFrameEdge } from './geometry.js';
+import { cardFingerprint, type ContentFingerprint } from './rearm.js';
 
 export type QuickRect = {
 	corners: Array<[number, number]>;
@@ -28,6 +29,8 @@ export type QuickRect = {
 	source?: 'fine' | 'coarse';
 	/** 5th-95th percentile luminance spread inside the quad (0-255). */
 	spread?: number;
+	/** Content of this frame's card, used to notice replacements at unchanged positions. */
+	fingerprint?: ContentFingerprint;
 };
 
 export type DetectQuickOptions = {
@@ -79,6 +82,8 @@ export type DetectQuickOptions = {
 };
 
 export type QuickDetection = {
+	/** False when detection failed; an error is not an observed empty frame. */
+	valid?: boolean;
 	rects: QuickRect[];
 	/** Sharpness/glare over the detected rectangles (whole frame when none). */
 	quality: FrameQuality;
@@ -378,6 +383,7 @@ export function detectOnPixels(
 ): QuickDetection {
 	const rects = scanQuickRects(cv, rgba, width, height, opts);
 	const inv = 1 / (opts.coordScale ?? 1);
+	for (const r of rects) r.fingerprint = cardFingerprint(rgba, width, height, r.corners.map(([x, y]) => [x * inv, y * inv]));
 	const rois = rects.map((r) => ({
 		x: r.rect.x * inv,
 		y: r.rect.y * inv,
