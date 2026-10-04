@@ -51,6 +51,7 @@
 <svelte:head>
 	<title>{t.title} | MTG Collector</title>
 	<meta name="description" content="Contact form for MTG Collector." />
+	<link rel="canonical" href="https://mtg-collector.com/contact" />
 </svelte:head>
 
 <div class="max-w-2xl mx-auto">

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import { SITE_URL, jsonLd } from '$lib/seo';
 	import { formatPrice, getRarityColor, conditionLabel, priceDate, priceDivergence, isSuspiciousDivergence, type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
 	import { invalidate } from '$app/navigation';
@@ -19,6 +20,9 @@
 	let showAddForm = $state(false);
 
 	let card = $derived(data.card);
+	let cardLabel = $derived(`${card.name} - ${card.set_name} #${card.collector_number}`);
+	let canonical = $derived(`${SITE_URL}/cards/${card.id}`);
+	let socialImage = $derived(getImageSrc() ? new URL(getImageSrc(), SITE_URL).href : undefined);
 
 	// Cardmarket's trend price (Scryfall `eur`) sometimes collapses for thinly
 	// traded printings while TCGplayer (`usd`) stays sane; flag a >5x gap.
@@ -146,14 +150,7 @@
 	}
 
 	let metaDescription = $derived.by(() => {
-		const parts: string[] = [];
-		if (card.type_line) parts.push(card.type_line as string);
-		if (card.oracle_text) {
-			const text = card.oracle_text as string;
-			parts.push(text.length > 100 ? text.slice(0, 100) + '...' : text);
-		}
-		parts.push(`Set: ${card.set_name}`);
-		return parts.join(' - ').slice(0, 155);
+		return `${card.name} from ${card.set_name}, #${card.collector_number}. View rules, reference prices, price history and other printings on MTG Collector.`;
 	});
 
 	onMount(() => {
@@ -163,43 +160,52 @@
 </script>
 
 <svelte:head>
-	<title>{card.name} - {card.set_name} | MTG Collector</title>
+	<title>{cardLabel} | MTG Collector</title>
 	<meta name="description" content={metaDescription} />
-	<link rel="canonical" href="https://mtg-collector.com/cards/{card.id}" />
-	<meta property="og:title" content="{card.name} - {card.set_name}" />
+	<link rel="canonical" href={canonical} />
+	<meta property="og:title" content={cardLabel} />
 	<meta property="og:description" content={metaDescription} />
-	<meta property="og:type" content="product" />
-	<meta property="og:url" content="https://mtg-collector.com/cards/{card.id}" />
-	{#if getImageSrc()}
-		<meta property="og:image" content={getImageSrc()} />
+	<meta property="og:type" content="website" />
+	<meta property="og:url" content={canonical} />
+	{#if socialImage}
+		<meta property="og:image" content={socialImage} />
+		<meta property="og:image:alt" content={cardLabel} />
+		<meta name="twitter:card" content="summary_large_image" />
 	{/if}
-	{@html `<script type="application/ld+json">${JSON.stringify({
+	{@html `<script type="application/ld+json">${jsonLd({
 		"@context": "https://schema.org",
-		"@type": "Product",
-		"name": card.name,
-		"description": card.oracle_text || card.type_line || "Magic: The Gathering card",
-		"image": getImageSrc() || undefined,
-		"brand": {
-			"@type": "Brand",
-			"name": "Magic: The Gathering"
-		},
-		"category": card.type_line || undefined,
-		"offers": card.price_eur ? {
-			"@type": "Offer",
-			"priceCurrency": "EUR",
-			"price": (card.price_eur as number).toFixed(2),
-			"availability": "https://schema.org/InStock"
-		} : undefined,
-		"additionalProperty": [
-			{ "@type": "PropertyValue", "name": "Set", "value": card.set_name },
-			{ "@type": "PropertyValue", "name": "Rarity", "value": card.rarity },
-			{ "@type": "PropertyValue", "name": "Collector Number", "value": card.collector_number }
-		].filter(Boolean)
+		"@graph": [
+			{
+				"@type": "WebPage",
+				"@id": canonical,
+				"url": canonical,
+				"name": cardLabel,
+				"description": metaDescription,
+				"image": socialImage,
+				"inLanguage": "en",
+				"breadcrumb": { "@id": canonical + '#breadcrumb' }
+			},
+			{
+				"@type": "BreadcrumbList",
+				"@id": canonical + '#breadcrumb',
+				"itemListElement": [
+					{ "@type": "ListItem", "position": 1, "name": "MTG Collector", "item": SITE_URL + '/' },
+					{ "@type": "ListItem", "position": 2, "name": "Cards", "item": SITE_URL + '/cards' },
+					{ "@type": "ListItem", "position": 3, "name": cardLabel, "item": canonical }
+				]
+			}
+		]
 	})}</script>`}
 </svelte:head>
 
 <article class="space-y-5">
-	<a href="/cards" class="text-sm text-[var(--color-primary)] hover:underline">&larr; Back to cards</a>
+	<nav aria-label="Breadcrumb" class="flex flex-wrap gap-2 text-sm text-[var(--color-text-muted)]">
+		<a href="/" class="text-[var(--color-primary)] hover:underline">MTG Collector</a>
+		<span aria-hidden="true">/</span>
+		<a href="/cards" class="text-[var(--color-primary)] hover:underline">Cards</a>
+		<span aria-hidden="true">/</span>
+		<span aria-current="page">{cardLabel}</span>
+	</nav>
 
 	<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-8">
 		<!-- Card Image -->

@@ -1967,11 +1967,12 @@
 </script>
 
 <svelte:head>
-	<title>MTG Card Scanner - Scan Entire Boosters at Once | MTG Collector</title>
-	<meta name="description" content="Scan multiple Magic: The Gathering cards in one photo. Place an entire booster pack or spread of cards on the table, take a picture, and let our scanner detect, identify, and price-check every card automatically — including foil detection." />
+	<title>MTG Card Scanner - Camera & Photo Scan | MTG Collector</title>
+	<meta name="description" content="Scan Magic: The Gathering cards with a live camera or a photo of multiple cards. Identify English and German names, review printings, and check reference prices." />
 	<link rel="canonical" href="https://mtg-collector.com/scan" />
-	<meta property="og:title" content="MTG Card Scanner - Scan & Identify Cards | MTG Collector" />
-	<meta property="og:description" content="Scan Magic: The Gathering cards with your camera. Automatic card detection, OCR recognition, foil detection, and price lookup." />
+	<meta property="og:title" content="MTG Card Scanner - Camera & Photo Scan | MTG Collector" />
+	<meta property="og:description" content="Scan English and German Magic cards with your camera or a photo. Review the suggested printing and reference price. No account needed to scan." />
+	<meta property="og:type" content="website" />
 	<meta property="og:url" content="https://mtg-collector.com/scan" />
 </svelte:head>
 
@@ -1979,7 +1980,8 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Scanner</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Card Scanner</h1>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">MTG Card Scanner</h1>
+			<p class="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">Use your live camera or a photo to identify English and German Magic: The Gathering cards. Review the edition and collector number before saving.</p>
 		</div>
 		{#if !loggedIn}
 			<p class="text-sm text-[var(--color-text-muted)]">
