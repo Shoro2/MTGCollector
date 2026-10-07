@@ -8,6 +8,8 @@ MTG Collector is a full-stack web app for tracking Magic: The Gathering card col
 
 ## Quick Start
 
+Requires Node.js 22.12 or newer (Node 22 in production and CI).
+
 ```bash
 npm install                  # Install dependencies
 npm run import-cards         # Download Scryfall bulk data (required first time, ~600MB)
@@ -284,10 +286,11 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 
 ## Dependencies and Security Updates
 
-- **`npm audit` is clean (0 findings, 2026-09-17) and should stay that way.** Fix findings on a development machine — `npm audit fix`, then `npm update <pkg>` for nested leftovers (`tsx` pinned a vulnerable `esbuild` that way) — and ship the changed `package-lock.json` through a PR. Run `check`, `test`, `build` and the scanner harness afterwards: an audit fix moves SvelteKit, Svelte and Vite by several minor versions.
-- **Never run `npm audit fix` or `npm install` on the host.** The host installs with `npm ci` from the committed lock file; a changed lock file there dirties the checkout and blocks the next `git pull`. It also does not work: npm 10.9.7 (the host's, Node 22) aborts `audit fix` with `Cannot read properties of null (reading 'edgesOut')` — an arborist bug with `overrides`; npm 11 resolves the same tree. The lock file written by npm 11 installs fine with npm 10 (`npx npm@10.9.7 ci --dry-run`).
+- **`npm audit` is clean (0 findings, 2026-10-08) and should stay that way.** Fix findings on a development machine with targeted updates where possible, and ship the changed `package-lock.json` through a PR. Run `check`, `test`, `build` and the scanner harness afterwards: broad audit fixes can also move SvelteKit, Svelte and Vite.
+- **Never run `npm audit fix` or `npm install` on the host.** The host installs with `npm ci` from the committed lock file; a changed lock file there dirties the checkout and blocks the next `git pull`. An earlier attempt with npm 10.9.7 on Node 22 aborted `audit fix` with `Cannot read properties of null (reading 'edgesOut')` — an arborist bug with `overrides`; npm 11 resolves the same tree. The current lock file was installed cleanly with npm 11 and also passed `npx npm@10.9.9 ci --dry-run --ignore-scripts`, matching the host's npm version.
 - **`xlsx` comes from SheetJS's own CDN, not from the npm registry** (`"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"`, pinned by the integrity hash in the lock file; no install scripts, no dependencies, Apache-2.0). SheetJS left the registry, whose copy is frozen at 0.18.5 with a prototype-pollution (< 0.19.3) and a ReDoS advisory (< 0.20.2), and npm reports "No fix available" for it. The library parses an *uploaded* file on the server (Cardtrader order export, `/collection/prices` → `src/lib/server/cardtrader-xls.ts`), so this was the one finding with a real attack path; nothing else reads the legacy binary `.xls` Cardtrader exports. A plain `npm install xlsx` brings 0.18.5 back — a unit test fails on any version below 0.20.2. To upgrade, install the new tarball URL from <https://cdn.sheetjs.com/>. `npm ci` needs that CDN once per machine; afterwards the npm cache serves the tarball by its hash.
-- **`overrides` in `package.json`:** `cookie` 0.7.2 (SvelteKit still asks for `^0.6.0`, which has an advisory) and `esbuild` 0.25.4 for `@esbuild-kit/core-utils` (drizzle-kit's loader pins 0.18). Re-check both when those packages move.
+- **Dependency cleanup (2026-10-08):** `better-sqlite3` 13.0.3 ships N-API binaries without the deprecated `prebuild-install`. The unused `drizzle-kit` and its config were removed, eliminating `@esbuild-kit/esm-loader` and `@esbuild-kit/core-utils`; the app retains `drizzle-orm` and its existing custom migrations. Import/hash commands use a directly declared, lockfile-pinned `tsx` dependency instead of relying on a transitive dependency or `npx` downloading it. Security patches also update `sharp` to 0.35.5, `devalue` to 5.9.4 and `source-map-js` to 1.2.2.
+- **`overrides` in `package.json`:** `cookie` 0.7.2 (SvelteKit still asks for `^0.6.0`, which has an advisory). Re-check when SvelteKit moves. The former `@esbuild-kit/core-utils` override is no longer needed after removing `drizzle-kit`.
 
 ## Database Migrations
 
