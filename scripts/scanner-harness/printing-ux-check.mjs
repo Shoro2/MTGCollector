@@ -26,8 +26,8 @@ try {
 			if (route.request().method() !== 'GET') return route.continue();
 			const response = await route.fetch();
 			const html = await response.text();
-			if (!html.includes('data:{user:null}')) throw new Error('Hydration fixture no longer matches the page');
-			await route.fulfill({ response, body: html.replaceAll('data:{user:null}', 'data:{user:{id:"scanner-ux",name:"Scanner check",email:"scanner@example.invalid"}}') });
+			if (!html.includes('data:{user:null')) throw new Error('Hydration fixture no longer matches the page');
+			await route.fulfill({ response, body: html.replaceAll('data:{user:null', 'data:{user:{id:"scanner-ux",name:"Scanner check",email:"scanner@example.invalid"}') });
 		});
 		await page.route('**/collection', async (route) => {
 			if (route.request().method() !== 'POST') return route.continue();

@@ -22,18 +22,35 @@ function displayName(rawName: string): string {
 export async function GET({ locals, url }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
 
-	const format = url.searchParams.get('format') === 'text' ? 'text' : 'csv';
+	const requested = url.searchParams.get('format');
+	const format = requested === 'text' || requested === 'collector' ? requested : 'csv';
 
 	const items = sqlite
 		.prepare(
-			`SELECT cc.quantity, cc.condition, cc.foil, cc.language, cc.added_at, cc.purchase_price,
-				c.name, c.set_code, c.collector_number
+			`SELECT cc.id, cc.quantity, cc.condition, cc.foil, cc.language, cc.added_at, cc.purchase_price, cc.location, cc.notes,
+				c.id AS card_id, c.name, c.set_code, c.collector_number
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
 			WHERE cc.user_id = ?
 			ORDER BY c.name ASC`
 		)
 		.all(locals.user.id) as Array<Record<string, unknown>>;
+
+	if (format === 'collector') {
+		const tagRows = sqlite.prepare(`SELECT cct.collection_card_id, t.name FROM collection_card_tags cct
+			JOIN tags t ON t.id = cct.tag_id JOIN collection_cards cc ON cc.id = cct.collection_card_id
+			WHERE cc.user_id = ? ORDER BY t.name`).all(locals.user.id) as { collection_card_id: number; name: string }[];
+		const tags = new Map<number, string[]>();
+		for (const row of tagRows) tags.set(row.collection_card_id, [...(tags.get(row.collection_card_id) ?? []), row.name]);
+		const columns = ['Scryfall ID', 'Name', 'Set Code', 'Collector Number', 'Quantity', 'Foil', 'Condition',
+			'Language', 'Purchase Price', 'Purchase Price Currency', 'Location', 'Notes', 'Tags JSON', 'Date Added'];
+		const lines = items.map(i => [i.card_id, i.name, i.set_code, i.collector_number, i.quantity, i.foil ? 'foil' : 'nonfoil',
+			i.condition, i.language, i.purchase_price, 'EUR', i.location, i.notes, JSON.stringify(tags.get(i.id as number) ?? []),
+			i.added_at ? new Date(i.added_at as string).toISOString() : ''].map(v => csvField(v as string | number | null)).join(','));
+		return new Response([columns.map(csvField).join(','), ...lines].join('\n'), { headers: {
+			'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="mtg-collector.csv"', 'Cache-Control': 'private, no-store'
+		} });
+	}
 
 	if (format === 'text') {
 		const lines = items.map((item) => {

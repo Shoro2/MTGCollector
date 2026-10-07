@@ -335,6 +335,13 @@ const MIGRATIONS: Migration[] = [
 	{
 		id: '0023_price_history_snapshot_card',
 		run: (db) => db.exec(SNAPSHOT_INDEX_SQL)
+	},
+	{
+		id: '0024_collection_location',
+		run: (db) => {
+			addColumnIfMissing(db, 'collection_cards', 'location', "TEXT NOT NULL DEFAULT ''");
+			db.exec('CREATE INDEX IF NOT EXISTS idx_collection_user_location ON collection_cards(user_id, location)');
+		}
 	}
 ];
 

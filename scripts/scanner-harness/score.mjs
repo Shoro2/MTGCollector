@@ -1,8 +1,8 @@
 // Scoring of one photo's accepted cards against its expected instances (see harness.mjs).
-/** "Innistrad: Midnight Hunt (MID) #10" -> { set: "mid", number: "10" } */
+/** Accept both the earlier "Set (MID) #10" label and the compact "MID #10". */
 function parsePrinting(text) {
-	const m = /\(([A-Za-z0-9]+)\)\s*#(\S+)\s*$/.exec(text ?? '');
-	return m ? { set: m[1].toLowerCase(), number: m[2] } : null;
+	const m = /(?:\(([A-Za-z0-9]+)\)|^([A-Za-z0-9]+))\s*#(\S+)\s*$/.exec(text ?? '');
+	return m ? { set: (m[1] || m[2]).toLowerCase(), number: m[3] } : null;
 }
 
 /** Score the accepted cards of one photo against its expected instances. */

@@ -2,6 +2,7 @@ import { sqlite } from '$lib/server/db';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { redirect } from '@sveltejs/kit';
 import { tagsCache } from '$lib/server/cache';
+import { collectionLocations } from '$lib/server/collection-actions';
 
 export async function load({ url, locals, depends }) {
 	if (!locals.user) throw redirect(302, '/login');
@@ -12,6 +13,7 @@ export async function load({ url, locals, depends }) {
 	const usdToEur = await getUsdToEurRate();
 
 	const tagFilter = url.searchParams.get('tag');
+	const locationFilter = url.searchParams.get('location');
 	const search = url.searchParams.get('q') || '';
 	const sortBy = url.searchParams.get('sort') || 'added_at';
 	const sortDir = url.searchParams.get('dir') || 'desc';
@@ -21,6 +23,10 @@ export async function load({ url, locals, depends }) {
 
 	const conditions: string[] = ['cc.user_id = ?'];
 	const params: (string | number)[] = [userId];
+	if (locationFilter !== null) {
+		conditions.push('cc.location = ?');
+		params.push(locationFilter);
+	}
 
 	if (search) {
 		conditions.push('c.name LIKE ?');
@@ -116,7 +122,7 @@ export async function load({ url, locals, depends }) {
 	const stats = sqlite
 		.prepare(
 			`SELECT
-				COUNT(*) as uniqueCards,
+				COUNT(DISTINCT cc.card_id) as uniqueCards,
 				COALESCE(SUM(cc.quantity), 0) as totalCards,
 				COALESCE(SUM(
 					COALESCE(
@@ -167,7 +173,8 @@ export async function load({ url, locals, depends }) {
 		totalPages: Math.ceil(countResult.count / pageSize),
 		tags: allTags,
 		stats,
-		filters: { search, tagFilter, sortBy, sortDir },
+		filters: { search, tagFilter, sortBy, sortDir, locationFilter },
+		locations: collectionLocations(sqlite, userId),
 		editCard,
 		usdToEur
 	};
