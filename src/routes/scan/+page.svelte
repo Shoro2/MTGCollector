@@ -4,6 +4,8 @@
 	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import LiveScanner from '$lib/components/LiveScanner.svelte';
+	import ScanSessionSettings from '$lib/components/ScanSessionSettings.svelte';
+	import { defaultSession, restoreSession, applySessionSet, type ScanSession } from '$lib/scanner/session';
 	import { onMount, onDestroy } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
@@ -24,6 +26,17 @@
 
 	let { data }: { data: PageData } = $props();
 	let loggedIn = $derived(!!data.user);
+	let session = $state(defaultSession());
+	let sessionReady = $state(false);
+	onMount(() => {
+		try { session = restoreSession(JSON.parse(localStorage.getItem(`mtg.scan.session.${data.user?.id ?? 'guest'}`) || 'null'), data.sets.map(s => s.set_code)); } catch { /* Storage may be unavailable. */ }
+		sessionReady = true;
+	});
+	$effect(() => {
+		if (sessionReady) {
+			try { localStorage.setItem(`mtg.scan.session.${data.user?.id ?? 'guest'}`, JSON.stringify(session)); } catch { /* Optional persistence. */ }
+		}
+	});
 
 	// State
 	let imagePreview = $state('');
@@ -33,9 +46,12 @@
 	// instead of clobbering the UI for a newer scan (e.g. the user picking a new
 	// file mid-scan).
 	let scanToken = 0;
+	let nextCaptureId = 0;
+	let addError = $state('');
 	let scanProgress = $state('');
 	let detectedCards = $state<Array<{
 		index: number;
+		captureId: number;
 		croppedUrl: string;
 		nameUrl: string;
 		bottomUrl: string;
@@ -51,6 +67,7 @@
 		printingState: DecisionState;
 		finish: Finish;
 		language: string;
+		session: ScanSession;
 		/** Kept in sync with `finish` for the collection API and the Moxfield text. */
 		foil: boolean;
 		selectedResultIdx: number;
@@ -82,8 +99,8 @@
 	let debugLog = $state<string[]>([]);
 	let scanStartTime = 0;
 	let debugLogCopied = $state(false);
-	let adding = $state<string | null>(null);
-	let addedCards = $state<Array<{ id: string; name: string }>>([]);
+	let adding = $state<number | null>(null);
+	let addedCards = $state<Array<{ id: string; name: string; captureId: number }>>([]);
 	let selectedCards = $state<Set<number>>(new Set());
 	let importing = $state(false);
 	// Mode selector. 'single' assumes one card in the photo; 'multiple' lets
@@ -354,6 +371,7 @@
 	 * skipped and the cards are warped straight from them.
 	 */
 	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = []) {
+		const captureSession = { ...session };
 		const myToken = ++scanToken;
 		const superseded = () => myToken !== scanToken;
 		scanning = true;
@@ -1117,6 +1135,7 @@
 
 				cards.push({
 					index: i,
+					captureId: ++nextCaptureId,
 					croppedUrl,
 					nameUrl,
 					nameUrl2,
@@ -1134,6 +1153,7 @@
 					printingState: 'unknown',
 					finish: 'unknown',
 					language: '',
+					session: captureSession,
 					foil: false,
 					selectedResultIdx: 0,
 					nameCandidates: [],
@@ -1666,7 +1686,7 @@
 				}
 			}
 			function resolveOne(card: typeof detectedCards[number], cardIdx: number, majoritySet: string | null) {
-				const d = resolveCard({
+				let d = resolveCard({
 					nameCandidates: card.nameCandidates,
 					nameText: card.nameText,
 					footer: card.readings,
@@ -1679,11 +1699,12 @@
 					nearLookup: (setCode, n, rarity) => nearCache.get(nearKey(setCode, n, rarity)) ?? [],
 					isKnownSet: (setCode) => (majoritySet !== null && setCode.toLowerCase() === majoritySet) || (knownSets.get(setCode.toLowerCase()) ?? false)
 				});
+				d = applySessionSet(d, captureSession.setCode, card.readings.filter(r => knownSets.get(r.setCode.toLowerCase())).map(r => r.setCode.toLowerCase()));
 				for (const r of d.reasons) log(`Card ${cardIdx}: ${r}`);
 				card.reasons = d.reasons;
 				card.finish = d.finish;
 				card.foil = d.finish === 'foil';
-				card.language = d.language;
+				card.language = captureSession.language || d.language;
 				card.suggestions = [];
 				const row = d.printing.row;
 				const cands = d.printing.candidates;
@@ -1757,6 +1778,12 @@
 			if (superseded()) return;
 
 			const newSlice = detectedCards.slice(firstIdx);
+			for (const card of newSlice) {
+				if (captureSession.finish !== 'unknown') {
+					card.finish = captureSession.finish;
+					card.foil = captureSession.finish === 'foil';
+				}
+			}
 			const counts = scanCounts(newSlice);
 			const summary = scanSummary(newSlice);
 			log(`Scan complete: ${summary}`);
@@ -1778,17 +1805,27 @@
 	// loadImage, fixOcrDigits, stripLeadingZeros, parseCollectorInfo,
 	// similarity, bestNameMatch, orderCorners all come from src/lib/scanner/.
 
-	async function addToCollection(cardId: string, cardName: string, foil: boolean = false, language = '') {
-		adding = cardId;
+	async function addToCollection(result: Record<string, unknown>, card: typeof detectedCards[number]) {
+		const cardId = result.id as string;
+		const cardName = result.name as string;
+		if (addedCards.some(a => a.captureId === card.captureId)) return true;
+		if (adding !== null) return false;
+		adding = card.captureId;
+		addError = '';
 		// The language the scan established (footer code with a real set, or a printed
 		// name matched in that language); the collection falls back to English.
-		await fetch('/collection', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ cardId, quantity: 1, condition: 'near_mint', foil, ...(language ? { language: language.toLowerCase() } : {}) })
-		});
-		adding = null;
-		addedCards = [...addedCards, { id: cardId, name: cardName }];
+		try {
+			const response = await fetch('/collection', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ cardId, quantity: 1, condition: card.session.condition, location: card.session.location,
+					foil: card.foil, language: card.language.toLowerCase() || 'en' })
+			});
+			if (!response.ok) throw new Error((await response.json()).message || 'Could not add card.');
+			addedCards = [...addedCards, { id: cardId, name: cardName, captureId: card.captureId }];
+			return true;
+		} catch (error) { addError = (error as Error).message; return false; }
+		finally { adding = null; }
 	}
 
 	function openManualSearch(cardIndex: number) {
@@ -1869,8 +1906,7 @@
 		for (let i = 0; i < detectedCards.length; i++) {
 			const card = detectedCards[i];
 			if (isImportable(card)) {
-				const selectedResult = card.results[card.selectedResultIdx];
-				if (!addedCards.some(a => a.id === selectedResult.id)) {
+				if (!addedCards.some(a => a.captureId === card.captureId)) {
 					next.add(i);
 				}
 			}
@@ -1879,15 +1915,14 @@
 	}
 
 	async function importAllSelected() {
+		if (importing || adding !== null) return;
 		importing = true;
 		for (const idx of selectedCards) {
 			const card = detectedCards[idx];
 			if (isImportable(card)) {
 				const result = card.results[card.selectedResultIdx];
-				const id = result.id as string;
-				const name = result.name as string;
-				if (!addedCards.some(a => a.id === id)) {
-					await addToCollection(id, name, card.foil, card.language);
+				if (!addedCards.some(a => a.captureId === card.captureId)) {
+					if (!await addToCollection(result, card)) break;
 				}
 			}
 		}
@@ -1983,6 +2018,8 @@
 	</div>
 
 	<!-- Upload / Live -->
+	<ScanSessionSettings bind:value={session} sets={data.sets} locations={data.locations} disabled={scanning} />
+	{#if addError}<p role="alert" class="text-red-400">{addError}</p>{/if}
 	{#if scanMode === 'live'}
 		<div class="flex items-center gap-2">
 			<span class="text-xs text-[var(--color-text-muted)]">Mode:</span>
@@ -2075,7 +2112,7 @@
 
 	<!-- Detected Cards -->
 	{#if detectedCards.length > 0}
-		{@const identifiedCount = detectedCards.filter(c => isImportable(c) && !addedCards.some(a => a.id === c.results[c.selectedResultIdx].id)).length}
+		{@const identifiedCount = detectedCards.filter(c => isImportable(c) && !addedCards.some(a => a.captureId === c.captureId)).length}
 		{@const hasIdentified = detectedCards.some(c => isImportable(c))}
 		{@const toConfirm = detectedCards.filter(c => c.status === 'likely' || c.status === 'conflict' || (c.status === 'found' && !isImportable(c))).length}
 		{#if !scanning && (identifiedCount > 0 || hasIdentified)}
@@ -2090,7 +2127,7 @@
 					</button>
 					{#if selectedCards.size > 0}
 						<button onclick={importAllSelected}
-							disabled={importing}
+							disabled={importing || adding !== null}
 							class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
 							{importing ? 'Importing...' : `Import ${selectedCards.size} selected`}
 						</button>
@@ -2139,7 +2176,7 @@
 					class="bg-[var(--color-surface)] rounded-lg border p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''} {card.status === 'likely' || card.status === 'conflict' ? 'border-yellow-500/40' : 'border-[var(--color-border)]'}">
 					<div class="flex flex-col sm:flex-row gap-4">
 						<!-- Selection checkbox for importable cards -->
-						{#if loggedIn && isImportable(card) && !addedCards.some(a => a.id === card.results[card.selectedResultIdx].id)}
+						{#if loggedIn && isImportable(card) && !addedCards.some(a => a.captureId === card.captureId)}
 							<div class="flex-shrink-0 pt-1">
 								<input type="checkbox" checked={selectedCards.has(origIdx)} onchange={() => toggleSelect(origIdx)}
 									class="w-5 h-5 rounded border-[var(--color-border)] accent-green-600 cursor-pointer" />
@@ -2172,6 +2209,7 @@
 
 						<!-- Result -->
 						<div class="flex-1">
+							<p class="text-xs text-[var(--color-text-muted)] mb-2 break-words">{card.session.setCode ? `Session set: ${card.session.setCode.toUpperCase()} · ` : ''}{card.session.condition.replaceAll('_', ' ')} · {card.session.location || 'Unassigned'}</p>
 							<h3 class="text-sm font-semibold mb-2 flex flex-wrap items-center gap-1">
 								<span>Card {origIdx + 1}</span>
 								{#if card.status === 'found'}
@@ -2216,13 +2254,13 @@
 								{#if card.status === 'likely'}
 									<p class="text-xs text-yellow-300 mb-2">Probably this card — the name and the collector line only agree partially. Tap "Accept" or "Not this card".</p>
 								{:else if card.status === 'conflict'}
-									<p class="text-xs text-red-400 mb-2">The name and the collector line point at different cards. Pick the right one or search manually.</p>
+									<p class="text-xs text-red-400 mb-2">The readings or your set restriction disagree. Review the printing before accepting it.</p>
 								{:else if card.results.length > 1 && card.printingState !== 'confirmed'}
 									<p class="text-xs text-yellow-300 mb-2">Several printings match — pick the right one before importing.</p>
 								{/if}
 								{#each card.results as result, rIdx}
 									{@const imgSrc = getImageSrc(result)}
-									{@const isAdded = addedCards.some((a) => a.id === result.id)}
+									{@const isAdded = addedCards.some((a) => a.captureId === card.captureId)}
 									{@const isSelected = isSelectedPrinting(card, rIdx)}
 									{@const hasMultiple = card.results.length > 1}
 									{@const offer = card.status === 'likely' || card.status === 'conflict'}
@@ -2245,9 +2283,8 @@
 										{/if}
 										<div class="flex-1 min-w-0">
 											<p class="font-semibold">{result.name}</p>
-											<p class="text-xs text-[var(--color-text-muted)]">
-												{result.set_name} ({(result.set_code as string).toUpperCase()}) #{result.collector_number}
-											</p>
+											<p class="text-sm font-medium">{(result.set_code as string).toUpperCase()} #{result.collector_number}</p>
+											<p class="text-xs text-[var(--color-text-muted)]">{result.set_name}{result.released_at ? ` · ${String(result.released_at).slice(0, 4)}` : ''}</p>
 										</div>
 										<PriceTag card={result as PriceFields} class="text-sm text-[var(--color-accent)]" />
 										{#if offer}
@@ -2269,11 +2306,11 @@
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 											{:else}
 												<button
-													onclick={(e) => { e.stopPropagation(); addToCollection(result.id as string, result.name as string, card.foil, card.language); }}
-													disabled={adding === result.id}
+													onclick={(e) => { e.stopPropagation(); addToCollection(result, card); }}
+													disabled={adding !== null || importing}
 													class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
 												>
-													{adding === result.id ? '...' : 'Add'}
+													{adding === card.captureId ? '...' : 'Add'}
 												</button>
 											{/if}
 										{/if}
@@ -2336,7 +2373,7 @@
 											<div class="space-y-1 mt-2">
 												{#each manualResults as result}
 													{@const imgSrc = getImageSrc(result)}
-													{@const isAdded = addedCards.some((a) => a.id === result.id)}
+													{@const isAdded = addedCards.some((a) => a.captureId === card.captureId)}
 													<div class="flex items-center gap-3 p-1.5 rounded hover:bg-[var(--color-surface-hover)]">
 														{#if imgSrc}
 															<CardPreview src={imgSrc} alt={result.name as string} scale={2}>
@@ -2352,7 +2389,8 @@
 															{#if isAdded}
 																<span class="text-green-400 text-xs">Added!</span>
 															{:else}
-																<button onclick={() => addToCollection(result.id as string, result.name as string, card.foil, card.language)}
+														<button onclick={() => addToCollection(result, card)}
+															disabled={adding !== null || importing}
 																	class="bg-green-600 hover:bg-green-700 px-2 py-0.5 rounded text-xs">Add</button>
 															{/if}
 														{/if}

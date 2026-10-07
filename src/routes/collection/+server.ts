@@ -4,6 +4,11 @@ import { priceDataCache } from '$lib/server/cache';
 import { parseLanguageInput } from '$lib/utils';
 import { ensureForeignPrice } from '$lib/server/foreign-prices';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
+import { cleanLocation } from '$lib/collection-fields';
+
+function locationInput(raw: unknown) {
+	try { return cleanLocation(raw); } catch { throw error(400, 'Invalid location.'); }
+}
 
 // Collection rows feed financial calculations and reference cards(id) via a
 // foreign key, so the user-supplied payload is validated rather than trusted: an
@@ -34,7 +39,7 @@ function cleanPurchasePrice(raw: unknown): number | null {
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { cardId, quantity, condition, foil, language, purchasePrice } = await request.json();
+	const { cardId, quantity, condition, foil, language, purchasePrice, location = '' } = await request.json();
 	if (typeof cardId !== 'string' || !sqlite.prepare('SELECT 1 FROM cards WHERE id = ?').get(cardId)) {
 		throw error(400, 'Unknown card');
 	}
@@ -42,7 +47,7 @@ export async function POST({ request, locals }) {
 
 	sqlite
 		.prepare(
-			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at, location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
 		)
 		.run(
 			locals.user.id,
@@ -52,7 +57,8 @@ export async function POST({ request, locals }) {
 			foil ? 1 : 0,
 			lang,
 			cleanPurchasePrice(purchasePrice),
-			new Date().toISOString()
+			new Date().toISOString(),
+			locationInput(location)
 		);
 
 	priceDataCache.invalidate(locals.user.id);
@@ -66,13 +72,13 @@ export async function POST({ request, locals }) {
 
 export async function PUT({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { id, quantity, condition, foil, language, notes, purchasePrice } = await request.json();
+	const { id, quantity, condition, foil, language, notes, purchasePrice, location } = await request.json();
 	if (!Number.isInteger(id)) throw error(400, 'Invalid id');
 	const lang = parseLanguageInput(language);
 
 	const result = sqlite
 		.prepare(
-			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ? WHERE id = ? AND user_id = ?'
+			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ?, location = COALESCE(?, location) WHERE id = ? AND user_id = ?'
 		)
 		.run(
 			cleanQuantity(quantity),
@@ -81,6 +87,7 @@ export async function PUT({ request, locals }) {
 			lang,
 			typeof notes === 'string' ? notes : null,
 			cleanPurchasePrice(purchasePrice),
+			location === undefined ? null : locationInput(location),
 			id,
 			locals.user.id
 		);

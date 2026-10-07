@@ -404,6 +404,32 @@ sees the outline. End to end (`live-harness.mjs`): the black card on the real
 mat photo and a dimmed black card scene are captured within a second and
 identified; the classic two-card fixture still reads 2 / 2.
 
+## Collector session workflow checks (2026-10-07)
+
+After `npm run build`, generate synthetic images with `make-synthetic.mjs`
+(or reuse the exact existing fixtures), then run:
+
+```bash
+node scripts/scanner-harness/collector-session-check.mjs data/mtg.db data/scanner-session-fixtures
+node scripts/collector-workflows-check.mjs
+```
+
+Set `PLAYWRIGHT_CHROMIUM_PATH` when using an installed Chromium browser.
+The scanner check opens the explicit source read-only, copies **catalogue
+tables only** into a fresh scratch database, and starts a separate production
+server. No existing collection is modified. It runs the real OCR pipeline and
+printing-selection checks, then checks captured session settings, set conflicts,
+save errors/retries, double-click protection and two copies of the same printing.
+Collection requests in the scanner check are intercepted; the separate collector
+check exercises real authenticated collection writes and CSV round-trips against
+synthetic data. Browser screenshots and results go to timestamped `data/` folders.
+
+The reused three synthetic images retain 6/6 identities and 4/6 printings with
+two open printings and no wrong automatic decisions against the full catalogue.
+These workflow checks do not replace real-photo baselines or physical-device
+validation. The scoring helper accepts both the former `Set (ABC) #123` label
+and the compact `ABC #123` printing label.
+
 ## German cards on the dark mat (phone session 2026-09-18)
 
 The owner scanned German Magic Origins and Battle for Zendikar cards on the

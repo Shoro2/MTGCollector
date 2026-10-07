@@ -46,6 +46,7 @@ export interface CollectionCard {
 	cardId: string;
 	quantity: number;
 	condition: string;
+	location: string;
 	foil: boolean;
 	language?: string;
 	purchasePrice?: number | null;

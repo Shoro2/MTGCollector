@@ -71,6 +71,7 @@ export const collectionCards = sqliteTable('collection_cards', {
 	foil: integer('foil', { mode: 'boolean' }).default(false),
 	language: text('language').default('en'),
 	purchasePrice: real('purchase_price'),
+	location: text('location').notNull().default(''),
 	notes: text('notes'),
 	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
 });

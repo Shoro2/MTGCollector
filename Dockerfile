@@ -16,6 +16,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
+# Allow collection imports up to 10 MB plus multipart overhead.
+ENV BODY_SIZE_LIMIT=12M
 # Non-root user for the process
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/build ./build
