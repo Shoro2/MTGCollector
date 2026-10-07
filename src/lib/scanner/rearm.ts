@@ -59,20 +59,35 @@ export function sameCardContent(a: ContentRect[], b: ContentRect[]): boolean {
 export class CaptureRearm {
 	private captured: ContentRect[] | null = null;
 	private pending: { kind: 'layout' | 'content'; since: number; samples: number; rects: ContentRect[] } | null = null;
+	private observation = 'not observed';
 	get waiting(): boolean { return this.captured !== null; }
+	/** Text-only diagnostics; distances describe image changes, never card identities. */
+	describe(now: number): string {
+		if (!this.captured) return 'armed';
+		const p = this.pending;
+		return `${this.observation}${p ? `; pending ${p.kind} ${p.samples} samples / ${Math.round(now - p.since)} ms` : '; no persistent change'}`;
+	}
 
 	/** The baseline must describe the frame actually handed to OCR, including its best-frame content. */
-	capture(rects: ContentRect[]): void { this.captured = snapshot(rects); this.pending = null; }
-	reset(): void { this.captured = null; this.pending = null; }
-	resetObservation(): void { this.pending = null; }
+	capture(rects: ContentRect[]): void { this.captured = snapshot(rects); this.resetObservation(); }
+	reset(): void { this.captured = null; this.resetObservation(); }
+	resetObservation(): void { this.pending = null; this.observation = 'not observed'; }
 
 	/** Null means no replacement. Invalid detections and brief occlusions never rearm. */
 	update(rects: ContentRect[], now: number, opts: { valid?: boolean; contentEligible?: boolean } = {}): 'layout' | 'content' | null {
 		if (!this.captured) return null;
-		if (opts.valid === false) { this.pending = null; return null; }
+		if (opts.valid === false) { this.observation = 'invalid detection'; this.pending = null; return null; }
 		let kind: 'layout' | 'content' | null = null;
-		if (sceneDiffers(this.captured, rects)) kind = 'layout';
-		else if (opts.contentEligible !== false && paired(this.captured, rects).some(([a, b]) => a.fingerprint && b.fingerprint && contentDistance(a.fingerprint, b.fingerprint) >= CONTENT_CHANGE_BITS)) kind = 'content';
+		if (sceneDiffers(this.captured, rects)) {
+			kind = 'layout';
+			this.observation = `layout changed (${this.captured.length} -> ${rects.length} rectangles)`;
+		} else {
+			const pairs = paired(this.captured, rects);
+			const distances = pairs.flatMap(([a, b]) => a.fingerprint && b.fingerprint ? [contentDistance(a.fingerprint, b.fingerprint)] : []);
+			const max = distances.length ? Math.max(...distances) : null;
+			this.observation = `content max=${max ?? 'unavailable'}/${CONTENT_CHANGE_BITS} bits, fingerprints=${distances.length}/${pairs.length}, eligible=${opts.contentEligible !== false}`;
+			if (opts.contentEligible !== false && max !== null && max >= CONTENT_CHANGE_BITS) kind = 'content';
+		}
 		if (!kind) { this.pending = null; return null; }
 		const p = this.pending;
 		const consistent = p && p.kind === kind && !sceneDiffers(p.rects, rects)

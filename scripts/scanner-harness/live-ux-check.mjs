@@ -8,6 +8,7 @@
 // collapsed, results still there) -> resume (no second capture of the card
 // that is still lying there). Exits 1 when an expectation fails.
 import { chromium } from 'playwright';
+import { writeFileSync } from 'node:fs';
 
 const [y4m, shot = 'live-ux'] = process.argv.slice(2);
 if (!y4m) throw new Error('usage: live-ux-check.mjs <clip.y4m> [screenshot-prefix]');
@@ -52,6 +53,10 @@ expect(JSON.stringify(cues.vibrate[0]) === '[35]', `capture cue vibrates first (
 expect(cues.vibrate.length === 2 && cues.vibrate[1].length >= 1, 'a result cue follows the capture cue');
 expect(cues.tones[0] === 880 && cues.tones.length >= 2, `capture tick, then result tone(s) (${JSON.stringify(cues.tones)})`);
 expect(await cameraOn(), 'camera is live while scanning');
+const receipt = page.locator('[data-capture-receipt]');
+const firstReceipt = await receipt.innerText();
+expect(await receipt.getAttribute('data-capture-receipt') === '1' && await receipt.getAttribute('data-capture-state') !== 'processing', 'real pipeline completes the numbered capture receipt');
+expect(/printing|Review needed/.test(firstReceipt) && firstReceipt.includes('Review results below'), 'receipt distinguishes established printings from review');
 
 // ---- pause: review mode ----
 await page.getByRole('button', { name: 'Pause camera' }).click();
@@ -61,6 +66,9 @@ expect(!(await cameraOn()), 'camera track is stopped (indicator off)');
 expect(await page.getByText('Camera paused').isVisible(), 'the paused panel is shown');
 expect(!(await page.locator('video').isVisible()), 'the viewfinder is collapsed');
 expect((await cardCount()) === cards, 'the scanned cards are still listed');
+expect(await receipt.isVisible() && await receipt.innerText() === firstReceipt, 'last capture and its result stay visible while paused');
+await page.mouse.move(0, 0); // avoid a hover preview after the camera collapses under the pointer
+await receipt.scrollIntoViewIfNeeded();
 await page.screenshot({ path: `${shot}-paused.png` });
 
 // ---- resume: same card still in view -> no second capture ----
@@ -77,9 +85,19 @@ await page.screenshot({ path: `${shot}-resumed.png` });
 const before = (await page.evaluate(() => window.__cues.tones.length));
 await page.getByLabel('Sound').uncheck();
 await page.getByRole('button', { name: 'Capture now' }).click();
-await page.waitForTimeout(1500);
+await page.waitForFunction(() => {
+	const r = document.querySelector('[data-capture-receipt="2"]');
+	return r && r.getAttribute('data-capture-state') !== 'processing';
+}, null, { timeout: 120000 });
+expect(await receipt.getAttribute('data-capture-receipt') === '2', 'silent manual capture has its own completed receipt');
 expect((await page.evaluate(() => window.__cues.tones.length)) === before, 'no tone with the sound switched off');
 expect((await page.evaluate(() => localStorage.getItem('mtg.scan.feedback')))?.includes('"sound":false'), 'the preference is stored');
+const scanLog = await page.locator('pre').textContent();
+expect(scanLog?.includes('capture #2') && scanLog.includes('Scan complete:'), 'saved debug log includes the real capture outcomes');
+writeFileSync(`${shot}-scan.log`, scanLog ?? '');
+await page.getByRole('button', { name: /^Clear captured/ }).click();
+await page.waitForTimeout(1500);
+expect(await receipt.getAttribute('data-capture-state') === 'none' && await cardCount() === 0, 'clearing results also clears the receipt without recapturing the same card');
 
 console.log('page errors:', errors.length ? errors.slice(0, 3) : 'none');
 await browser.close();

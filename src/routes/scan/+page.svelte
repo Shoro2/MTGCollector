@@ -352,16 +352,21 @@
 	}
 
 	/** The live scanner's exported methods (result cue). */
-	let liveScanner = $state<{ notifyResult: (identified: boolean) => void } | null>(null);
+	let liveScanner = $state<{
+		notifyResult: (captureId: number, established: boolean, detail: string, failed?: boolean) => void;
+		clearReceipt: () => void;
+	} | null>(null);
 
-	async function handleLiveCapture(canvas: HTMLCanvasElement, rects: QuickRect[] = []) {
+	function handleLiveCapture(canvas: HTMLCanvasElement, rects: QuickRect[], captureId: number): boolean {
 		// Don't reset detectedCards — captures accumulate. Skip if a previous
 		// capture is still being identified (the LiveScanner's busy prop also
 		// gates the auto-capture loop, but a manual click can race past it).
-		if (scanning) return;
+		if (scanning) return false;
 		manualResults = [];
 		manualCardIndex = null;
-		await processImage(canvas, rects);
+		const receiver = liveScanner;
+		void processImage(canvas, rects, (established, detail, failed) => receiver?.notifyResult(captureId, established, detail, failed));
+		return true;
 	}
 
 	/**
@@ -370,13 +375,14 @@
 	 * as steady on this very frame; when given, the six-strategy detection is
 	 * skipped and the cards are warped straight from them.
 	 */
-	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = []) {
+	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = [], onLiveResult?: (established: boolean, detail: string, failed?: boolean) => void) {
 		const captureSession = { ...session };
 		const myToken = ++scanToken;
 		const superseded = () => myToken !== scanToken;
 		scanning = true;
 		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
+		log(`Scan started: app version ${version}, mode=${scanMode}`);
 
 		try {
 			await loadOpenCV();
@@ -838,9 +844,9 @@
 				// The detected cards are indexed on a lattice via neighbour links (a
 				// tilted or foreshortened spread still indexes correctly), a mapping
 				// grid index -> image is fitted (affine, or a homography for a photo
-				// taken at an angle), and every unoccupied cell — one row/column
-				// beyond the detected extent included — becomes a card only when
-				// there is texture inside it. The lattice is a hypothesis: nothing is
+				// taken at an angle). Only gaps inside the observed extent may become
+				// cards when there is texture inside them. Background texture alone
+				// cannot establish an extra outer row. The lattice is a hypothesis: nothing is
 				// added when the detected cards do not sit on one.
 				if (scanMode === 'multiple' && cardContours.length >= 3) {
 					const quads = cardContours.map((c) => ({ corners: matCorners(c.corners) }));
@@ -939,7 +945,7 @@
 			if (cardContours.length === 0) {
 				log('No cards detected');
 				scanProgress = 'No cards detected. Try a clearer photo.';
-				if (scanMode === 'live') liveScanner?.notifyResult(false);
+				onLiveResult?.(false, 'No cards detected. Use Capture now to retry.');
 				scanning = false;
 				src.delete(); gray.delete();
 				return;
@@ -1788,10 +1794,16 @@
 			const summary = scanSummary(newSlice);
 			log(`Scan complete: ${summary}`);
 			// Second cue of a live capture (the first one sounded at the capture): everything identified, or look at the screen.
-			if (scanMode === 'live') liveScanner?.notifyResult(counts.total > 0 && counts.printings === counts.total);
+			const names = newSlice.filter((card) => card.status === 'found').map((card) => String(card.results[0]?.name ?? '')).filter(Boolean);
+			onLiveResult?.(counts.total > 0 && counts.printings === counts.total,
+				`${names.slice(0, 3).join('; ')}${names.length > 3 ? `; +${names.length - 3} more` : ''}${names.length ? ' — ' : ''}${summary}. Review results below before adding to your collection.`);
 			scanProgress = `Done! ${summary}.`;
 		} catch (err) {
-			scanProgress = `Error: ${(err as Error).message}`;
+			if (!superseded()) {
+				scanProgress = `Error: ${(err as Error).message}`;
+				log(`Scan failed: ${(err as Error).message}`);
+				onLiveResult?.(false, 'Identification failed. Use Capture now to retry.', true);
+			}
 		} finally {
 			// Don't clear the busy flag if a newer scan superseded us — that scan
 			// owns `scanning` now.
@@ -1931,6 +1943,8 @@
 	}
 
 	function reset() {
+		if (scanning) return;
+		liveScanner?.clearReceipt();
 		scanToken++; // invalidate any in-flight scan
 		if (imagePreview) URL.revokeObjectURL(imagePreview);
 		imagePreview = '';
@@ -2032,8 +2046,8 @@
 					class="px-3 py-1 text-xs rounded-md transition-colors bg-[var(--color-primary)] text-white">Live camera</button>
 			</div>
 			{#if detectedCards.length > 0}
-				<button type="button" onclick={reset}
-					class="ml-auto text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">
+				<button type="button" onclick={reset} disabled={scanning}
+					class="ml-auto text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline disabled:opacity-50">
 					Clear captured ({detectedCards.length})
 				</button>
 			{/if}
