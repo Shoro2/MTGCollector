@@ -9,7 +9,7 @@
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { rankNameMatches, realWordCount, setPrintedAliasSource, type PrintedAlias } from '$lib/scanner/similarity';
-	import { resolveCard, nameIdentifies, isStructural, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
+	import { resolveCard, nameIdentifies, isStructural, NAME_CERTAIN, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
 	import { artBoxOnWarp, hashArtPixels } from '$lib/scanner/phash';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
 	import { version } from '$app/environment';
@@ -18,6 +18,7 @@
 	import { COARSE_LONG_EDGE, COARSE_PASS, findCardQuads, isInnerBoxOf } from '$lib/scanner/quick-rects';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
+	import { isImportable, isSelectedPrinting, scanCounts, scanSummary } from '$lib/scanner/results';
 	import type { QuickRect } from '$lib/scanner/detect';
 	import { emptyCells, filterByDimensions, inferGrid } from '$lib/scanner/grid';
 
@@ -171,11 +172,6 @@
 		}
 		const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
 		return top && top[1] >= 3 && top[1] >= total * 0.6 ? top[0] : null;
-	}
-
-	/** A card the bulk actions may take: identity confirmed and exactly one printing established. */
-	function isImportable(card: { status: string; printingState: string; results: Array<Record<string, unknown>> }): boolean {
-		return card.status === 'found' && card.results.length > 0 && (card.results.length === 1 || card.printingState === 'confirmed');
 	}
 
 	/**
@@ -1287,9 +1283,8 @@
 					}
 				}
 			}
-			// Best rotated name OCR text per card, adopted when Phase 3 switches a
-			// card to its rotated warp because the collector line reads better there.
-			const rotatedNameText = new Map<number, string>();
+			// Best opposite-orientation name text, used if the footer changes the shown warp.
+			const alternateNameText = new Map<number, string>();
 
 			// Batch-search OCR name texts and accept the best match per card when
 			// it identifies the card on its own (nameIdentifies: score, name length,
@@ -1297,7 +1292,7 @@
 			// upside-down retry; returns the indices (relative to firstIdx) that
 			// resolved. The best few names of every pass are recorded as evidence
 			// for the fusion, so a close runner-up is never lost.
-			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string): Promise<number[]> {
+			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string, minScore = 0): Promise<number[]> {
 				const accepted: number[] = [];
 				if (items.length === 0 || superseded()) return accepted;
 				let batch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
@@ -1320,6 +1315,7 @@
 					const rankedNames = rankNameMatches(searchData.results, cleanName);
 					const best = rankedNames[0] ?? { name: '', score: 0 };
 					log(`Card ${firstIdx + i + 1} ${tag}: best match "${best.name}" score=${best.score.toFixed(3)}`);
+					if (best.score < minScore) return;
 					for (const m of rankedNames) noteNameCandidate(card, m, tag);
 					if (!nameIdentifies(best, cleanName)) return;
 					card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
@@ -1372,6 +1368,89 @@
 				return ocrNames(urls, pass.psm);
 			};
 
+			// Try the cheap rotated gray line before expensive preprocessing/engine passes.
+			// Only a certain name can short-circuit the upright alternatives here; weaker
+			// rotated reads retain the previous ordering and are retried from the cache.
+			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement };
+			const rotated = new Map<number, RotCrops>();
+			const originalNameText = new Map<number, string>();
+			const rotatedGrayText = new Map<number, string>();
+			for (const i of unresolved()) {
+				if (superseded()) break;
+				const original = cardCanvases[i];
+				const rot = document.createElement('canvas');
+				rot.width = original.width;
+				rot.height = original.height;
+				const rctx = rot.getContext('2d');
+				if (!rctx) continue;
+				rctx.translate(rot.width, rot.height);
+				rctx.rotate(Math.PI);
+				rctx.drawImage(original, 0, 0);
+				const rotMat = cv.imread(rot);
+				try {
+					rotated.set(i, { canvas: rot, ...extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`) });
+					originalNameText.set(i, detectedCards[firstIdx + i].nameText);
+				} finally { rotMat.delete(); }
+			}
+			const keepAlternate = (i: number) => {
+				const r = rotated.get(i);
+				if (!r) return;
+				const card = detectedCards[firstIdx + i];
+				card.altNameUrl = r.nameUrl;
+				card.altNameUrl2 = r.nameUrl2;
+				card.altNameUrl3 = r.nameUrl3;
+				card.altNameUrl4 = r.nameUrl4;
+				card.altBottomUrl = r.bottomUrl;
+				card.altBottomUrl2 = r.bottomUrl2;
+				card.altCroppedUrl = cardThumbnailUrl(r.canvas);
+			};
+			const adoptRotated = (i: number) => {
+				const r = rotated.get(i);
+				if (!r) return;
+				const card = detectedCards[firstIdx + i];
+				// Keep the opposite footer as evidence even when the rotated name resolves.
+				card.altNameUrl = card.nameUrl;
+				card.altNameUrl2 = card.nameUrl2;
+				card.altNameUrl3 = card.nameUrl3;
+				card.altNameUrl4 = card.nameUrl4;
+				card.altBottomUrl = card.bottomUrl;
+				card.altBottomUrl2 = card.bottomUrl2;
+				card.altCroppedUrl = card.croppedUrl;
+				alternateNameText.set(i, originalNameText.get(i) ?? '');
+				card.nameUrl = r.nameUrl;
+				card.nameUrl2 = r.nameUrl2;
+				card.nameUrl3 = r.nameUrl3;
+				card.nameUrl4 = r.nameUrl4;
+				card.bottomUrl = r.bottomUrl;
+				card.bottomUrl2 = r.bottomUrl2;
+				card.croppedUrl = cardThumbnailUrl(r.canvas);
+				bottomCanvases[i] = r.bottomCanvas;
+				cardCanvases[i] = r.canvas;
+				log(`Card ${firstIdx + i + 1}: accepted after 180° rotation`);
+			};
+			const runRotatedPass = async (pass: NamePass, minScore = 0) => {
+				const idx = [...rotated.keys()].filter((i) => detectedCards[firstIdx + i].results.length === 0);
+				if (idx.length === 0 || superseded()) return;
+				log(`Phase 2b: ${pass.tag} name OCR for ${idx.length} unresolved card(s)`);
+				scanProgress = `Retrying ${idx.length} card${idx.length === 1 ? '' : 's'} rotated...`;
+				const gray = pass.tag === 'rotated';
+				const texts = gray && idx.every((i) => rotatedGrayText.has(i))
+					? idx.map((i) => rotatedGrayText.get(i)!)
+					: await runNamePass(pass, idx.map((i) => pass.pick(rotated.get(i)!)));
+				const items: Array<{ i: number; cleanName: string }> = [];
+				idx.forEach((i, k) => {
+					if (gray) rotatedGrayText.set(i, texts[k]);
+					log(`Card ${firstIdx + i + 1} ${pass.tag} name OCR: "${texts[k]}"`);
+					const cleanName = cleanNameOf(texts[k]);
+					if (cleanName.length >= 2) items.push({ i, cleanName });
+					if (!alternateNameText.has(i) || realWordCount(cleanName) > realWordCount(alternateNameText.get(i) ?? '')) alternateNameText.set(i, cleanName);
+				});
+				// acceptNameMatches replaces nameText; save any improved upright fallback first.
+				for (const i of idx) originalNameText.set(i, detectedCards[firstIdx + i].nameText);
+				for (const i of await acceptNameMatches(items, pass.tag, minScore)) adoptRotated(i);
+			};
+			await runRotatedPass({ engine: 'tesseract', psm: '7', pick: (c) => c.nameUrl, tag: 'rotated' }, NAME_CERTAIN);
+
 			// Phase 2a: extra name passes for the cards the first pass didn't resolve.
 			for (const pass of extraNamePasses) {
 				const idx = unresolved();
@@ -1391,97 +1470,10 @@
 				await acceptNameMatches(items, pass.tag);
 			}
 
-			// Phase 2b: upside-down retry. orderCornersForCard() cannot tell a
-			// card's top from its bottom when the card lies sideways (or upside
-			// down): both short edges are geometrically identical, so about half
-			// of such cards leave the warp rotated 180° and their name OCR reads
-			// garbage. For every card the name search didn't resolve, re-crop the
-			// name band from the 180°-rotated warp, OCR it again (single-line pass,
-			// then raw-line pass) and search again; when that yields a real name,
-			// the rotated crops replace the originals so the bottom-line phase
-			// reads the right strip as well.
-			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement };
-			{
-				const retryIdx = unresolved();
-				if (retryIdx.length > 0 && !superseded()) {
-					log(`Phase 2b: upside-down retry for ${retryIdx.length} unresolved card(s) [${retryIdx.map((i) => `Card ${firstIdx + i + 1}`).join(', ')}]`);
-					scanProgress = `Retrying ${retryIdx.length} card${retryIdx.length === 1 ? '' : 's'} rotated...`;
-					const rotated = new Map<number, RotCrops>();
-					for (const i of retryIdx) {
-						const original = cardCanvases[i];
-						const rot = document.createElement('canvas');
-						rot.width = original.width;
-						rot.height = original.height;
-						const rctx = rot.getContext('2d');
-						if (!rctx) continue;
-						rctx.translate(rot.width, rot.height);
-						rctx.rotate(Math.PI);
-						rctx.drawImage(original, 0, 0);
-						const rotMat = cv.imread(rot);
-						try {
-							const crops = extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`);
-							rotated.set(i, { canvas: rot, ...crops });
-						} finally {
-							rotMat.delete();
-						}
-					}
-					// Whether or not the rotated name resolves, keep the rotated crops:
-					// Phase 3 reads the collector line in both orientations for cards
-					// that are still unresolved, so an unreadable name doesn't waste a
-					// perfectly legible "C 0156 TMT EN" on the other side.
-					for (const [i, r] of rotated) {
-						const card = detectedCards[firstIdx + i];
-						card.altNameUrl = r.nameUrl;
-						card.altNameUrl2 = r.nameUrl2;
-						card.altNameUrl3 = r.nameUrl3;
-						card.altNameUrl4 = r.nameUrl4;
-						card.altBottomUrl = r.bottomUrl;
-						card.altBottomUrl2 = r.bottomUrl2;
-						card.altCroppedUrl = cardThumbnailUrl(r.canvas);
-					}
-					// Switch a card to its rotated warp once the rotated name matched.
-					const adopt = (i: number) => {
-						const r = rotated.get(i);
-						if (!r) return;
-						const card = detectedCards[firstIdx + i];
-						card.altNameUrl = undefined;
-						card.altNameUrl2 = undefined;
-						card.altNameUrl3 = undefined;
-						card.altNameUrl4 = undefined;
-						card.altBottomUrl = undefined;
-						card.altBottomUrl2 = undefined;
-						card.altCroppedUrl = undefined;
-						card.nameUrl = r.nameUrl;
-						card.nameUrl2 = r.nameUrl2;
-						card.nameUrl3 = r.nameUrl3;
-						card.nameUrl4 = r.nameUrl4;
-						card.bottomUrl = r.bottomUrl;
-						card.bottomUrl2 = r.bottomUrl2;
-						card.croppedUrl = cardThumbnailUrl(r.canvas);
-						bottomCanvases[i] = r.bottomCanvas;
-						cardCanvases[i] = r.canvas;
-						log(`Card ${firstIdx + i + 1}: accepted after 180° rotation`);
-					};
-					// Same passes as upright: gray single line first, then the extra passes.
-					const passes: Array<{ engine: 'tesseract' | 'paddle'; psm: '7' | '13'; pick: (r: RotCrops) => string; tag: string }> = [
-						{ engine: 'tesseract', psm: '7', pick: (r) => r.nameUrl, tag: 'rotated' },
-						...extraNamePasses.map((p) => ({ engine: p.engine, psm: p.psm, pick: (r: RotCrops) => p.pick(r), tag: `rotated ${p.tag}` }))
-					];
-					for (const pass of passes) {
-						const idx = [...rotated.keys()].filter((i) => detectedCards[firstIdx + i].results.length === 0);
-						if (idx.length === 0 || superseded()) break;
-						const texts = await runNamePass({ ...pass, pick: (c: NameCrops) => c.nameUrl }, idx.map((i) => pass.pick(rotated.get(i)!)));
-						const items: Array<{ i: number; cleanName: string }> = [];
-						idx.forEach((i, k) => {
-							log(`Card ${firstIdx + i + 1} ${pass.tag} name OCR: "${texts[k]}"`);
-							const cleanName = cleanNameOf(texts[k]);
-							if (cleanName.length >= 2) items.push({ i, cleanName });
-							if (!rotatedNameText.has(i) || realWordCount(cleanName) > realWordCount(rotatedNameText.get(i) ?? '')) rotatedNameText.set(i, cleanName);
-						});
-						for (const i of await acceptNameMatches(items, pass.tag)) adopt(i);
-					}
-				}
-			}
+			// Remaining rotated variants run only after the upright alternatives.
+			for (const i of unresolved()) keepAlternate(i);
+			await runRotatedPass({ engine: 'tesseract', psm: '7', pick: (c) => c.nameUrl, tag: 'rotated' });
+			for (const pass of extraNamePasses) await runRotatedPass({ ...pass, tag: `rotated ${pass.tag}` });
 			detectedCards = [...detectedCards];
 
 			// Phase 3: OCR the collector strips (every variant), then fuse all
@@ -1560,7 +1552,7 @@
 						card.nameUrl3 = card.altNameUrl3;
 						card.nameUrl4 = card.altNameUrl4;
 						card.croppedUrl = card.altCroppedUrl;
-						const rt = rotatedNameText.get(i);
+						const rt = alternateNameText.get(i);
 						if (rt !== undefined && realWordCount(rt) >= realWordCount(card.nameText)) card.nameText = rt;
 					}
 				}
@@ -1765,12 +1757,12 @@
 			if (superseded()) return;
 
 			const newSlice = detectedCards.slice(firstIdx);
-			const identifiedCount = newSlice.filter((c) => c.status === 'found').length;
-			const likelyCount = newSlice.filter((c) => c.status === 'likely' || c.status === 'conflict').length;
-			log(`Scan complete: ${identifiedCount}/${newSlice.length} identified${likelyCount ? `, ${likelyCount} to confirm` : ''}`);
+			const counts = scanCounts(newSlice);
+			const summary = scanSummary(newSlice);
+			log(`Scan complete: ${summary}`);
 			// Second cue of a live capture (the first one sounded at the capture): everything identified, or look at the screen.
-			if (scanMode === 'live') liveScanner?.notifyResult(newSlice.length > 0 && identifiedCount === newSlice.length);
-			scanProgress = `Done! ${identifiedCount} of ${newSlice.length} identified${likelyCount ? `, ${likelyCount} to confirm` : ''}.`;
+			if (scanMode === 'live') liveScanner?.notifyResult(counts.total > 0 && counts.printings === counts.total);
+			scanProgress = `Done! ${summary}.`;
 		} catch (err) {
 			scanProgress = `Error: ${(err as Error).message}`;
 		} finally {
@@ -2231,19 +2223,19 @@
 								{#each card.results as result, rIdx}
 									{@const imgSrc = getImageSrc(result)}
 									{@const isAdded = addedCards.some((a) => a.id === result.id)}
-									{@const isSelected = card.status === 'found' && rIdx === card.selectedResultIdx}
+									{@const isSelected = isSelectedPrinting(card, rIdx)}
 									{@const hasMultiple = card.results.length > 1}
 									{@const offer = card.status === 'likely' || card.status === 'conflict'}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<div
-										onclick={() => { if (!offer && hasMultiple) { card.selectedResultIdx = rIdx; card.printingState = 'confirmed'; detectedCards = [...detectedCards]; } }}
+										onclick={() => { if (!offer && hasMultiple && isImportable(card)) { card.selectedResultIdx = rIdx; detectedCards = [...detectedCards]; } }}
 										class="flex items-center gap-4 p-2 rounded-lg border transition-all
 											{hasMultiple ? 'cursor-pointer' : ''}
 											{isSelected
 												? 'bg-[var(--color-bg)] border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]'
 												: hasMultiple
-													? 'bg-[var(--color-bg)] border-[var(--color-border)] opacity-40 hover:opacity-70'
+													? `bg-[var(--color-bg)] border-[var(--color-border)] ${isImportable(card) ? 'opacity-40 hover:opacity-70' : 'hover:border-[var(--color-primary)]'}`
 													: 'bg-[var(--color-bg)] border-[var(--color-border)]'}"
 									>
 										{#if imgSrc}
@@ -2265,7 +2257,14 @@
 											>
 												Accept
 											</button>
-										{:else if loggedIn && isSelected}
+											{:else if !isSelected}
+												<button
+													onclick={(e) => { e.stopPropagation(); card.selectedResultIdx = rIdx; card.printingState = 'confirmed'; detectedCards = [...detectedCards]; }}
+													class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded-lg text-sm transition-colors"
+												>
+													Select printing
+												</button>
+											{:else if loggedIn && isSelected}
 											{#if isAdded}
 												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
 											{:else}

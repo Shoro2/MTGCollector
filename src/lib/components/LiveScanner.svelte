@@ -4,6 +4,7 @@
 	import { createQuickDetector, DETECT_WORKER_URL, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { SceneStabilizer, sceneDiffers, sceneSignature } from '$lib/scanner/stability';
+	import { CaptureRearm, sameCardContent } from '$lib/scanner/rearm';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
 	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
 	import { canVibrate, createScanFeedback, loadFeedbackPrefs, saveFeedbackPrefs, type FeedbackPrefs } from '$lib/scanner/feedback';
@@ -100,7 +101,7 @@
 	let bestQuality: FrameQuality | null = null;
 	let bestAt = 0;
 
-	let needSceneChange = false;
+	const rearm = new CaptureRearm();
 	// Telemetry for the uploaded scan log: every few seconds one line says how many frames were
 	// analysed, in how many a card was found (and by which pass), how long detection took and what
 	// kept auto-capture waiting. A phone session had 10-25 s waits the log could not explain.
@@ -112,8 +113,6 @@
 		log?.(`${((now - stats.since) / 1000).toFixed(1)} s: ${stats.frames} frames, card found in ${stats.withRects} (fine pass ${stats.fine}, coarse pass ${stats.coarse}), detect ${(stats.detectMs / stats.frames).toFixed(0)} ms avg${top ? `; waiting: ${top}` : ''}`);
 		stats = { since: now, frames: 0, withRects: 0, fine: 0, coarse: 0, detectMs: 0, waiting: new Map() };
 	}
-	/** Layout at the last capture; auto-capture re-arms only once the layout really differs from it. */
-	let capturedRects: QuickRect[] = [];
 
 	const TARGET_FPS = 6;
 	const FRAME_INTERVAL_MS = 1000 / TARGET_FPS;
@@ -215,6 +214,7 @@
 		captureCanvas = document.createElement('canvas');
 		stabilizer.reset();
 		resetBestFrame();
+		rearm.resetObservation();
 		scheduleFrame();
 	}
 
@@ -242,7 +242,7 @@
 		detector?.dispose();
 		detector = null;
 		detectorMode = '';
-		needSceneChange = false;
+		rearm.reset();
 		streamW = 0;
 		streamH = 0;
 		status = 'idle';
@@ -314,9 +314,9 @@
 		}
 		lastDetectAt = ts;
 
-		// Skip if a previous detect call is still running, or the parent
-		// pipeline is busy with a full capture.
-		if (detector.busy || busy || videoEl.readyState < 2) {
+		// Continue observing while OCR is busy: the user can replace a card as soon as
+		// the capture cue sounds. Only the next capture waits for the pipeline.
+		if (detector.busy || videoEl.readyState < 2) {
 			drawOverlay();
 			scheduleFrame();
 			return;
@@ -362,14 +362,17 @@
 		ctx.drawImage(scratchCanvas, 0, 0, aw, ah);
 
 		let quality: FrameQuality = { sharpness: 0, glare: 0, score: 0 };
+		let valid = true;
 		const detectStart = performance.now();
 		try {
 			const result = await detector.detect(analyzeCanvas, { coordScale: vw / aw });
 			lastRects = result.rects;
 			quality = result.quality;
+			valid = result.valid !== false;
 		} catch (err) {
 			log?.(`live detect error: ${err}`);
 			lastRects = [];
+			valid = false;
 		}
 		if (status !== 'live') return; // stopped while the frame was analysed
 		if (stats.frames === 0 && stats.since === 0) stats.since = ts;
@@ -382,9 +385,19 @@
 		}
 
 		const now = ts;
-		stabilizer.update(lastRects, now);
 		const edgeMargin = Math.max(4, EDGE_MARGIN_FRAC * Math.min(vw, vh));
 		cutOff = lastRects.map((r) => touchesFrameEdge(r.rect, vw, vh, edgeMargin));
+		const changed = rearm.update(lastRects, now, {
+			valid,
+			contentEligible: stabilizer.isStable(lastRects, now) && !cutOff.some(Boolean) && quality.glare < 0.03 && quality.sharpness > 0
+		});
+		if (changed) {
+			// A sharper frame of the previous card must never stand in for its replacement.
+			resetBestFrame();
+			stabilizer.reset();
+			log?.(`auto-capture rearmed: ${changed === 'content' ? 'new card content at the same position' : 'card layout changed'}`);
+		}
+		stabilizer.update(lastRects, now);
 		lastRectCount = lastRects.length;
 		drawOverlay();
 
@@ -395,7 +408,10 @@
 		// Best-frame bookkeeping. The selector only compares frames of the same
 		// scene, so a sharp frame from before the cards were put down never
 		// stands in for the scene that is captured.
-		if (!sceneId) {
+		if (!sceneId || busy) {
+			// Several replacements can occur during OCR after the capture lock has rearmed.
+			// Start the next capture's best-frame window on the first idle frame, so an
+			// intermediate card at the same position cannot supply its stored image.
 			resetBestFrame();
 			qualityHint = '';
 		} else {
@@ -425,35 +441,29 @@
 		}
 
 		const anyCutOff = cutOff.some(Boolean);
-		if (lastRects.length > MAX_AUTO_CAPTURE_RECTS) {
+		if (!valid) {
+			holdReason = 'card detection unavailable';
+		} else if (busy) {
+			holdReason = 'processing the previous capture';
+		} else if (lastRects.length === 0) {
+			holdReason = 'no card found';
+		} else if (lastRects.length > MAX_AUTO_CAPTURE_RECTS) {
 			holdReason = 'too many rectangles';
 		} else if (anyCutOff) {
 			holdReason = 'card cut off at the edge';
+		} else if (rearm.waiting) {
+			holdReason = 'waiting for a card change';
+		} else if (!autoCapture) {
+			holdReason = 'auto-capture off';
+		} else if (!stable) {
+			holdReason = 'not steady yet';
 		} else {
 			holdReason = '';
 		}
 
-		// Re-arm only when the layout really changed since the capture: the
-		// cards left the frame (picked up and put back), a card moved by half
-		// its short edge, or the count changed. Re-arming on the fingerprint
-		// alone captured the same card three times in a row on a phone — hand
-		// jitter crosses a fingerprint cell all the time.
-		if (needSceneChange && (lastRects.length === 0 || sceneDiffers(capturedRects, lastRects))) {
-			needSceneChange = false;
-		}
-		const capturing = stable && !needSceneChange && autoCapture && !busy && !holdReason;
+		const capturing = stable && autoCapture && !busy && !holdReason;
 		if (!capturing) {
-			const why = busy
-				? 'processing the previous capture'
-				: lastRects.length === 0
-					? 'no card found'
-					: holdReason
-						? holdReason
-						: needSceneChange
-							? 'same card as the last capture'
-							: !autoCapture
-								? 'auto-capture off'
-								: 'not steady yet';
+			const why = holdReason || 'not steady yet';
 			stats.waiting.set(why, (stats.waiting.get(why) ?? 0) + 1);
 		}
 		if (now - stats.since >= STATS_EVERY_MS) flushStats(now);
@@ -496,7 +506,7 @@
 		captureCanvas.height = vh;
 		const ctx = captureCanvas.getContext('2d');
 		if (!ctx) return;
-		const best = bestCanvas && bestQuality && bestSceneRects !== null && !sceneDiffers(bestSceneRects, rects) && rects.length > 0
+		const best = bestCanvas && bestQuality && bestSceneRects !== null && !sceneDiffers(bestSceneRects, rects) && sameCardContent(bestRects, rects)
 			&& bestCanvas.width === vw && bestCanvas.height === vh
 			? { canvas: bestCanvas, quality: bestQuality }
 			: null;
@@ -508,8 +518,7 @@
 		} else {
 			ctx.drawImage(videoEl, 0, 0, vw, vh);
 		}
-		needSceneChange = true;
-		capturedRects = lastRects;
+		rearm.capture(handedRects.length ? handedRects : lastRects);
 		feedback.play('capture');
 		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
 		onCapture(captureCanvas, [...handedRects]);
@@ -628,7 +637,7 @@
 			<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-white text-xs" data-quality-hint={qualityHint}>
 				{lastRectCount} card{lastRectCount === 1 ? '' : 's'} · steady {Math.round(stableProgress * 100)}%
 				{#if holdReason}
-					<span class="text-red-300"> · {holdReason}</span>
+					<span class={holdReason === 'card cut off at the edge' || holdReason === 'too many rectangles' ? 'text-red-300' : 'text-yellow-200'}> · {holdReason}</span>
 				{/if}
 				{#if qualityHint === 'blurry'}
 					<span class="text-yellow-300"> · blurry, hold still</span>
@@ -693,6 +702,6 @@
 	</div>
 
 	<p class="text-xs text-[var(--color-text-muted)]" class:hidden={status === 'paused'}>
-		Hold one or more cards upright in front of the camera, fully inside the frame. Yellow outlines mean detected, green means steady, red means the card is cut off at the edge (move back a little). With auto-capture enabled, identification fires as soon as the scene holds still and uses the sharpest recent frame; the badge warns about blur and glare. Move the cards out of frame and back in to capture again.
+		Hold one or more cards upright in front of the camera, fully inside the frame. Yellow outlines mean detected, green means steady, red means the card is cut off at the edge (move back a little). After the capture cue, replace the card while it is being identified. A different card can stay in the same position. If the next card is not captured automatically, move it out of frame briefly and back in, or use Capture now. The badge shows what auto-capture is waiting for.
 	</p>
 </div>
