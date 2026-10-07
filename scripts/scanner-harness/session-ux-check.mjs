@@ -18,15 +18,24 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const wrapper = `<script>
 import LiveScanner from '${root.replaceAll('\\', '/')}/src/lib/components/LiveScanner.svelte';
 let busy = $state(false);
-window.sessionTest.setBusy = (value) => { busy = value; };
-function capture(canvas, rects) {
+let scanner;
+window.sessionTest.complete = (id, established, detail, failed = false) => scanner.notifyResult(id, established, detail, failed);
+window.sessionTest.clear = () => scanner.clearReceipt();
+window.sessionTest.setBusy = (value) => {
+  busy = value;
+  const last = window.sessionTest.captures.at(-1);
+  if (!value && last) scanner.notifyResult(last.id, true, 'Card ' + last.card + ' — printing confirmed');
+};
+function capture(canvas, rects, id) {
+  if (busy || window.sessionTest.rejectCapture) return false;
   const p = canvas.getContext('2d').getImageData(640, 360, 1, 1).data;
   const card = p[0] > p[1] && p[0] > p[2] ? 'A' : p[2] > p[0] && p[2] > p[1] ? 'B' : 'C';
-  window.sessionTest.captures.push({ card, pixel: [...p], rects: rects.length, at: performance.now() });
+  window.sessionTest.captures.push({ id, card, pixel: [...p], rects: rects.length, at: performance.now() });
   busy = true;
+  return true;
 }
 </script>
-<LiveScanner {busy} onCapture={capture} log={(message) => window.sessionTest.logs.push(message)} />`;
+<LiveScanner bind:this={scanner} {busy} onCapture={capture} log={(message) => window.sessionTest.logs.push(message)} />`;
 
 const detector = `
 import { cardFingerprint } from '${root.replaceAll('\\', '/')}/src/lib/scanner/rearm.ts';
@@ -72,7 +81,22 @@ try {
  const errors = [];
  page.on('pageerror', (e) => errors.push(e.message));
  await page.addInitScript(() => {
-  const s = window.sessionTest = { card: 'A', offset: 0, brightness: 1, blank: false, invalid: false, captures: [], logs: [] };
+  const s = window.sessionTest = { card: 'A', offset: 0, brightness: 1, blank: false, invalid: false, captures: [], logs: [], tones: [], audioAllowed: false };
+  // Simulate a browser which needs another gesture to allow audio. The real
+  // feedback module schedules oscillators; this double records that request.
+  window.AudioContext = class {
+   state = 'suspended'; currentTime = 0; destination = {}; onstatechange = null;
+   resume() {
+    if (!s.audioAllowed) return new Promise(() => {});
+    this.state = 'running'; this.onstatechange?.(); return Promise.resolve();
+   }
+   close() { this.state = 'closed'; return Promise.resolve(); }
+   createOscillator() {
+    const osc = { frequency: { value: 0 }, connect() {}, disconnect() {}, stop() {}, start() { s.tones.push(osc.frequency.value); } };
+    return osc;
+   }
+   createGain() { return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {} }, connect() {}, disconnect() {} }; }
+  };
   const camera = document.createElement('canvas'); camera.width = 1280; camera.height = 720;
   const c = camera.getContext('2d');
   function draw() {
@@ -103,13 +127,23 @@ try {
  const assert = (ok, message) => { if (!ok) throw new Error(message); console.log('ok  ' + message); };
  await waitCount(1);
  assert(await page.evaluate(() => window.sessionTest.captures[0].card === 'A'), 'first capture contains A');
+ assert(await page.locator('[data-capture-state="processing"]').innerText().then(t => t.includes('Capture #1')), 'capture receipt is visible while audio is blocked and OCR is busy');
+ await page.waitForTimeout(400);
+ assert(await page.evaluate(() => window.sessionTest.tones.length === 0), 'blocked audio does not silently queue a capture tone');
+ await set({audioAllowed:true});
+ await page.getByRole('button', {name:'Enable sound'}).click();
+ await page.waitForFunction(() => window.sessionTest.tones.length === 1);
+ assert(await page.getByRole('button', {name:'Test sound'}).isVisible(), 'explicit sound tap resumes audio and offers a test');
  // Parent remains busy; jitter, exposure and a brief invalid detection must not unlock A.
  await set({offset: 3, brightness: .85}); await page.waitForTimeout(1100);
  await set({invalid: true}); await page.waitForTimeout(180); await set({invalid: false,offset: -3,brightness: 1.1});
  await page.waitForTimeout(1100); await set({offset: 0,brightness: 1}); await release();
  await page.waitForTimeout(1500);
  assert(await count() === 1, 'jitter, exposure and a transient detector error do not duplicate A');
+ assert(await page.locator('[data-capture-state="confirmed"]').innerText().then(t => t.includes('Card A')), 'last confirmed card stays visible while waiting for a replacement');
+ assert(await page.evaluate(() => window.sessionTest.logs.some(l => l.includes('rearm: content max=') && l.includes('content check:'))), 'waiting telemetry includes content distance and comparison eligibility');
  await page.getByRole('button', {name: 'Pause camera'}).click();
+ assert(await page.locator('[data-capture-receipt="1"]').isVisible(), 'pause keeps the capture receipt visible');
  await page.getByRole('button', {name: 'Resume camera'}).click();
  await page.waitForTimeout(2200);
  assert(await count() === 1, 'pause/resume does not duplicate A');
@@ -143,6 +177,27 @@ try {
  await page.getByRole('button',{name:'Capture now'}).click();
  await waitCount(5);
  assert(await page.evaluate(() => window.sessionTest.captures[4].card === 'B'), 'manual capture rejects a sharper cached frame of a different card');
+ await release();
+ const tonesBefore = await page.evaluate(() => window.sessionTest.tones.length);
+ await set({rejectCapture:true});
+ await page.getByRole('button',{name:'Capture now'}).click();
+ assert(await count() === 5 && await page.locator('[data-capture-receipt="5"]').count() === 1, 'declined handoff does not count as a capture or change the receipt');
+ assert(await page.evaluate(() => window.sessionTest.tones.length) === tonesBefore, 'declined handoff does not play a capture cue');
+ await set({rejectCapture:false});
+ await page.getByRole('button',{name:'Capture now'}).click(); await waitCount(6);
+ await page.evaluate(() => window.sessionTest.complete(5, true, 'Stale result'));
+ assert(await page.locator('[data-capture-receipt="6"][data-capture-state="processing"]').count() === 1, 'stale completion cannot replace the current receipt');
+ await page.evaluate(() => window.sessionTest.complete(6, false, 'Identification failed. Use Capture now to retry.', true));
+ await release();
+ assert(await page.locator('[data-capture-state="failed"]').innerText().then(t => t.includes('retry')), 'failed identification is visibly distinct from a confirmed card');
+ await page.getByRole('button',{name:'Capture now'}).click(); await waitCount(7);
+ await page.evaluate(() => window.sessionTest.complete(7, false, 'Card B — choose its printing below'));
+ await release();
+ assert(await page.locator('[data-capture-state="review"]').innerText().then(t => t.includes('choose its printing')), 'unresolved printing stays a review result and manual retry succeeds');
+ assert(await page.evaluate(() => window.sessionTest.logs.some(l => l.includes('feedback capture: scheduled (audio=running)'))), 'audio scheduling is recorded separately from the capture receipt');
+ await page.evaluate(() => window.sessionTest.clear());
+ await page.getByLabel('Auto-capture').check(); await page.waitForTimeout(1500);
+ assert(await page.locator('[data-capture-state="none"]').count() === 1 && await count() === 7, 'clearing reviewed receipts does not automatically duplicate the last card');
  assert(errors.length === 0, 'no browser errors: ' + errors.join('; '));
  console.log('PASS: component integration with simulated detection and OCR busy state.');
 } finally {

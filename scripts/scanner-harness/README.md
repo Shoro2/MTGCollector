@@ -64,7 +64,7 @@ node scripts/scanner-harness/live-harness.mjs fixtures/live-scene.y4m live-resul
 node scripts/scanner-harness/live-ux-check.mjs fixtures/live-scene.y4m
 
 # Live component integration: replacements during processing, no stale cached card,
-# duplicate prevention, pause/resume and manual capture (14 assertions).
+# duplicate prevention, pause/resume, capture receipts, audio recovery and manual capture.
 # Uses actual Svelte/canvas/fingerprint code with controlled detector/OCR-busy doubles.
 node scripts/scanner-harness/session-ux-check.mjs
 
@@ -86,6 +86,39 @@ UI/capture integration; they do not measure real OpenCV detection or OCR accurac
 On 2026-10-04, the same three synthetic photos against the full local catalogue
 before and after the session fixes produced 6/6 identities, 4/6 established
 printings, 2 open printings and no wrong automatic identities or printings.
+
+### Phone-log follow-up (2026-10-08)
+
+The latest multi-card upload used app version `1791118748151`, predating the
+early rotated-name pass. It took 58.5 seconds, starting its rotated retry at
+32.7 seconds. Fourteen contours became seventeen candidates after grid fill:
+one interior gap `(3,1)` and two outer proposals `(-1,0)` / `(5,2)` that passed
+the texture check. The photo was not retained, so the full detection/OCR run
+cannot be replayed. `grid.test.ts` pins the fourteen logged quads: the new
+default retains the interior proposal and excludes the outer ones. Entirely
+undetected outer rows now require actual contour evidence; this does not
+prove that all false rectangles are eliminated.
+
+The live session used app version `1791411326784`, with ten accepted captures
+and ten completed results, each reporting a confirmed identity and printing.
+Five identities confirmed in the multi-card scan never appeared among these
+live captures. Old logs cannot establish whether any tone was audible or which
+replacement was missed. Capture receipts now distinguish accepted images,
+completed results, review and failure. Text-only diagnostics record audio state,
+tone scheduling, capture IDs, fingerprint distance, content eligibility and
+pending replacement observations. The 26-bit change threshold is unchanged.
+
+Verification uses the same three synthetic JPEGs and a catalogue-only copy of
+the frozen catalogue used for the 2026-10-07 workflow check: 6/6 identities,
+4/6 established printings, two open, zero wrong and zero extra detections,
+unchanged. The sideways fixture uses the early rotated pass before any Phase 2a
+preprocessing or PaddleOCR. The component check covers blocked audio, explicit
+resume, no delayed stale cue, declined handoffs, stale completions, failed scans,
+review, clearing receipts and manual retries. `live-ux-check.mjs` exercises the
+real production pipeline with a synthetic camera clip, records oscillator calls
+and saves screenshots plus a text scan log. These checks establish software
+behavior, not physical-phone audibility or improved real-photo recognition.
+The real-photo development/hold-out baselines and a new phone run remain open.
 The real-photo development/hold-out baselines were not rerun for that change.
 
 `rearm-experiment.mjs <live-log> [output-dir]` downloads the public catalogue

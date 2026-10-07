@@ -17,8 +17,8 @@
  *    better (a phone photo taken at an angle foreshortens the far rows). The
  *    lattice is only accepted when the detected cards actually sit on it
  *    (small residuals, few off-grid cards) and the cards are not wider than
- *    their pitch. `emptyCells()` then enumerates the unoccupied cells, one
- *    row/column beyond the detected extent, as perspective-correct quads.
+ *    their pitch. `emptyCells()` then enumerates unoccupied cells inside
+ *    the detected extent as perspective-correct quads.
  *    Nothing is filled to an expected count: the caller still has to find
  *    evidence (texture) inside every cell before it becomes a card.
  *
@@ -53,8 +53,6 @@ export type GridHypothesis = {
 export type GridCell = { row: number; col: number; corners: Point[]; rect: Box };
 
 export type InferGridOptions = {
-	/** Also offer cells one row/column beyond the detected extent. Default true. */
-	extrapolate?: boolean;
 	/** A card whose centre is further than this fraction of the pitch from its cell is off-grid. Default 0.25. */
 	maxResidual?: number;
 	/** Reject the lattice when more than this fraction of the cards is off-grid. Default 0.2. */
@@ -619,7 +617,9 @@ export function emptyCells(
 	frame: { width: number; height: number },
 	opts: { extrapolate?: boolean; marginFrac?: number; maxOverlap?: number } = {}
 ): GridCell[] {
-	const extrapolate = opts.extrapolate ?? true;
+	// Contrast alone cannot distinguish an outer card from a textured mat.
+	// Fill interior gaps by default; callers testing extrapolation must opt in.
+	const extrapolate = opts.extrapolate ?? false;
 	const marginFrac = opts.marginFrac ?? 0.05;
 	const maxOverlap = opts.maxOverlap ?? 0.3;
 	const cardBounds = cards.map((c) => quadBounds(c.corners));

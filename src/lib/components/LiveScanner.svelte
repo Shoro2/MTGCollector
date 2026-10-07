@@ -7,7 +7,7 @@
 	import { CaptureRearm, sameCardContent } from '$lib/scanner/rearm';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
 	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
-	import { canVibrate, createScanFeedback, loadFeedbackPrefs, saveFeedbackPrefs, type FeedbackPrefs } from '$lib/scanner/feedback';
+	import { canVibrate, createScanFeedback, loadFeedbackPrefs, saveFeedbackPrefs, type AudioState, type FeedbackPrefs } from '$lib/scanner/feedback';
 
 	type Props = {
 		/**
@@ -16,8 +16,10 @@
 		 * in the canvas's pixel coordinates, so the caller can skip its own
 		 * (much slower) detection pass. It is empty when the capture was
 		 * forced while the scene was still moving — run full detection then.
+		 * Return true synchronously when accepted, then report completion with
+		 * notifyResult(captureId, ...). A declined handoff produces no cue or lock.
 		 */
-		onCapture: (canvas: HTMLCanvasElement, rects: QuickRect[]) => void;
+		onCapture: (canvas: HTMLCanvasElement, rects: QuickRect[], captureId: number) => boolean;
 		busy?: boolean;
 		log?: (msg: string) => void;
 	};
@@ -46,16 +48,36 @@
 	// "not identified". Preferences live in localStorage; vibration is offered where the browser has it.
 	let feedbackPrefs = $state<FeedbackPrefs>({ sound: true, vibration: true });
 	let vibrationAvailable = $state(false);
-	const feedback = createScanFeedback(() => feedbackPrefs);
+	let audioState = $state<AudioState>('suspended');
+	let captureSequence = 0;
+	let receipt = $state<{ id: number; state: 'processing' | 'confirmed' | 'review' | 'failed'; detail: string } | null>(null);
+	const processing = $derived(busy || receipt?.state === 'processing');
+	const feedback = createScanFeedback(() => feedbackPrefs, {
+		log: (message) => log?.(`capture #${receipt?.id ?? 0}: ${message}`),
+		onState: (state) => { audioState = state; }
+	});
 	function setFeedbackPref(key: keyof FeedbackPrefs, value: boolean) {
 		feedbackPrefs = { ...feedbackPrefs, [key]: value };
+		log?.(`feedback preference: ${key}=${value}`);
 		saveFeedbackPrefs(feedbackPrefs, typeof localStorage === 'undefined' ? null : localStorage);
 		feedback.unlock();
-		if (value) feedback.play('capture'); // a preview of what was just switched on
+		if (value) void feedback.play('capture'); // a preview of what was just switched on
+	}
+	function testSound() {
+		log?.('sound test requested');
+		feedback.unlock();
+		void feedback.play('capture');
+	}
+	/** Clearing reviewed results must not trigger another automatic scan of the same card. */
+	export function clearReceipt() {
+		if (!processing) receipt = null;
 	}
 	/** Called by the page when the pipeline has finished a live capture. */
-	export function notifyResult(identified: boolean) {
-		feedback.play(identified ? 'identified' : 'unresolved');
+	export function notifyResult(captureId: number, established: boolean, detail: string, failed = false) {
+		if (receipt?.id !== captureId || receipt.state !== 'processing') return;
+		receipt = { id: captureId, state: failed ? 'failed' : established ? 'confirmed' : 'review', detail };
+		log?.(`capture #${captureId} ${receipt.state}: ${detail}`);
+		void feedback.play(established && !failed ? 'identified' : 'unresolved');
 	}
 	let errorTitle = $state('');
 	let errorMsg = $state('');
@@ -106,11 +128,13 @@
 	// analysed, in how many a card was found (and by which pass), how long detection took and what
 	// kept auto-capture waiting. A phone session had 10-25 s waits the log could not explain.
 	const STATS_EVERY_MS = 3000;
+	let contentCheckReason = 'not observed';
 	let stats = { since: 0, frames: 0, withRects: 0, fine: 0, coarse: 0, detectMs: 0, waiting: new Map<string, number>() };
 	function flushStats(now: number) {
 		if (stats.frames === 0) return;
 		const top = [...stats.waiting.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}x`).join(', ');
 		log?.(`${((now - stats.since) / 1000).toFixed(1)} s: ${stats.frames} frames, card found in ${stats.withRects} (fine pass ${stats.fine}, coarse pass ${stats.coarse}), detect ${(stats.detectMs / stats.frames).toFixed(0)} ms avg${top ? `; waiting: ${top}` : ''}`);
+		if (rearm.waiting) log?.(`capture #${receipt?.id ?? 0} rearm: ${rearm.describe(now)}; content check: ${contentCheckReason}`);
 		stats = { since: now, frames: 0, withRects: 0, fine: 0, coarse: 0, detectMs: 0, waiting: new Map() };
 	}
 
@@ -387,9 +411,12 @@
 		const now = ts;
 		const edgeMargin = Math.max(4, EDGE_MARGIN_FRAC * Math.min(vw, vh));
 		cutOff = lastRects.map((r) => touchesFrameEdge(r.rect, vw, vh, edgeMargin));
+		contentCheckReason = !stabilizer.isStable(lastRects, now) ? 'not steady'
+			: cutOff.some(Boolean) ? 'cut off' : quality.glare >= 0.03 ? 'glare'
+			: quality.sharpness <= 0 ? 'no sharpness' : 'eligible';
 		const changed = rearm.update(lastRects, now, {
 			valid,
-			contentEligible: stabilizer.isStable(lastRects, now) && !cutOff.some(Boolean) && quality.glare < 0.03 && quality.sharpness > 0
+			contentEligible: contentCheckReason === 'eligible'
 		});
 		if (changed) {
 			// A sharper frame of the previous card must never stand in for its replacement.
@@ -408,7 +435,7 @@
 		// Best-frame bookkeeping. The selector only compares frames of the same
 		// scene, so a sharp frame from before the cards were put down never
 		// stands in for the scene that is captured.
-		if (!sceneId || busy) {
+		if (!sceneId || processing) {
 			// Several replacements can occur during OCR after the capture lock has rearmed.
 			// Start the next capture's best-frame window on the first idle frame, so an
 			// intermediate card at the same position cannot supply its stored image.
@@ -443,7 +470,7 @@
 		const anyCutOff = cutOff.some(Boolean);
 		if (!valid) {
 			holdReason = 'card detection unavailable';
-		} else if (busy) {
+		} else if (processing) {
 			holdReason = 'processing the previous capture';
 		} else if (lastRects.length === 0) {
 			holdReason = 'no card found';
@@ -461,7 +488,7 @@
 			holdReason = '';
 		}
 
-		const capturing = stable && autoCapture && !busy && !holdReason;
+		const capturing = stable && autoCapture && !processing && !holdReason;
 		if (!capturing) {
 			const why = holdReason || 'not steady yet';
 			stats.waiting.set(why, (stats.waiting.get(why) ?? 0) + 1);
@@ -498,7 +525,7 @@
 	 * of glare), otherwise the live frame as it is right now.
 	 */
 	function triggerCapture(sceneId: string, rects: QuickRect[], now: number) {
-		if (!videoEl || !captureCanvas) return;
+		if (processing || !videoEl || !captureCanvas) return;
 		const vw = videoEl.videoWidth;
 		const vh = videoEl.videoHeight;
 		if (vw === 0 || vh === 0) return;
@@ -518,10 +545,24 @@
 		} else {
 			ctx.drawImage(videoEl, 0, 0, vw, vh);
 		}
+		const previous = receipt;
+		const id = captureSequence + 1;
+		receipt = { id, state: 'processing', detail: 'Identifying captured image…' };
+		try {
+			if (!onCapture(captureCanvas, [...handedRects], id)) {
+				receipt = previous;
+				log?.(`capture #${id} declined: pipeline busy`);
+				return;
+			}
+		} catch (err) {
+			receipt = previous;
+			log?.(`capture #${id} handoff failed: ${err}`);
+			return;
+		}
+		captureSequence = id;
 		rearm.capture(handedRects.length ? handedRects : lastRects);
-		feedback.play('capture');
-		log?.(`Live capture ${vw}x${vh} (${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
-		onCapture(captureCanvas, [...handedRects]);
+		void feedback.play('capture');
+		log?.(`Live capture ${vw}x${vh} (#${id} accepted, ${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
 	}
 
 	function drawOverlay() {
@@ -648,14 +689,23 @@
 		{/if}
 	</div>
 
+	<div aria-live="polite" aria-atomic="true" data-capture-receipt={receipt?.id ?? 0} data-capture-state={receipt?.state ?? 'none'} class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm break-words">
+		{#if receipt}
+			<p class="font-medium">Capture #{receipt.id} · {receipt.state === 'processing' ? 'Identifying…' : receipt.state === 'confirmed' ? 'Printing confirmed' : receipt.state === 'failed' ? 'Scan failed' : 'Review needed'}</p>
+			<p class="text-[var(--color-text-muted)]">{receipt.detail}</p>
+		{:else}
+			<p>No captures to review. Each new capture will be numbered here.</p>
+		{/if}
+	</div>
+
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-2" class:hidden={status === 'paused'}>
 		<button
 			type="button"
 			onclick={captureNow}
-			disabled={status !== 'live' || busy}
+			disabled={status !== 'live' || processing}
 			class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] disabled:opacity-50 px-4 py-2 rounded-lg text-sm transition-colors"
 		>
-			{busy ? 'Identifying...' : 'Capture now'}
+			{processing ? 'Identifying...' : 'Capture now'}
 		</button>
 
 		<button
@@ -677,6 +727,14 @@
 			<input type="checkbox" checked={feedbackPrefs.sound} onchange={(e) => setFeedbackPref('sound', (e.target as HTMLInputElement).checked)} class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]" />
 			<span class="text-[var(--color-text-muted)]">Sound</span>
 		</label>
+		{#if feedbackPrefs.sound}
+			<button type="button" onclick={testSound} class="text-xs underline text-[var(--color-primary)]">
+				{audioState === 'running' ? 'Test sound' : 'Enable sound'}
+			</button>
+			{#if audioState !== 'running'}
+				<span class="text-xs text-[var(--color-text-muted)]" data-audio-state={audioState}>{audioState === 'unavailable' ? 'Sound unavailable in this browser' : 'Tap Enable sound to allow scan tones'}</span>
+			{/if}
+		{/if}
 		{#if vibrationAvailable}
 			<label class="flex items-center gap-2 cursor-pointer select-none text-sm">
 				<input type="checkbox" checked={feedbackPrefs.vibration} onchange={(e) => setFeedbackPref('vibration', (e.target as HTMLInputElement).checked)} class="w-4 h-4 rounded border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]" />

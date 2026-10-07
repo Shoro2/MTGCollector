@@ -66,6 +66,35 @@ describe('filterByDimensions', () => {
 });
 
 describe('inferGrid + emptyCells', () => {
+	it('fills the interior gap in the logged phone spread without inventing outer rows', () => {
+		// Detection geometry from 2026-10-07 22:23 UTC. No photo was retained.
+		// The old default offered (-1,0) and (5,2), whose texture passed the
+		// contrast check. (3,1) is the missing cell inside the 5x3 spread.
+		const corners: Point[][] = [
+			[[857,3430],[854,2969],[1474,2946],[1479,3397]],
+			[[847,1033],[837,577],[1459,585],[1467,1038]],
+			[[834,1648],[822,1202],[1444,1189],[1454,1635]],
+			[[837,2240],[837,1792],[1457,1792],[1452,2238]],
+			[[1603,1005],[1600,559],[2205,564],[2205,1013]],
+			[[1600,3389],[1605,2946],[2208,2943],[2200,3384]],
+			[[1618,1633],[1615,1192],[2215,1187],[2218,1625]],
+			[[1598,2202],[1595,1764],[2195,1756],[2197,2192]],
+			[[1613,2790],[1613,2354],[2205,2351],[2202,2782]],
+			[[35,3372],[28,2966],[640,2926],[648,3347]],
+			[[35,2780],[30,2374],[643,2349],[648,2767]],
+			[[66,1003],[68,592],[658,595],[665,1023]],
+			[[68,2202],[53,1799],[660,1812],[653,2230]],
+			[[83,1623],[86,1220],[668,1220],[670,1641]]
+		];
+		const cards = corners.map(corners => ({ corners }));
+		const frame = { width: 2268, height: 4032 };
+		const grid = inferGrid(cards, frame)!;
+		expect([grid.rows, grid.cols]).toEqual([5, 3]);
+		const old = emptyCells(grid, cards, frame, { extrapolate: true }).map(c => `${c.row},${c.col}`);
+		expect(old).toContain('-1,0');
+		expect(old).toContain('5,2');
+		expect(emptyCells(grid, cards, frame).map(c => `${c.row},${c.col}`)).toEqual(['3,1']);
+	});
 	const frame = { width: 600, height: 660 };
 
 	it('recovers the missing cells of a flat 3x4 lattice without extrapolating into the frame border', () => {
@@ -92,7 +121,7 @@ describe('inferGrid + emptyCells', () => {
 		// The frame ends 50 px left of the lattice and 40 px above it, so the
 		// extrapolated row -1 / column -1 would leave the frame; the cells to
 		// the right and below fit (600 x 660 leaves room for one more each).
-		const extra = emptyCells(h!, cards, frame);
+		const extra = emptyCells(h!, cards, frame, { extrapolate: true });
 		const keys = extra.map((c) => `${c.row},${c.col}`);
 		expect(keys).toContain('0,4');
 		expect(keys).toContain('3,1');

@@ -15,6 +15,19 @@ it('rejects a best frame of the previous card, including manual captures with au
 });
 
 describe('CaptureRearm', () => {
+	it('explains waiting, ineligible content and pending replacements without changing the capture decision', () => {
+		const r = new CaptureRearm(); r.capture([card()]);
+		r.update([card()], 0);
+		expect(r.describe(0)).toContain('content max=0/26 bits');
+		r.update([card(b)], 200, { contentEligible: false });
+		expect(r.describe(200)).toContain('eligible=false; no persistent change');
+		r.update([{ rect: card().rect }], 300);
+		expect(r.describe(300)).toContain('fingerprints=0/1');
+		r.update([card(b)], 400); r.update([card(b)], 700);
+		expect(r.describe(700)).toContain('pending content 2 samples / 300 ms');
+		expect(r.update([card(b)], 1100)).toBe('content');
+		expect(r.describe(1100)).toBe('armed');
+	});
 	it('does not rearm on a persistent changed outline of the same real card', () => {
 		// Orcish Bowmasters LTR #433, independent ±2% corner errors in the reference experiment.
 		const first = { hash: '49e8c4e4c89d78ea', rotatedHash: '3c46914e9d372f42' };

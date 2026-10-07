@@ -63,47 +63,90 @@ export function canVibrate(): boolean {
 export type ScanFeedback = {
 	/** Create / resume the audio context; call from a user gesture (tap, click). */
 	unlock(): void;
-	play(cue: FeedbackCue): void;
+	play(cue: FeedbackCue): Promise<void>;
 	dispose(): void;
 };
 
-export function createScanFeedback(getPrefs: () => FeedbackPrefs): ScanFeedback {
+export type AudioState = AudioContextState | 'unavailable';
+
+export function createScanFeedback(getPrefs: () => FeedbackPrefs, options: {
+	log?: (message: string) => void;
+	onState?: (state: AudioState) => void;
+} = {}): ScanFeedback {
 	let ctx: AudioContext | null = null;
+	let cueId = 0;
+	let disposed = false;
+	const log = (message: string) => { try { options.log?.(message); } catch { /* diagnostics must not interrupt scanning */ } };
+	const reportState = () => { try { options.onState?.(ctx?.state ?? 'unavailable'); } catch { /* best effort */ } };
 	const audio = (): AudioContext | null => {
-		if (ctx) return ctx;
+		if (disposed) return null;
+		if (ctx && ctx.state !== 'closed') return ctx;
 		if (typeof window === 'undefined') return null;
 		const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 		if (!AC) return null;
 		try {
+			if (ctx) ctx.onstatechange = null;
 			ctx = new AC();
+			ctx.onstatechange = () => {
+				log(`audio state: ${ctx?.state ?? 'unavailable'}`);
+				reportState();
+			};
 		} catch {
 			ctx = null;
 		}
+		reportState();
 		return ctx;
 	};
-	const resume = (c: AudioContext) => {
-		if (c.state === 'suspended') void c.resume().catch(() => {});
+	const resume = (c: AudioContext): Promise<void> => {
+		if (c.state === 'running') return Promise.resolve();
+		try {
+			// Retry during each user gesture even if an earlier resume is still
+			// pending: that earlier call may not have had playback permission.
+			return c.resume().catch(() => {
+				log('audio resume rejected');
+			}).finally(reportState);
+		} catch {
+			log('audio resume failed');
+			return Promise.resolve();
+		}
 	};
 	return {
 		unlock() {
 			const c = audio();
-			if (c) resume(c);
+			if (c) void resume(c);
+			reportState();
 		},
-		play(cue) {
+		async play(cue) {
+			if (disposed) return;
+			const id = ++cueId;
 			const prefs = getPrefs();
 			const pattern = FEEDBACK_CUES[cue];
+			let vibration = prefs.vibration ? 'unavailable' : 'off';
 			if (prefs.vibration && canVibrate()) {
 				try {
-					navigator.vibrate(pattern.vibrate);
+					vibration = navigator.vibrate(pattern.vibrate) ? 'requested' : 'rejected';
 				} catch {
-					/* ignored */
+					vibration = 'failed';
 				}
 			}
-			if (!prefs.sound) return;
+			log(`feedback ${cue}: sound=${prefs.sound ? 'on' : 'off'}, audio=${ctx?.state ?? 'unavailable'}, vibration=${vibration}`);
+			if (!prefs.sound || disposed) return;
 			const c = audio();
-			if (!c) return;
+			if (!c) { log(`feedback ${cue}: audio unavailable`); reportState(); return; }
 			try {
-				resume(c);
+				if (c.state !== 'running') {
+					// A browser may leave resume() pending until a tap. Never queue old
+					// scan cues on its frozen clock to play together much later.
+					let timer: ReturnType<typeof setTimeout> | undefined;
+					try {
+						await Promise.race([resume(c), new Promise<void>((resolve) => { timer = setTimeout(resolve, 300); })]);
+					} finally { clearTimeout(timer); }
+				}
+				if (disposed || id !== cueId || !getPrefs().sound || c.state !== 'running') {
+					log(`feedback ${cue}: not scheduled (audio=${c.state}, superseded=${id !== cueId})`);
+					reportState();
+					return;
+				}
 				let t = c.currentTime + 0.01;
 				for (const tone of pattern.tones) {
 					const osc = c.createOscillator();
@@ -119,16 +162,20 @@ export function createScanFeedback(getPrefs: () => FeedbackPrefs): ScanFeedback 
 					gain.connect(c.destination);
 					osc.start(t);
 					osc.stop(end + 0.02);
+					osc.onended = () => { osc.disconnect(); gain.disconnect(); };
 					t = end + 0.03;
 				}
+				log(`feedback ${cue}: scheduled (audio=running)`);
 			} catch {
-				/* a blocked or closed context must not break the scan */
+				log(`feedback ${cue}: audio scheduling failed`);
 			}
 		},
 		dispose() {
+			disposed = true;
+			cueId++;
 			const c = ctx;
 			ctx = null;
-			if (c) void c.close().catch(() => {});
+			if (c) { c.onstatechange = null; try { void c.close().catch(() => {}); } catch { /* already closed */ } }
 		}
 	};
 }
