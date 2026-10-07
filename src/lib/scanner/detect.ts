@@ -67,13 +67,13 @@ function createMainThreadDetector(): QuickDetector {
 			return busy;
 		},
 		async detect(canvas, opts = {}) {
-			if (busy) return { rects: [], quality: EMPTY_QUALITY };
+			if (busy) return { rects: [], quality: EMPTY_QUALITY, valid: false };
 			busy = true;
 			try {
 				await loadOpenCV();
 				const cv = (window as unknown as { cv: any }).cv;
 				const pixels = readPixels(canvas);
-				if (!pixels) return { rects: [], quality: EMPTY_QUALITY };
+				if (!pixels) return { rects: [], quality: EMPTY_QUALITY, valid: false };
 				return detectOnPixels(cv, pixels.data, pixels.width, pixels.height, opts);
 			} finally {
 				busy = false;
@@ -165,13 +165,13 @@ function createWorkerDetector(worker: Worker, log?: (msg: string) => void): Quic
 		}
 		if (msg.type !== 'result' || !pending || msg.id !== pending.id) return;
 		if (msg.error) log?.(`detection worker error: ${msg.error}`);
-		settle({ rects: msg.rects ?? [], quality: msg.quality ?? EMPTY_QUALITY });
+		settle({ rects: msg.rects ?? [], quality: msg.quality ?? EMPTY_QUALITY, valid: !msg.error });
 	};
 	worker.onerror = (e: ErrorEvent) => {
 		log?.(`detection worker crashed (${e.message}); continuing on the main thread`);
 		dead = true;
 		worker.terminate();
-		settle({ rects: [], quality: EMPTY_QUALITY });
+		settle({ rects: [], quality: EMPTY_QUALITY, valid: false });
 	};
 
 	return {
@@ -183,9 +183,9 @@ function createWorkerDetector(worker: Worker, log?: (msg: string) => void): Quic
 		},
 		async detect(canvas, opts = {}) {
 			if (dead) return fallback.detect(canvas, opts);
-			if (busy) return { rects: [], quality: EMPTY_QUALITY };
+			if (busy) return { rects: [], quality: EMPTY_QUALITY, valid: false };
 			const pixels = readPixels(canvas);
-			if (!pixels) return { rects: [], quality: EMPTY_QUALITY };
+			if (!pixels) return { rects: [], quality: EMPTY_QUALITY, valid: false };
 			busy = true;
 			const id = nextId++;
 			return new Promise<QuickDetection>((resolve) => {
@@ -193,7 +193,7 @@ function createWorkerDetector(worker: Worker, log?: (msg: string) => void): Quic
 					log?.('detection worker timed out; continuing on the main thread');
 					dead = true;
 					worker.terminate();
-					settle({ rects: [], quality: EMPTY_QUALITY });
+					settle({ rects: [], quality: EMPTY_QUALITY, valid: false });
 				}, WORKER_DETECT_TIMEOUT_MS);
 				pending = { id, resolve, timer };
 				// Transfer the pixel buffer instead of copying ~1 MB per frame.
@@ -204,7 +204,7 @@ function createWorkerDetector(worker: Worker, log?: (msg: string) => void): Quic
 		dispose() {
 			dead = true;
 			worker.terminate();
-			settle({ rects: [], quality: EMPTY_QUALITY });
+			settle({ rects: [], quality: EMPTY_QUALITY, valid: false });
 		}
 	};
 }
