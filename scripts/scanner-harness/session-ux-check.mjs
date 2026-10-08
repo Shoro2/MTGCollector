@@ -24,7 +24,7 @@ window.sessionTest.clear = () => scanner.clearReceipt();
 window.sessionTest.setBusy = (value) => {
   busy = value;
   const last = window.sessionTest.captures.at(-1);
-  if (!value && last) scanner.notifyResult(last.id, true, 'Card ' + last.card + ' — printing confirmed');
+  if (!value && last) scanner.notifyResult(last.id, true, 'Card ' + last.card + ' — printing confirmed', false, last.card);
 };
 function capture(canvas, rects, id) {
   if (busy || window.sessionTest.rejectCapture) return false;
@@ -48,13 +48,20 @@ export async function createQuickDetector() {
   const scale = canvas.width / 1280, x = 430 + s.offset, y = 70;
   const corners = [[x,y],[x+420,y],[x+420,y+580],[x,y+580]];
   const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
-  const fingerprint = cardFingerprint(pixels,canvas.width,canvas.height,corners.map(([a,b])=>[a*scale,b*scale]));
+  const fingerprint = s.coarseCollision ? {hash:'0000000000000000',rotatedHash:'0000000000000000'} : cardFingerprint(pixels,canvas.width,canvas.height,corners.map(([a,b])=>[a*scale,b*scale]));
   const factor = scale * (opts.coordScale ?? 1);
   return { rects:[{corners:corners.map(([a,b])=>[a*factor,b*factor]),rect:{x:x*factor,y:y*factor,width:420*factor,height:580*factor},fingerprint,source:'fine'}],
     quality:{sharpness:s.card === 'A' ? 120 : 60,glare:0,score:s.card === 'A' ? 120 : 60} };
  }};
 }`;
 
+const probe = `export async function probeLiveIdentity() {
+ const s=window.sessionTest, name=s.probeUnknown ? null : s.card;
+ s.probes=(s.probes||0)+1;
+ await new Promise(r=>setTimeout(r,s.probeDelay||30));
+ if(s.probeFail) throw new Error('Fixture network failure');
+ return name;
+}`;
 const bundle = await build({
  stdin: { contents: "import { mount } from 'svelte'; import App from 'session-wrapper'; mount(App,{target:document.body});", resolveDir: root },
  bundle: true, write: false, format: 'iife', platform: 'browser', conditions: ['browser'],
@@ -62,9 +69,9 @@ const bundle = await build({
   b.onResolve({ filter: /^session-wrapper$/ }, () => ({ path: 'session-wrapper', namespace: 'test' }));
   b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: compile(wrapper, { filename: 'SessionCheck.svelte', generate: 'client' }).js.code, resolveDir: root }));
   b.onResolve({ filter: /^\$app\/environment$/ }, () => ({ path: 'app-environment', namespace: 'mock' }));
-  b.onResolve({ filter: /^\$lib\/scanner\/(detect|opencv)$/ }, (a) => ({ path: a.path.endsWith('/detect') ? 'detect' : 'opencv', namespace: 'mock' }));
+  b.onResolve({ filter: /^\$lib\/scanner\/(detect|opencv|live-identity)$/ }, (a) => ({ path: a.path.split('/').at(-1), namespace: 'mock' }));
   b.onResolve({ filter: /^\$lib\// }, (a) => ({ path: resolve(root, 'src/lib', a.path.slice(5) + '.ts') }));
-  b.onLoad({ filter: /.*/, namespace: 'mock' }, (a) => ({ contents: a.path === 'detect' ? detector : a.path === 'opencv' ? 'export async function loadOpenCV() {}' : "export const version='session-check';", resolveDir: root }));
+  b.onLoad({ filter: /.*/, namespace: 'mock' }, (a) => ({ contents: a.path === 'live-identity' ? probe : a.path === 'detect' ? detector : a.path === 'opencv' ? 'export async function loadOpenCV() {}' : "export const version='session-check';", resolveDir: root }));
   b.onLoad({ filter: /\.svelte$/ }, async (a) => ({ contents: compile(await readFile(a.path, 'utf8'), { filename: a.path, generate: 'client' }).js.code, resolveDir: dirname(a.path) }));
  }}]
 });
@@ -198,6 +205,36 @@ try {
  await page.evaluate(() => window.sessionTest.clear());
  await page.getByLabel('Auto-capture').check(); await page.waitForTimeout(1500);
  assert(await page.locator('[data-capture-state="none"]').count() === 1 && await count() === 7, 'clearing reviewed receipts does not automatically duplicate the last card');
+ // A and B now have deliberately colliding coarse fingerprints. The reference probe
+ // still reads the current synthetic identity; it must unlock B without repeating A.
+ await page.getByLabel('Auto-capture').uncheck();
+ await page.getByRole('button',{name:'Pause camera',exact:true}).click();
+ await set({coarseCollision:true, card:'A'});
+ await page.getByRole('button',{name:'Resume camera',exact:true}).click(); await page.waitForTimeout(1200);
+ await page.getByRole('button',{name:'Capture now'}).click(); await waitCount(8); await release();
+ await page.getByLabel('Auto-capture').check(); await page.waitForTimeout(3300);
+ assert(await count() === 8, 'same reference identity does not rearm despite repeated checks');
+ await set({card:'B'}); await waitCount(9); await release();
+ assert(await page.evaluate(()=>window.sessionTest.captures[8].card === 'B'), 'reference identity captures a replacement despite colliding coarse hashes');
+ await page.waitForTimeout(2000);
+ assert(await count() === 9, 'new reference identity is not repeatedly captured');
+ await set({card:'A',probeUnknown:true}); await page.waitForTimeout(3400);
+ assert(await count() === 9, 'uncertain artwork evidence cannot unlock a capture');
+ await set({probeUnknown:false,probeFail:true}); await page.waitForTimeout(2000);
+ assert(await count() === 9, 'failed reference requests cannot unlock a capture');
+ await set({probeFail:false,probeDelay:2800});
+ const beforeProbe=await page.evaluate(()=>window.sessionTest.probes);
+ await page.waitForFunction(n=>window.sessionTest.probes>n,beforeProbe);
+ await page.getByRole('button',{name:'Pause camera',exact:true}).click();
+ await set({card:'B',probeDelay:30});
+ await page.getByRole('button',{name:'Resume camera',exact:true}).click();
+ await page.waitForTimeout(3600);
+ assert(await count() === 9, 'late reference response from before pause cannot rearm the resumed same card');
+ await page.getByLabel('Auto-capture').uncheck();
+ await set({card:'A'}); await page.waitForTimeout(2600);
+ assert(await count() === 9, 'reference checks respect disabled auto-capture');
+ await page.getByLabel('Auto-capture').check(); await waitCount(10); await release();
+ assert(await page.evaluate(()=>window.sessionTest.captures[9].card === 'A'), 'auto-capture resumes and captures the new identity once');
  assert(errors.length === 0, 'no browser errors: ' + errors.join('; '));
  console.log('PASS: component integration with simulated detection and OCR busy state.');
 } finally {

@@ -244,3 +244,21 @@ describe('parseCollectorInfo — padded number and lookalike set codes', () => {
 		expect(r.numberSource).toBe('padded');
 	});
 });
+
+
+describe('phone footer regressions (2026-10-08)', () => {
+ it('preserves a complete Secret Lair number before a stray symbol read as a digit', () => {
+  expect(parse('R 7009 4 SLD * EN TyLrg WALPOLE')).toMatchObject({ setCode:'sld', collectorNumber:'7009', numberSource:'rarity', rarity:'r' });
+ });
+ it('does not turn an old copyright line into structural collector evidence', () => {
+  expect(parse('1US. Jvlll C1993 1599 Wizards of')).toMatchObject({numberSource:'weak', rarity:''});
+ });
+ it('keeps a real year-shaped collector number when anchored in the modern footer', () => {
+  expect(parse('C 2025 SLD EN')).toMatchObject({collectorNumber:'2025', numberSource:'rarity', rarity:'c'});
+ });
+ it('still joins fragmented short numbers and retains number/total pairs', () => {
+  expect(parse('C 0 045 TMT EN')).toMatchObject({collectorNumber:'45', numberSource:'rarity'});
+  expect(parse('040 277 C MID EN')).toMatchObject({collectorNumber:'40', numberSource:'pair'});
+  expect(parse('R 70094 SLD EN').numberSource).not.toBe('rarity');
+ });
+});

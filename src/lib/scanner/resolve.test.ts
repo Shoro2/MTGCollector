@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveCard, numberCompatible, rarityAgrees, type FooterReading, type ResolveInput } from './resolve';
+import { parseCollectorInfo } from './parse';
 
 const row = (name: string, set: string, num: string, rarity = 'common') => ({ id: `${set}-${num}`, name, set_code: set, collector_number: num, rarity });
 const reading = (o: Partial<FooterReading>): FooterReading => ({
@@ -42,6 +43,20 @@ describe('numberCompatible / rarityAgrees', () => {
 });
 
 describe('resolveCard', () => {
+	it('recovers Smothering Tithe from the logged footer instead of the misleading Blood Tithe name', () => {
+		const cards = [row('Smothering Tithe', 'sld', '7009', 'rare'), row('Blood Tithe', 'm11', '84'), row("Kozilek's Shrieker", 'ogw', '73')];
+		const text = 'R 7009 4 SLD * EN TyLrg WALPOLE';
+		const result = resolveCard(base({
+			nameText: 'il rr Tithe', nameCandidates: [{ name: 'Blood Tithe', score: 0.636, pass: 'primary' }],
+			footer: [reading({ ...parseCollectorInfo(text, 'EN|DE'), text })],
+			printingsByName: name => cards.filter(card => card.name === name),
+			lookup: (set, number) => cards.filter(card => card.set_code === set && card.collector_number === number),
+			isKnownSet: set => ['sld', 'm11', 'ogw'].includes(set),
+			artMatches: [{ row: cards[2], distance: 12 }]
+		}));
+		expect(result.identity).toMatchObject({ name: 'Smothering Tithe', state: 'confirmed' });
+		expect(result.printing).toMatchObject({ state: 'confirmed', row: cards[0] });
+	});
 	it('confirms a confident name with a unique printing', () => {
 		const d = resolveCard(base({ nameCandidates: [{ name: 'Mechanized Ninja Cavalry', score: 1, pass: 'primary' }], nameText: 'Mechanized Ninja Cavalry' }));
 		expect(d.identity).toMatchObject({ name: 'Mechanized Ninja Cavalry', state: 'confirmed' });

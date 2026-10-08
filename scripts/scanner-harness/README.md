@@ -89,6 +89,57 @@ printings, 2 open printings and no wrong automatic identities or printings.
 
 ### Phone-log follow-up (2026-10-08)
 
+#### Subsequent session on deployed PR #84
+
+The cumulative log `232353-dee090fa.log` contains 13 accepted live captures.
+The owner confirmed showing Omniscience and Supreme Verdict; neither was captured.
+This is a rearm issue, not evidence of missing audio. After Doomsday the log stayed
+at 22–24/26 content bits for long stretches; one 26-bit frame did not persist.
+The conservative threshold remains unchanged. A second reference channel now
+requires two strong, unambiguous observations of a different identity.
+
+The logged footer `R 7009 4 SLD * EN TyLrg WALPOLE` previously parsed as weak #4.
+The regression replays that text with the misleading Blood Tithe name and a
+12-bit artwork distractor: it now confirms Smothering Tithe SLD #7009. Unanchored
+copyright years cannot supply structural rarity-number evidence.
+
+After a build:
+
+```bash
+node scripts/scanner-harness/session-ux-check.mjs
+node scripts/scanner-harness/catalogue-check.mjs
+# Start a production server using MTG_DB_PATH=<scratch catalogue>,
+# DISABLE_PRICE_UPDATES=1, and set HARNESS_URL to that server's origin:
+node scripts/scanner-harness/live-reference-check.mjs <catalogue.db> <output-directory>
+node scripts/scanner-harness/live-reference-check.mjs <catalogue.db> <output-directory> --without-reference
+```
+
+The component check uses deterministic detector/probe doubles for colliding
+fingerprints, uncertain/error replies, pause/resume and disabled auto-capture.
+The reference check uses actual worker detection, API matching and OCR, with four
+Scryfall images composited into a canvas camera stream. Hope of Ghirapur → Doomsday
+measures 22 bits under the real browser detector; the reference channel releases it.
+Supreme Verdict and Omniscience also complete once; held-card exposure/corner changes
+do not duplicate results. The optional negative control disables only reference
+replies. Text logs are saved under the requested output directory.
+
+Catalogue checks use a fresh synthetic database and cover exact/fuzzy names,
+printings, footers, near numbers, artwork, unknown availability, and 20 same-name
+reprints that must not hide a competing identity. Backfill paper metadata with
+`npm run import-availability -- [bulk-file]` (downloads current default_cards when
+omitted), then restart. Importing the existing cached bulk into a scratch catalogue
+classified 111,472 rows: 102,146 paper, 9,326 non-paper; 3,987 newer/missing rows remained
+unknown and eligible. This historical file is not a current production inventory.
+
+The unchanged synthetic JPEGs retain 6/6 identities, 4/6 established printings,
+two open, zero wrong, zero extra. The sideways fixture checks the rotated name
+before fuzzy or word queries. The actual phone photos were not saved; neither
+phone recall nor the real-photo development/hold-out scores are established here.
+Weak artwork still cannot unlock a similar card: the WOT Omniscience reference warp
+was 12 bits away and required text support in the full pipeline.
+
+#### Earlier session before the receipt changes
+
 The latest multi-card upload used app version `1791118748151`, predating the
 early rotated-name pass. It took 58.5 seconds, starting its rotated retry at
 32.7 seconds. Fourteen contours became seventeen candidates after grid fill:

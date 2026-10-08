@@ -12,7 +12,7 @@
 	import { parseCollectorInfo } from '$lib/scanner/parse';
 	import { rankNameMatches, realWordCount, setPrintedAliasSource, type PrintedAlias } from '$lib/scanner/similarity';
 	import { resolveCard, nameIdentifies, isStructural, NAME_CERTAIN, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
-	import { artBoxOnWarp, hashArtPixels } from '$lib/scanner/phash';
+	import { artHashesOfWarp, expandedCardCorners } from '$lib/scanner/warp';
 	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
 	import { version } from '$app/environment';
 	import { loadImage, orderCorners, touchesFrameEdge } from '$lib/scanner/geometry';
@@ -191,33 +191,6 @@
 		return top && top[1] >= 3 && top[1] >= total * 0.6 ? top[0] : null;
 	}
 
-	/**
-	 * Art hashes of a warped card (Phase 3): the same luminance and box filter
-	 * as the reference job (`hashArtPixels`) over the reference box moved
-	 * inwards by the warp's background margin (`artBoxOnWarp`), for the upright
-	 * warp and for the warp rotated 180° — a card that lies upside down puts
-	 * its art at the mirrored position, read back to front.
-	 */
-	function artHashesOfWarp(canvas: HTMLCanvasElement): { hash: string; alt: string } {
-		const ctx = canvas.getContext('2d', { willReadFrequently: true });
-		if (!ctx || canvas.width < 16 || canvas.height < 16) return { hash: '', alt: '' };
-		const box = artBoxOnWarp();
-		const w = Math.max(1, Math.round(canvas.width * box.w));
-		const h = Math.max(1, Math.round(canvas.height * box.h));
-		const x = Math.round(canvas.width * box.x);
-		const y = Math.round(canvas.height * box.y);
-		const upright = ctx.getImageData(x, y, w, h).data;
-		const mirrored = ctx.getImageData(canvas.width - x - w, canvas.height - y - h, w, h).data;
-		const reversed = new Uint8ClampedArray(mirrored.length);
-		for (let i = 0, j = mirrored.length - 4; i < mirrored.length; i += 4, j -= 4) {
-			reversed[i] = mirrored[j];
-			reversed[i + 1] = mirrored[j + 1];
-			reversed[i + 2] = mirrored[j + 2];
-			reversed[i + 3] = 255;
-		}
-		return { hash: hashArtPixels(upright, w, h, 4), alt: hashArtPixels(reversed, w, h, 4) };
-	}
-
 	/** Base-size PNG data URL of a warped card canvas for the result list and debug views. */
 	function cardThumbnailUrl(canvas: HTMLCanvasElement): string {
 		if (canvas.width === WARP_BASE_W && canvas.height === WARP_BASE_H) return canvas.toDataURL();
@@ -353,7 +326,7 @@
 
 	/** The live scanner's exported methods (result cue). */
 	let liveScanner = $state<{
-		notifyResult: (captureId: number, established: boolean, detail: string, failed?: boolean) => void;
+		notifyResult: (captureId: number, established: boolean, detail: string, failed?: boolean, identity?: string | null) => void;
 		clearReceipt: () => void;
 	} | null>(null);
 
@@ -365,7 +338,7 @@
 		manualResults = [];
 		manualCardIndex = null;
 		const receiver = liveScanner;
-		void processImage(canvas, rects, (established, detail, failed) => receiver?.notifyResult(captureId, established, detail, failed));
+		void processImage(canvas, rects, (established, detail, failed, identity) => receiver?.notifyResult(captureId, established, detail, failed, identity));
 		return true;
 	}
 
@@ -375,7 +348,7 @@
 	 * as steady on this very frame; when given, the six-strategy detection is
 	 * skipped and the cards are warped straight from them.
 	 */
-	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = [], onLiveResult?: (established: boolean, detail: string, failed?: boolean) => void) {
+	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = [], onLiveResult?: (established: boolean, detail: string, failed?: boolean, identity?: string | null) => void) {
 		const captureSession = { ...session };
 		const myToken = ++scanToken;
 		const superseded = () => myToken !== scanToken;
@@ -1080,39 +1053,7 @@
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
 				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]}) shortEdge=${edgeTop.toFixed(0)} longEdge=${edgeLeft.toFixed(0)}`);
 
-				// Expand each corner outward to capture the full card including black border.
-				// The detected contour is on the inner colored frame — expand 5% to get the black border.
-				// Skip for synthetic (grid-inferred) cards — their bounding rect already covers the full card.
-				if (!cardContours[i].synthetic) {
-					const cardWidth = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
-					const cardHeight = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
-					const expandX = cardWidth * 0.05;
-					const expandY = cardHeight * 0.05;
-
-					const cx = (ordered[0][0] + ordered[1][0] + ordered[2][0] + ordered[3][0]) / 4;
-					const cy = (ordered[0][1] + ordered[1][1] + ordered[2][1] + ordered[3][1]) / 4;
-					ordered = ordered.map(([x, y]) => {
-						const dx = x - cx;
-						const dy = y - cy;
-						const dist = Math.hypot(dx, dy);
-						if (dist === 0) return [x, y] as [number, number];
-						const expand = Math.hypot(
-							(dx / dist) * expandX,
-							(dy / dist) * expandY
-						);
-						// Deliberately not clamped to the frame: warpPerspective pads
-						// out-of-frame samples with black, so a card that reaches the
-						// frame edge (typical for a hand-held live capture) keeps the
-						// same ~3.5% margin as any other and the fixed name/collector
-						// crop windows below still line up. Clamping made such warps
-						// tight on the card and pushed the collector line out of its
-						// crop window ("0 of 1 identified").
-						return [
-							Math.round(x + (dx / dist) * expand),
-							Math.round(y + (dy / dist) * expand)
-						] as [number, number];
-					}) as Array<[number, number]>;
-				}
+				ordered = expandedCardCorners(points, !cardContours[i].synthetic);
 
 				// Perspective transform to flatten the card, at the quad's native
 				// resolution up to WARP_MAX_SCALE x the base size (see WARP_BASE_W).
@@ -1208,107 +1149,6 @@
 			}
 			detectedCards = [...detectedCards];
 
-			// Phase 2: Batch-search all names server-side in a single round trip.
-			// Previously this was 1+ fetch per card (and a second fetch per word
-			// fallback), which dominated wall-clock time at low network latency.
-			if (superseded()) return;
-			log('Phase 2: Name search in DB (batched)');
-
-			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
-			for (let i = 0; i < newCount; i++) {
-				const absIdx = firstIdx + i;
-				const card = detectedCards[absIdx];
-				if (!card.nameText || card.nameText.length < 2) {
-					log(`Card ${absIdx + 1}: name too short or empty, skipping search`);
-					continue;
-				}
-				const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
-				namesToSearch.push({ cardIdx: absIdx, cleanName });
-			}
-
-			scanProgress = `Searching ${namesToSearch.length} name(s)...`;
-			let primaryBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
-			if (namesToSearch.length > 0) {
-				try {
-					const res = await fetch('/scan', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ queries: namesToSearch.map((n) => n.cleanName) })
-					});
-					const data = learnPrinted(await res.json());
-					primaryBatch = Array.isArray(data?.batch) ? data.batch : [];
-				} catch (err) {
-					log(`Batch name search error: ${err}`);
-				}
-			}
-
-			// Collect fallback words for cards that didn't match, then batch those too.
-			const fallbackWords: Array<{ cardIdx: number; cleanName: string; word: string }> = [];
-			for (let k = 0; k < namesToSearch.length; k++) {
-				const { cardIdx, cleanName } = namesToSearch[k];
-				const card = detectedCards[cardIdx];
-				const searchData = primaryBatch[k];
-				log(`Card ${cardIdx + 1}: searching "${cleanName}"`);
-				if (searchData && searchData.results.length > 0) {
-					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
-					const rankedNames = rankNameMatches(searchData.results, cleanName);
-					const best = rankedNames[0] ?? { name: '', score: 0 };
-					for (const m of rankedNames) noteNameCandidate(card, m, 'primary');
-					log(`Card ${cardIdx + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
-					if (nameIdentifies(best, cleanName)) {
-						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
-						card.matchType = searchData.matchType;
-						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
-						continue;
-					}
-					log(`Card ${cardIdx + 1}: score below threshold, rejected`);
-				}
-
-				// Queue word fallback — longest 2 words sorted by length.
-				const words = cleanName.split(/\s+/).filter((w) => w.length >= 3);
-				words.sort((a, b) => b.length - a.length);
-				for (const word of words.slice(0, 2)) {
-					fallbackWords.push({ cardIdx, cleanName, word });
-				}
-			}
-
-			if (fallbackWords.length > 0) {
-				log(`Phase 2 fallback: ${fallbackWords.length} word queries for ${new Set(fallbackWords.map((f) => f.cardIdx)).size} card(s)`);
-				let fallbackBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
-				try {
-					const res = await fetch('/scan', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ queries: fallbackWords.map((f) => f.word) })
-					});
-					const data = learnPrinted(await res.json());
-					fallbackBatch = Array.isArray(data?.batch) ? data.batch : [];
-				} catch (err) {
-					log(`Batch fallback search error: ${err}`);
-				}
-
-				// Walk fallback results in order, stopping per-card as soon as one matches.
-				for (let k = 0; k < fallbackWords.length; k++) {
-					const { cardIdx, cleanName, word } = fallbackWords[k];
-					const card = detectedCards[cardIdx];
-					if (card.results.length > 0) continue;
-					const wData = fallbackBatch[k];
-					if (!wData || wData.results.length === 0) {
-						log(`Card ${cardIdx + 1}: word "${word}" -> 0 results`);
-						continue;
-					}
-					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
-					const rankedNames = rankNameMatches(wData.results, cleanName);
-					const best = rankedNames[0] ?? { name: '', score: 0 };
-					for (const m of rankedNames) noteNameCandidate(card, m, 'word');
-					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
-					if (nameIdentifies(best, cleanName)) {
-						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
-						card.matchType = 'similarity';
-						log(`Card ${cardIdx + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
-					}
-				}
-			}
 			// Best opposite-orientation name text, used if the footer changes the shown warp.
 			const alternateNameText = new Map<number, string>();
 
@@ -1401,23 +1241,6 @@
 			const rotated = new Map<number, RotCrops>();
 			const originalNameText = new Map<number, string>();
 			const rotatedGrayText = new Map<number, string>();
-			for (const i of unresolved()) {
-				if (superseded()) break;
-				const original = cardCanvases[i];
-				const rot = document.createElement('canvas');
-				rot.width = original.width;
-				rot.height = original.height;
-				const rctx = rot.getContext('2d');
-				if (!rctx) continue;
-				rctx.translate(rot.width, rot.height);
-				rctx.rotate(Math.PI);
-				rctx.drawImage(original, 0, 0);
-				const rotMat = cv.imread(rot);
-				try {
-					rotated.set(i, { canvas: rot, ...extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`) });
-					originalNameText.set(i, detectedCards[firstIdx + i].nameText);
-				} finally { rotMat.delete(); }
-			}
 			const keepAlternate = (i: number) => {
 				const r = rotated.get(i);
 				if (!r) return;
@@ -1475,7 +1298,132 @@
 				for (const i of idx) originalNameText.set(i, detectedCards[firstIdx + i].nameText);
 				for (const i of await acceptNameMatches(items, pass.tag, minScore)) adoptRotated(i);
 			};
+
+			// Phase 2: Batch-search all names server-side in a single round trip.
+			// Previously this was 1+ fetch per card (and a second fetch per word
+			// fallback), which dominated wall-clock time at low network latency.
+			if (superseded()) return;
+			log('Phase 2: Exact name search before orientation check');
+
+			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
+			for (let i = 0; i < newCount; i++) {
+				const absIdx = firstIdx + i;
+				const card = detectedCards[absIdx];
+				if (!card.nameText || card.nameText.length < 2) {
+					log(`Card ${absIdx + 1}: name too short or empty, skipping search`);
+					continue;
+				}
+				const cleanName = card.nameText.replace(/^[^A-Za-z]+/, '').trim();
+				namesToSearch.push({ cardIdx: absIdx, cleanName });
+			}
+
+			scanProgress = `Searching ${namesToSearch.length} name(s)...`;
+			let primaryBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+			if (namesToSearch.length > 0) {
+				try {
+					const res = await fetch('/scan', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ queries: namesToSearch.map((n) => n.cleanName), exactOnly: true })
+					});
+					const data = learnPrinted(await res.json());
+					primaryBatch = Array.isArray(data?.batch) ? data.batch : [];
+				} catch (err) {
+					log(`Batch name search error: ${err}`);
+				}
+			}
+
+			// Collect fallback words for cards that didn't match, then batch those too.
+			let fallbackWords: Array<{ cardIdx: number; cleanName: string; word: string }> = [];
+			for (let k = 0; k < namesToSearch.length; k++) {
+				const { cardIdx, cleanName } = namesToSearch[k];
+				const card = detectedCards[cardIdx];
+				const searchData = primaryBatch[k];
+				log(`Card ${cardIdx + 1}: searching "${cleanName}"`);
+				if (searchData && searchData.results.length > 0) {
+					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
+					const rankedNames = rankNameMatches(searchData.results, cleanName);
+					const best = rankedNames[0] ?? { name: '', score: 0 };
+					for (const m of rankedNames) noteNameCandidate(card, m, 'primary');
+					log(`Card ${cardIdx + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
+					if (nameIdentifies(best, cleanName)) {
+						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
+						card.matchType = searchData.matchType;
+						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
+						continue;
+					}
+					log(`Card ${cardIdx + 1}: score below threshold, rejected`);
+				}
+
+				// Queue word fallback — longest 2 words sorted by length.
+				const words = cleanName.split(/\s+/).filter((w) => w.length >= 3);
+				words.sort((a, b) => b.length - a.length);
+				for (const word of words.slice(0, 2)) {
+					fallbackWords.push({ cardIdx, cleanName, word });
+				}
+			}
+
+			for (const i of unresolved()) {
+				if (superseded()) break;
+				const original = cardCanvases[i];
+				const rot = document.createElement('canvas');
+				rot.width = original.width;
+				rot.height = original.height;
+				const rctx = rot.getContext('2d');
+				if (!rctx) continue;
+				rctx.translate(rot.width, rot.height);
+				rctx.rotate(Math.PI);
+				rctx.drawImage(original, 0, 0);
+				const rotMat = cv.imread(rot);
+				try {
+					rotated.set(i, { canvas: rot, ...extractOcrCrops(rotMat, !!cardContours[i].synthetic, `Card ${firstIdx + i + 1} (rotated)`) });
+					originalNameText.set(i, detectedCards[firstIdx + i].nameText);
+				} finally { rotMat.delete(); }
+			}
+
+			// Check the opposite direction before any costly fuzzy or word search of the first reading.
 			await runRotatedPass({ engine: 'tesseract', psm: '7', pick: (c) => c.nameUrl, tag: 'rotated' }, NAME_CERTAIN);
+			await acceptNameMatches(namesToSearch.filter(({ cardIdx }) => detectedCards[cardIdx].results.length === 0)
+				.map(({ cardIdx, cleanName }) => ({ i: cardIdx - firstIdx, cleanName })), 'primary');
+			fallbackWords = fallbackWords.filter(({ cardIdx }) => detectedCards[cardIdx].results.length === 0);
+
+			if (fallbackWords.length > 0) {
+				log(`Phase 2 fallback: ${fallbackWords.length} word queries for ${new Set(fallbackWords.map((f) => f.cardIdx)).size} card(s)`);
+				let fallbackBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+				try {
+					const res = await fetch('/scan', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ queries: fallbackWords.map((f) => f.word) })
+					});
+					const data = learnPrinted(await res.json());
+					fallbackBatch = Array.isArray(data?.batch) ? data.batch : [];
+				} catch (err) {
+					log(`Batch fallback search error: ${err}`);
+				}
+
+				// Walk fallback results in order, stopping per-card as soon as one matches.
+				for (let k = 0; k < fallbackWords.length; k++) {
+					const { cardIdx, cleanName, word } = fallbackWords[k];
+					const card = detectedCards[cardIdx];
+					if (card.results.length > 0) continue;
+					const wData = fallbackBatch[k];
+					if (!wData || wData.results.length === 0) {
+						log(`Card ${cardIdx + 1}: word "${word}" -> 0 results`);
+						continue;
+					}
+					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
+					const rankedNames = rankNameMatches(wData.results, cleanName);
+					const best = rankedNames[0] ?? { name: '', score: 0 };
+					for (const m of rankedNames) noteNameCandidate(card, m, 'word');
+					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
+					if (nameIdentifies(best, cleanName)) {
+						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
+						card.matchType = 'similarity';
+						log(`Card ${cardIdx + 1}: word fallback accepted "${best.name}" -> ${card.results.length} reprints`);
+					}
+				}
+			}
 
 			// Phase 2a: extra name passes for the cards the first pass didn't resolve.
 			for (const pass of extraNamePasses) {
@@ -1796,7 +1744,7 @@
 			// Second cue of a live capture (the first one sounded at the capture): everything identified, or look at the screen.
 			const names = newSlice.filter((card) => card.status === 'found').map((card) => String(card.results[0]?.name ?? '')).filter(Boolean);
 			onLiveResult?.(counts.total > 0 && counts.printings === counts.total,
-				`${names.slice(0, 3).join('; ')}${names.length > 3 ? `; +${names.length - 3} more` : ''}${names.length ? ' — ' : ''}${summary}. Review results below before adding to your collection.`);
+				`${names.slice(0, 3).join('; ')}${names.length > 3 ? `; +${names.length - 3} more` : ''}${names.length ? ' — ' : ''}${summary}. Review results below before adding to your collection.`, false, newSlice.length === 1 && names.length === 1 ? names[0] : null);
 			scanProgress = `Done! ${summary}.`;
 		} catch (err) {
 			if (!superseded()) {

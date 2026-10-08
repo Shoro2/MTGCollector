@@ -28,7 +28,8 @@ export const cards = sqliteTable('cards', {
 	priceEurFoil: real('price_eur_foil'),
 	priceUsd: real('price_usd'),
 	priceUsdFoil: real('price_usd_foil'),
-	cardmarketId: integer('cardmarket_id')
+	cardmarketId: integer('cardmarket_id'),
+	isPaper: integer('is_paper')
 });
 
 export const cardFaces = sqliteTable('card_faces', {

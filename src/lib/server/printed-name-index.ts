@@ -88,6 +88,7 @@ export class PrintedNameIndex {
 		const norm = normalizeName(query);
 		const exact = this.byNorm.get(norm);
 		if (exact) return exact.slice(0, limit).map((e) => ({ ...e, score: 1 }));
+		if (min >= 1) return [];
 		if (norm.replace(/\s/g, '').length < 6) return [];
 		const qb = bigramsOf(norm);
 		const best = new Map<string, { name: string; alias: string; lang: string; score: number }>();

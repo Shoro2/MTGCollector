@@ -95,7 +95,10 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		// rarity letter are collector number + set total; the first one counts,
 		// and a "number" larger than the total is an OCR merge ("1820 277 C"
 		// for 180/277) that must not be used at all.
-		const pairMatch = !fractionMatch ? before.match(/(\d{1,4})\s+(\d{2,4})\s*([CURMLST])?\s*$/) : null;
+		let pairMatch = !fractionMatch ? before.match(/(\d{1,4})\s+(\d{2,4})\s*([CURMLST])?\s*$/) : null;
+		// A leading rarity marks the modern format; "C 0 045" is a split 0045,
+		// not collector zero out of a total of 45.
+		if (pairMatch && /(?:^|\s)[CURML]\s*$/i.test(before.slice(0, pairMatch.index))) pairMatch = null;
 		if (fractionMatch) {
 			result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
 			result.numberSource = 'fraction';
@@ -129,7 +132,10 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			dbg?.(`tail (last 20 chars): "${tail}"`);
 
 			// Try to find a rarity+number pattern: "C 0045", "R 024 J", "M0085", "L 0187" (basic lands print L)
-			const rarityNumMatch = tail.match(/([CURML])\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
+			// A complete four-digit number can be followed by a misread stamp/separator.
+			// Do not merge "R 7009 4" into 70094 and then fall back to the stray 4.
+			const completeNumber = tail.match(/(?:^|\s)([CURML])\s*(\d{4})\s+\d\s*$/i);
+			const rarityNumMatch = completeNumber ?? tail.match(/([CURML])\s*([\d\s]{1,8}[JjIil|!)Oo]?)\s*$/i);
 			if (rarityNumMatch) {
 				const fixed = fixOcrDigits(rarityNumMatch[2].replace(/\s/g, ''));
 				if (fixed.length > 0 && fixed.length <= 4) {
@@ -217,6 +223,12 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 			result.collectorNumber = stripLeadingZeros(rarityMatch[2]);
 			result.numberSource = rarityMatch[2].length < 3 ? 'weak' : 'rarity';
 			result.rarity = rarityMatch[1][0].toLowerCase();
+			// On old cards, OCR renders the copyright symbol as C. Without a SET+LANG
+			// anchor, C1993/C2025 is not structural evidence for a collector number.
+			if (result.rarity === 'c' && /^(19|20)\d{2}$/.test(rarityMatch[2])) {
+				result.numberSource = 'weak';
+				result.rarity = '';
+			}
 		} else if (text.match(/(?:^|\s)([0O][\dOoIlSB]{3})(?![\dOoIlSB/])/)) {
 			const padded = text.match(/(?:^|\s)([0O][\dOoIlSB]{3})(?![\dOoIlSB/])/)!;
 			result.collectorNumber = stripLeadingZeros(fixOcrDigits(padded[1]));

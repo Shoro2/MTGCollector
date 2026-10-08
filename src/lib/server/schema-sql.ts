@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS cards (
 	price_eur_foil REAL,
 	price_usd REAL,
 	price_usd_foil REAL,
-	cardmarket_id INTEGER
+	cardmarket_id INTEGER,
+	is_paper INTEGER CHECK (is_paper IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS card_faces (
