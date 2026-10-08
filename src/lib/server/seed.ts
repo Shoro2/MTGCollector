@@ -1,3 +1,4 @@
+import { availabilityWriter, ensureAvailabilityColumn } from './card-availability.js';
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
 import { mkdirSync, createWriteStream, existsSync, unlinkSync } from 'node:fs';
@@ -18,6 +19,7 @@ const bulkDataPath = join(dataDir, 'scryfall-default-cards.jsonl.gz');
 const legacyBulkDataPath = join(dataDir, 'scryfall-default-cards.json');
 
 interface ScryfallCard {
+	games?: string[];
 	id: string;
 	oracle_id?: string;
 	name: string;
@@ -88,6 +90,8 @@ async function importCards(filePath: string) {
 	sqlite.pragma('temp_store = MEMORY');
 
 	sqlite.exec(SCHEMA_SQL);
+	ensureAvailabilityColumn(sqlite);
+	const writeAvailability = availabilityWriter(sqlite);
 
 	// Older databases created before the snapshot_date/language migrations won't
 	// get those columns from CREATE TABLE IF NOT EXISTS, so add them idempotently
@@ -196,6 +200,7 @@ async function importCards(filePath: string) {
 					priceUsdFoil,
 					card.cardmarket_id ?? null
 				);
+				writeAvailability(card);
 
 				if (card.card_faces && card.card_faces.length > 1) {
 					for (let fi = 0; fi < card.card_faces.length; fi++) {

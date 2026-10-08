@@ -1,3 +1,6 @@
+import { invalidateArtIndex } from './art-index.js';
+import { invalidateNameIndex } from './card-search.js';
+import { availabilityWriter } from './card-availability.js';
 import { sqlite } from './db.js';
 import { priceDataCache, setsCache } from './cache.js';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -40,6 +43,7 @@ let pendingRetry: NodeJS.Timeout | null = null;
 let lastSuccessfulSnapshotDate: string | null = null;
 
 interface ScryfallPriceCard {
+	games?: string[];
 	id: string;
 	oracle_id?: string;
 	name: string;
@@ -210,6 +214,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		);
 		let foreignUpdated = 0;
 
+		const writeAvailability = availabilityWriter(sqlite);
 		const insertCard = sqlite.prepare(`
 			INSERT INTO cards (
 				id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
@@ -272,6 +277,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 					}
 
 					if (cardExists.get(card.id)) {
+						writeAvailability(card);
 						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId, card.id);
 						if (result.changes > 0) updated++;
 						continue;
@@ -311,6 +317,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 						priceUsdFoil,
 						cardmarketId
 					);
+					writeAvailability(card);
 					inserted++;
 
 					if (card.card_faces && card.card_faces.length > 1) {
@@ -342,6 +349,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 			}
 		}
 		if (pendingBatch.length > 0) applyBatch();
+		invalidateArtIndex();
+		invalidateNameIndex();
 
 		console.log(`[price-updater] Updated prices for ${updated} cards, inserted ${inserted} new cards, refreshed ${foreignUpdated} foreign-language prices`);
 

@@ -3,6 +3,7 @@ import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySet
 import { searchArt, type ArtSearchHit } from '$lib/server/art-index';
 import type { CardRow } from '$lib/server/card-search';
 import { ART_LIKELY } from '$lib/scanner/resolve';
+import { referenceIdentity } from '$lib/scanner/identity-rearm';
 
 type Lookup = { setCode: string; collectorNumber: string };
 
@@ -28,7 +29,7 @@ export async function POST({ request }) {
 			.filter((q): q is string => typeof q === 'string')
 			.slice(0, 50);
 		const batch = queries.map((q) => {
-			const r = searchByName(q);
+			const r = searchByName(q, body.exactOnly === true);
 			return { query: q, ...r, results: withPrinted(r.results) };
 		});
 		return json({ batch });
@@ -67,11 +68,13 @@ export async function POST({ request }) {
 	// the distance. The Hamming scan runs here over the in-memory index; the
 	// phone never downloads the table.
 	if (Array.isArray(body.artHashes)) {
+		const identityProbe = body.identityProbe === true;
 		const items = (body.artHashes as unknown[])
 			.filter((x): x is { hash: string; alt?: unknown } => !!x && typeof (x as { hash?: unknown }).hash === 'string')
-			.slice(0, 50);
+			.slice(0, identityProbe ? 1 : 50);
 		const batch = items.map((it) => {
-			const hits = searchArt(it.hash, typeof it.alt === 'string' ? it.alt : undefined, ART_LIKELY, 12);
+			// Many reprints of the best name must not hide a competing identity behind the usual top-12 limit.
+			const hits = searchArt(it.hash, typeof it.alt === 'string' ? it.alt : undefined, ART_LIKELY, identityProbe ? 1000 : 12);
 			const rows = cardsById(hits.map((h) => h.id));
 			withPrinted([...rows.values()]);
 			const matches: Array<ArtSearchHit & { row: CardRow }> = [];
@@ -79,7 +82,7 @@ export async function POST({ request }) {
 				const row = rows.get(h.id);
 				if (row) matches.push({ ...h, row });
 			}
-			return { hash: it.hash, matches };
+			return identityProbe ? { hash: it.hash, identity: hits.length === 1000 ? null : referenceIdentity(matches as Array<ArtSearchHit & { row: { name: string } }>) } : { hash: it.hash, matches };
 		});
 		return json({ batch });
 	}

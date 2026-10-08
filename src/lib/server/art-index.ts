@@ -7,19 +7,25 @@
  * of hashed rows changes (the hash job or an import ran).
  */
 import { sqlite } from './db.js';
+import { SCANNABLE_CARD } from './card-availability.js';
 import { searchHashes, type HashEntry, type HashMatch } from '../scanner/art-search.js';
 
 export { searchHashes, type HashEntry, type HashMatch } from '../scanner/art-search.js';
 
 let cache: { count: number; entries: HashEntry[] } | null = null;
 
+export function invalidateArtIndex() { cache = null; }
+
 /** Every stored hash: cards keyed by id, back faces keyed by `id:faceIndex`. */
 export function artIndex(): HashEntry[] {
-	const count = (sqlite.prepare(`SELECT (SELECT COUNT(*) FROM cards WHERE art_hash IS NOT NULL) + (SELECT COUNT(*) FROM card_faces WHERE art_hash IS NOT NULL) AS n`).get() as { n: number }).n;
+	const count = (sqlite.prepare(`SELECT
+		(SELECT COUNT(*) FROM cards WHERE art_hash IS NOT NULL AND ${SCANNABLE_CARD}) +
+		(SELECT COUNT(*) FROM card_faces JOIN cards ON cards.id = card_faces.card_id
+		 WHERE card_faces.art_hash IS NOT NULL AND ${SCANNABLE_CARD}) AS n`).get() as { n: number }).n;
 	if (cache && cache.count === count) return cache.entries;
 	const entries: HashEntry[] = [];
-	for (const r of sqlite.prepare(`SELECT id, art_hash FROM cards WHERE art_hash IS NOT NULL AND length(art_hash) = 16`).iterate() as Iterable<{ id: string; art_hash: string }>) entries.push({ key: r.id, hash: r.art_hash });
-	for (const r of sqlite.prepare(`SELECT card_id, face_index, art_hash FROM card_faces WHERE art_hash IS NOT NULL AND length(art_hash) = 16`).iterate() as Iterable<{ card_id: string; face_index: number; art_hash: string }>) entries.push({ key: `${r.card_id}:${r.face_index}`, hash: r.art_hash });
+	for (const r of sqlite.prepare(`SELECT id, art_hash FROM cards WHERE art_hash IS NOT NULL AND length(art_hash) = 16 AND ${SCANNABLE_CARD}`).iterate() as Iterable<{ id: string; art_hash: string }>) entries.push({ key: r.id, hash: r.art_hash });
+	for (const r of sqlite.prepare(`SELECT card_id, face_index, card_faces.art_hash FROM card_faces JOIN cards ON cards.id = card_faces.card_id WHERE card_faces.art_hash IS NOT NULL AND length(card_faces.art_hash) = 16 AND ${SCANNABLE_CARD}`).iterate() as Iterable<{ card_id: string; face_index: number; art_hash: string }>) entries.push({ key: `${r.card_id}:${r.face_index}`, hash: r.art_hash });
 	cache = { count, entries };
 	return entries;
 }

@@ -1,3 +1,4 @@
+import { SCANNABLE_CARD } from './card-availability.js';
 import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
@@ -10,7 +11,7 @@ const selectFields = `id, name, set_name, set_code, collector_number, image_uri,
 // "Name // Name" with the artwork of a real card, so a scanned name matched
 // them as often as the card itself (11 of 23 wrong identities on the eight
 // development photos against the full pool). The scanner never returns them.
-const NOT_ART_SERIES = `layout <> 'art_series'`;
+const SCANNER_FILTER = SCANNABLE_CARD;
 /** Rows a fuzzy path may contribute before the names are ranked; the old 20 cut the right name from common-word queries ("Escave Tunnel"). */
 const FUZZY_ROWS = 200;
 /** Distinct names a fuzzy search returns, best similarity first. */
@@ -36,11 +37,11 @@ let _printings: Statement | undefined;
 // scanner reads the face printed on the card, the database stores the
 // canonical string.
 const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM cards
-	WHERE (name = ? OR name LIKE ? OR id IN (SELECT card_id FROM card_faces WHERE name = ?)) AND ${NOT_ART_SERIES}
+	WHERE (name = ? OR name LIKE ? OR id IN (SELECT card_id FROM card_faces WHERE name = ?)) AND ${SCANNER_FILTER}
 	ORDER BY released_at DESC LIMIT 10`));
-const coreStmt = () => (_core ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${NOT_ART_SERIES} ORDER BY released_at DESC LIMIT ${FUZZY_ROWS}`));
-const printingsStmt = () => (_printings ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? AND ${NOT_ART_SERIES} ORDER BY released_at DESC LIMIT 200`));
-const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${NOT_ART_SERIES} ORDER BY released_at DESC LIMIT 20`));
+const coreStmt = () => (_core ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${SCANNER_FILTER} ORDER BY released_at DESC LIMIT ${FUZZY_ROWS}`));
+const printingsStmt = () => (_printings ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? AND ${SCANNER_FILTER} ORDER BY released_at DESC LIMIT 200`));
+const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${SCANNER_FILTER} ORDER BY released_at DESC LIMIT 20`));
 // cards_fts is an external-content FTS5 index (content='cards',
 // content_rowid='rowid'): it stores only name/type_line/oracle_text and reuses
 // cards.rowid as its own rowid — there is NO card_id column. So the join must be
@@ -59,11 +60,11 @@ const ftsStmt = () => (_fts ??= sqlite.prepare(
 	`SELECT ${ftsSelectFields}
 	FROM cards_fts
 	JOIN cards ON cards.rowid = cards_fts.rowid
-	WHERE cards_fts MATCH ? AND cards.${NOT_ART_SERIES}
+	WHERE cards_fts MATCH ? AND ${SCANNER_FILTER}
 	ORDER BY bm25(cards_fts), cards.released_at DESC
 	LIMIT ?`
 ));
-const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ? AND ${NOT_ART_SERIES}`));
+const setNumStmt = () => (_setNum ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number = ? AND ${SCANNER_FILTER}`));
 
 function runFts(query: string, limit = 20): CardRow[] {
 	try {
@@ -126,7 +127,7 @@ const uniqueRows = (rows: CardRow[]): CardRow[] => {
  *    the right candidates. The caller ranks candidates by string similarity
  *    and applies its own acceptance threshold, so a wide net here is safe.
  */
-export function searchByName(query: string): SearchResult {
+export function searchByName(query: string, exactOnly = false): SearchResult {
 	const cleaned = query.trim();
 	if (cleaned.length < 2) return { results: [], matchType: 'none' };
 
@@ -139,11 +140,11 @@ export function searchByName(query: string): SearchResult {
 	// Mutation" (German "Aura-Mutation") next to a correct 0.79 read of
 	// Retro-Mutation and turned it into a one-tap choice.
 	const printedIndex = refreshPrintedNames();
-	const printedHits = printedIndex.size > 0 ? printedIndex.match(cleaned) : [];
+	const printedHits = printedIndex.size > 0 ? printedIndex.match(cleaned, 5, exactOnly ? 1 : 0.6) : [];
 	const printedRowsOf = (hits: typeof printedHits) => hits.flatMap((h) => printingsByName(h.name).slice(0, ROWS_PER_NAME));
 	const exactPrinted = printedHits.filter((h) => h.score === 1);
 
-	const english = searchEnglishName(cleaned);
+	const english = searchEnglishName(cleaned, exactOnly);
 	if (exactPrinted.length > 0) {
 		return { results: uniqueRows([...(english.matchType === 'exact' ? english.results : []), ...printedRowsOf(exactPrinted)]), matchType: 'exact' };
 	}
@@ -154,9 +155,10 @@ export function searchByName(query: string): SearchResult {
 }
 
 /** The search over the catalogue's own (English) names and faces; see searchByName. */
-function searchEnglishName(cleaned: string): SearchResult {
+function searchEnglishName(cleaned: string, exactOnly = false): SearchResult {
 	const exact = exactStmt().all(cleaned, `${cleaned} //%`, cleaned) as CardRow[];
 	if (exact.length > 0) return { results: exact, matchType: 'exact' };
+	if (exactOnly) return { results: [], matchType: 'none' };
 
 	const words = cleaned
 		.replace(/['"]/g, '')
@@ -217,17 +219,19 @@ function searchEnglishName(cleaned: string): SearchResult {
 type NameEntry = { name: string; norm: string; bigrams: Set<string> };
 let nameIndex: { key: string; entries: NameEntry[] } | null = null;
 
+export function invalidateNameIndex() { nameIndex = null; }
+
 /**
  * Distinct canonical names with their faces, rebuilt when the card count changes
  * (imports). The printed names of other languages have their own index
  * (PrintedNameIndex), searched on every query in searchByName().
  */
 function nameEntries(): NameEntry[] {
-	const cardCount = (sqlite.prepare('SELECT COUNT(*) AS c FROM cards').get() as { c: number }).c;
+	const cardCount = (sqlite.prepare(`SELECT COUNT(*) AS c FROM cards WHERE ${SCANNER_FILTER}`).get() as { c: number }).c;
 	const key = String(cardCount);
 	if (nameIndex && nameIndex.key === key) return nameIndex.entries;
 	const entries: NameEntry[] = [];
-	for (const { name } of sqlite.prepare(`SELECT DISTINCT name FROM cards WHERE ${NOT_ART_SERIES}`).all() as Array<{ name: string }>) {
+	for (const { name } of sqlite.prepare(`SELECT DISTINCT name FROM cards WHERE ${SCANNER_FILTER}`).all() as Array<{ name: string }>) {
 		for (const alias of ownAliases(name)) {
 			const norm = normalizeName(alias);
 			if (norm.length >= 3) entries.push({ name, norm, bigrams: bigramsOf(norm) });
@@ -261,7 +265,7 @@ export function fuzzyNames(query: string, limit = 5): Array<{ name: string; scor
 export function cardsById(ids: string[]): Map<string, CardRow> {
 	const out = new Map<string, CardRow>();
 	if (ids.length === 0) return out;
-	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids) as CardRow[];
+	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE id IN (${ids.map(() => '?').join(',')}) AND ${SCANNER_FILTER}`).all(...ids) as CardRow[];
 	for (const r of rows) out.set(String(r.id), r);
 	return out;
 }
@@ -292,7 +296,7 @@ export function nearBySetNumber(setCode: string, collectorNumber: string, rarity
 	for (let i = 0; i <= digits.length; i++) for (const d of '0123456789') variants.add(digits.slice(0, i) + d + digits.slice(i));
 	const numbers = [...variants].map((v) => v.replace(/^0+(?=\d)/, '')).filter((v) => v !== digits).map((v) => v + suffix);
 	if (numbers.length === 0) return [];
-	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number IN (${numbers.map(() => '?').join(',')}) AND ${NOT_ART_SERIES}`).all(lc, ...numbers) as CardRow[];
+	const rows = sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND collector_number IN (${numbers.map(() => '?').join(',')}) AND ${SCANNER_FILTER}`).all(lc, ...numbers) as CardRow[];
 	const letter = rarityLetter.trim().toLowerCase();
 	if (!letter) return rows;
 	const wanted: Record<string, string[]> = { c: ['common'], u: ['uncommon'], r: ['rare'], m: ['mythic'], l: ['common'], s: ['special', 'bonus'] };

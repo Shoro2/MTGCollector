@@ -5,6 +5,8 @@
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { SceneStabilizer, sceneDiffers, sceneSignature } from '$lib/scanner/stability';
 	import { CaptureRearm, sameCardContent } from '$lib/scanner/rearm';
+	import { IdentityRearm } from '$lib/scanner/identity-rearm';
+	import { probeLiveIdentity } from '$lib/scanner/live-identity';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
 	import { fitContain, touchesFrameEdge } from '$lib/scanner/geometry';
 	import { canVibrate, createScanFeedback, loadFeedbackPrefs, saveFeedbackPrefs, type AudioState, type FeedbackPrefs } from '$lib/scanner/feedback';
@@ -73,8 +75,9 @@
 		if (!processing) receipt = null;
 	}
 	/** Called by the page when the pipeline has finished a live capture. */
-	export function notifyResult(captureId: number, established: boolean, detail: string, failed = false) {
+	export function notifyResult(captureId: number, established: boolean, detail: string, failed = false, identity: string | null = null) {
 		if (receipt?.id !== captureId || receipt.state !== 'processing') return;
+		capturedIdentity = failed ? null : identity;
 		receipt = { id: captureId, state: failed ? 'failed' : established ? 'confirmed' : 'review', detail };
 		log?.(`capture #${captureId} ${receipt.state}: ${detail}`);
 		void feedback.play(established && !failed ? 'identified' : 'unresolved');
@@ -124,6 +127,51 @@
 	let bestAt = 0;
 
 	const rearm = new CaptureRearm();
+	const identityRearm = new IdentityRearm();
+	let capturedIdentity: string | null = null;
+	let probeController: AbortController | null = null;
+	let probeEpoch = 0;
+	let nextProbeAt = 0;
+	function cancelIdentityProbe() {
+		probeEpoch++;
+		probeController?.abort();
+		probeController = null;
+		identityRearm.reset();
+	}
+	/** The coarse hash is deliberately conservative. Strong reference evidence can notice a
+	 * different card at unchanged corners without lowering the jitter threshold for all cards. */
+	async function checkIdentity(canvas: HTMLCanvasElement, rects: QuickRect[], now: number) {
+		if (probeController || now < nextProbeAt || !capturedIdentity) return;
+		nextProbeAt = now + 1500;
+		const epoch = probeEpoch;
+		const baseline = capturedIdentity;
+		const controller = new AbortController();
+		probeController = controller;
+		const timeout = setTimeout(() => controller.abort(), 4000);
+		try {
+			// Hashing is synchronous before the request: canvas may be reused on the next frame.
+			const name = await probeLiveIdentity(canvas, rects[0].corners, controller.signal);
+			if (controller.signal.aborted || epoch !== probeEpoch || status !== 'live' || processing || !autoCapture
+				|| !rearm.waiting || contentCheckReason !== 'eligible' || !sameCardContent(rects, lastRects)
+				|| sceneDiffers(rects, lastRects)) return;
+			log?.(`replacement artwork check: ${name ?? 'no unambiguous reference'}; previous identity: ${baseline}`);
+			if (identityRearm.observe(baseline, name, performance.now())) {
+				rearm.reset();
+				resetBestFrame();
+				stabilizer.reset();
+				cancelIdentityProbe();
+				log?.(`auto-capture rearmed: reference artwork changed from "${baseline}" to "${name}"`);
+			}
+		} catch (err) {
+			if (epoch === probeEpoch) {
+				identityRearm.reset();
+				log?.(`replacement artwork check unavailable: ${String(err)}`);
+			}
+		} finally {
+			clearTimeout(timeout);
+			if (probeController === controller) probeController = null;
+		}
+	}
 	// Telemetry for the uploaded scan log: every few seconds one line says how many frames were
 	// analysed, in how many a card was found (and by which pass), how long detection took and what
 	// kept auto-capture waiting. A phone session had 10-25 s waits the log could not explain.
@@ -244,6 +292,7 @@
 
 	/** Release the camera and stop the frame loop; tracking state goes, the detector stays. */
 	function stopStream() {
+		cancelIdentityProbe();
 		cancelAnimationFrame(rafId);
 		rafId = 0;
 		if (stream) {
@@ -419,6 +468,7 @@
 			contentEligible: contentCheckReason === 'eligible'
 		});
 		if (changed) {
+			cancelIdentityProbe();
 			// A sharper frame of the previous card must never stand in for its replacement.
 			resetBestFrame();
 			stabilizer.reset();
@@ -429,6 +479,11 @@
 		drawOverlay();
 
 		const stable = stabilizer.isStable(lastRects, now);
+		if (valid && autoCapture && !processing && rearm.waiting && lastRects.length === 1 && contentCheckReason === 'eligible') {
+			void checkIdentity(scratchCanvas, lastRects, now);
+		} else {
+			cancelIdentityProbe();
+		}
 		stableProgress = stabilizer.progress(lastRects, now);
 		const sceneId = lastRects.length ? sceneSignature(lastRects, sceneCellPx(vw, vh)) : '';
 
@@ -561,6 +616,8 @@
 		}
 		captureSequence = id;
 		rearm.capture(handedRects.length ? handedRects : lastRects);
+		cancelIdentityProbe();
+		capturedIdentity = null;
 		void feedback.play('capture');
 		log?.(`Live capture ${vw}x${vh} (#${id} accepted, ${lastRects.length} card${lastRects.length === 1 ? '' : 's'} detected, ${handedRects.length} handed to the pipeline, scene=${sceneId})`);
 	}

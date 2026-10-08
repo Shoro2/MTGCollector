@@ -4,6 +4,7 @@ import * as schema from './schema.js';
 import { SCHEMA_SQL } from './schema-sql.js';
 import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
+import { ensureAvailabilityColumn } from './card-availability.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -342,7 +343,8 @@ const MIGRATIONS: Migration[] = [
 			addColumnIfMissing(db, 'collection_cards', 'location', "TEXT NOT NULL DEFAULT ''");
 			db.exec('CREATE INDEX IF NOT EXISTS idx_collection_user_location ON collection_cards(user_id, location)');
 		}
-	}
+	},
+	{ id: '0025_cards_paper_availability', run: ensureAvailabilityColumn }
 ];
 
 export function initDb() {
