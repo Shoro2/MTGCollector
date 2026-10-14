@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "model": "opusplan",
+  "effortLevel": "high",
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm test -- *)",
+      "Bash(npm run check)",
+      "Bash(npm run build)",
+      "WebSearch",
+      "WebFetch(domain:svelte.dev)",
+      "WebFetch(domain:orm.drizzle.team)",
+      "WebFetch(domain:vitest.dev)",
+      "WebFetch(domain:tailwindcss.com)",
+      "WebFetch(domain:scryfall.com)",
+      "WebFetch(domain:developer.mozilla.org)"
+    ]
+  }
+}
