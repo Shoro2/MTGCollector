@@ -273,6 +273,24 @@ Prices page shows profit/loss chart with 3 datasets: profit/loss (filled), purch
 - **No `<slot>`** — use `{@render children()}` (Svelte 5)
 - **`onMount`** for one-time init (avoids `$effect` reactivity loops)
 
+## Agent Workflow (Claude Code)
+
+**Use Plan Mode before new features, significant design tradeoffs, and bugs that survive the first attempted fix.**
+
+Opus plans, Sonnet implements, Haiku handles focused supporting tasks.
+
+- **Models:** `.claude/settings.json` sets `"model": "opusplan"` and `"effortLevel": "high"`.
+  - Opus runs while the session is in Plan Mode; Sonnet runs once the plan is approved.
+  - Enter Plan Mode with `Shift+Tab`, `/plan` or `claude --permission-mode plan`.
+- **Subagents** (`.claude/agents/`, all on `haiku`):
+  - `search` maps the repository. It is read-only: `Read`, `Grep`, `Glob`.
+  - `tests` runs only the approved checks (`npm test`, `npm test -- <path>`, `npm run check`, `npm run build`) and reports failures. It never edits files or installs packages.
+  - `docs` looks up library and API documentation (installed version first). It never edits files.
+- **Permission rules:** the allow rules in `.claude/settings.json` cover those test commands and the documentation sites `docs` reads.
+  - They only skip prompts; they do not restrict anything.
+  - `tests` keeps `Bash`, so only its instructions hold it to the approved commands.
+- **Where the details are:** limits and the cross-project rules are in the vault: `share-public` → `docs/General/ai-workflow/02-operator-collaboration.md` §4 and `04-claude-code-setup.md`.
+
 ## External Services
 
 - **Scryfall API** (`api.scryfall.com`) — Card data, bulk downloads (default cards for the catalogue and prices; all cards, every language, once for the printed names), price data. Rate limit: 200ms between image downloads (the art-hash job's default; its `--delay` must stay above 100 ms, Scryfall's ceiling is 10 requests per second).
