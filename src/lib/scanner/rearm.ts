@@ -3,15 +3,27 @@ import { orderCornersForCard } from './geometry';
 import { dctHash, hammingDistance, HASH_SIZE } from './phash';
 import { sceneDiffers, type TrackableRect } from './stability';
 
-export type ContentFingerprint = { hash: string; rotatedHash: string };
-export type ContentRect = TrackableRect & { fingerprint?: ContentFingerprint };
+/** `samples` is the 32x32 gray grid the hashes come from (in card coordinates). */
+export type ContentFingerprint = { hash: string; rotatedHash: string; samples?: Float32Array };
+export type ContentRect = TrackableRect & { fingerprint?: ContentFingerprint; corners?: Array<[number, number]> };
 
 // On the 15 reference cards, outline perturbations of the same card reached 24 bits.
 // Prefer a missed replacement (manual/move fallback) over repeating the previous card.
 export const CONTENT_CHANGE_BITS = 26;
+// Correlation of the gray samples at the captured corners in a later frame. The hash is no good
+// for this: on smooth content a few grey levels of sensor noise flip half its bits. A card that is
+// still there correlates almost perfectly (gain and offset of the exposure drop out), the
+// background left where it was taken away does not.
+export const STILL_IN_PLACE_CORRELATION = 0.8;
 
 /** Sample the card in its own coordinates, ignoring its background and overall brightness. */
 export function cardFingerprint(rgba: ArrayLike<number>, width: number, height: number, corners: Array<[number, number]>): ContentFingerprint {
+	const gray = cardSamples(rgba, width, height, corners);
+	return { hash: dctHash(gray), rotatedHash: dctHash(gray.slice().reverse()), samples: gray };
+}
+
+/** 32x32 gray samples (3x3 means) over the card's inner 80% in its own coordinates. */
+export function cardSamples(rgba: ArrayLike<number>, width: number, height: number, corners: Array<[number, number]>): Float32Array {
 	const q = orderCornersForCard(corners);
 	const gray = new Float32Array(HASH_SIZE * HASH_SIZE);
 	for (let y = 0; y < HASH_SIZE; y++) for (let x = 0; x < HASH_SIZE; x++) {
@@ -27,7 +39,33 @@ export function cardFingerprint(rgba: ArrayLike<number>, width: number, height: 
 		}
 		gray[y * HASH_SIZE + x] = sum / 9;
 	}
-	return { hash: dctHash(gray), rotatedHash: dctHash(gray.slice().reverse()) };
+	return gray;
+}
+
+/** Pearson correlation; 0 for a flat grid, which proves nothing. */
+function correlation(a: ArrayLike<number>, b: ArrayLike<number>): number {
+	const n = Math.min(a.length, b.length);
+	if (n === 0) return 0;
+	let ma = 0, mb = 0;
+	for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+	ma /= n; mb /= n;
+	let sab = 0, saa = 0, sbb = 0;
+	for (let i = 0; i < n; i++) {
+		const da = a[i] - ma, db = b[i] - mb;
+		sab += da * db; saa += da * da; sbb += db * db;
+	}
+	return saa > 1e-6 && sbb > 1e-6 ? sab / Math.sqrt(saa * sbb) : 0;
+}
+
+/**
+ * Whether every captured card still lies where it was captured, judged from the pixels at its
+ * captured corners rather than from the detector. `coordScale` maps analysis-frame pixels to
+ * the captured coordinates (the detector's `coordScale`).
+ */
+export function capturedStillInPlace(captured: ContentRect[], rgba: ArrayLike<number>, width: number, height: number, coordScale = 1): boolean {
+	const inv = 1 / coordScale;
+	return captured.length > 0 && captured.every((c) => !!c.corners && !!c.fingerprint?.samples
+		&& correlation(c.fingerprint.samples, cardSamples(rgba, width, height, c.corners.map(([x, y]) => [x * inv, y * inv]))) >= STILL_IN_PLACE_CORRELATION);
 }
 
 export function contentDistance(a: ContentFingerprint, b: ContentFingerprint): number {
@@ -48,7 +86,19 @@ function paired(captured: ContentRect[], current: ContentRect[]): Array<[Content
 	});
 }
 
-const snapshot = (rects: ContentRect[]) => rects.map((r) => ({ rect: { ...r.rect }, fingerprint: r.fingerprint ? { ...r.fingerprint } : undefined }));
+const snapshot = (rects: ContentRect[]) => rects.map((r) => ({
+	rect: { ...r.rect },
+	fingerprint: r.fingerprint ? { ...r.fingerprint, samples: r.fingerprint.samples?.slice() } : undefined,
+	corners: r.corners?.map(([x, y]) => [x, y] as [number, number])
+}));
+
+/** Every detected rectangle lies on a captured card: a changed outline, not a new card. */
+function onCapturedCards(captured: ContentRect[], rects: ContentRect[]): boolean {
+	return rects.every((r) => {
+		const cx = r.rect.x + r.rect.width / 2, cy = r.rect.y + r.rect.height / 2;
+		return captured.some((c) => cx >= c.rect.x && cx <= c.rect.x + c.rect.width && cy >= c.rect.y && cy <= c.rect.y + c.rect.height);
+	});
+}
 
 /** Cached pixels can replace the current frame only when every card still has the same content. */
 export function sameCardContent(a: ContentRect[], b: ContentRect[]): boolean {
@@ -61,6 +111,8 @@ export class CaptureRearm {
 	private pending: { kind: 'layout' | 'content'; since: number; samples: number; rects: ContentRect[] } | null = null;
 	private observation = 'not observed';
 	get waiting(): boolean { return this.captured !== null; }
+	/** The cards of the last capture, for the caller's in-place check. */
+	get baseline(): readonly ContentRect[] | null { return this.captured; }
 	/** Text-only diagnostics; distances describe image changes, never card identities. */
 	describe(now: number): string {
 		if (!this.captured) return 'armed';
@@ -73,8 +125,12 @@ export class CaptureRearm {
 	reset(): void { this.captured = null; this.resetObservation(); }
 	resetObservation(): void { this.pending = null; this.observation = 'not observed'; }
 
-	/** Null means no replacement. Invalid detections and brief occlusions never rearm. */
-	update(rects: ContentRect[], now: number, opts: { valid?: boolean; contentEligible?: boolean } = {}): 'layout' | 'content' | null {
+	/**
+	 * Null means no replacement. Invalid detections and brief occlusions never rearm, and neither
+	 * does a detection that loses or re-outlines a card the caller still sees in place
+	 * (`stillInPlace`, from capturedStillInPlace()).
+	 */
+	update(rects: ContentRect[], now: number, opts: { valid?: boolean; contentEligible?: boolean; stillInPlace?: boolean } = {}): 'layout' | 'content' | null {
 		if (!this.captured) return null;
 		if (opts.valid === false) { this.observation = 'invalid detection'; this.pending = null; return null; }
 		let kind: 'layout' | 'content' | null = null;
@@ -87,6 +143,12 @@ export class CaptureRearm {
 			const max = distances.length ? Math.max(...distances) : null;
 			this.observation = `content max=${max ?? 'unavailable'}/${CONTENT_CHANGE_BITS} bits, fingerprints=${distances.length}/${pairs.length}, eligible=${opts.contentEligible !== false}`;
 			if (opts.contentEligible !== false && max !== null && max >= CONTENT_CHANGE_BITS) kind = 'content';
+		}
+		// The pixels where the card was captured are unchanged: whatever the detector reports now
+		// (nothing, or another outline of the same thing), the card has not been replaced.
+		if (kind && opts.stillInPlace && onCapturedCards(this.captured, rects)) {
+			this.observation += '; captured card still in place';
+			kind = null;
 		}
 		if (!kind) { this.pending = null; return null; }
 		const p = this.pending;
