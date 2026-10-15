@@ -410,7 +410,7 @@
 				{@const srcset = card.local_image_path ? null : scryfallSrcset(card.image_uri as string | null)}
 				{@const inCollection = collectedSet.has(card.id as string)}
 				{@const onWishlist = wishlistSet.has(card.id as string)}
-				<a href="/cards/{card.id}" class="card-shell group no-underline {inCollection ? 'card-shell-owned' : ''}">
+				<a href="/cards/{card.slug ?? card.id}" class="card-shell group no-underline {inCollection ? 'card-shell-owned' : ''}">
 					<div class="relative">
 						{#if imgSrc}
 							<CardPreview src={imgSrc} alt={"Magic: The Gathering - " + (card.name as string)} scale={2}>

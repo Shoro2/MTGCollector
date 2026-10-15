@@ -1,6 +1,7 @@
 import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
+import { cardSlugIndex } from '$lib/server/card-slugs';
 
 const CARD_COLUMNS = `id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
 	colors, color_identity, keywords, set_code, set_name, collector_number, rarity,
@@ -61,5 +62,11 @@ export async function load({ params, locals, depends }) {
 	// Cached for 6 h server-side; used to sanity-check the EUR price against the USD one.
 	const usdToEur = await getUsdToEurRate();
 
-	return { card, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null, usdToEur };
+	// The card page (all printings) is the canonical URL; art-series records and printings
+	// without an oracle id have none and stay their own canonical.
+	const cardSlug = card.oracle_id && card.layout !== 'art_series'
+		? cardSlugIndex(sqlite).byOracle.get(card.oracle_id as string) ?? null
+		: null;
+
+	return { card, cardSlug, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null, usdToEur };
 }

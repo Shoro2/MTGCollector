@@ -2,6 +2,7 @@ import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
 import { setsCache } from '$lib/server/cache';
 import { ftsPrefixQuery } from '$lib/fts';
+import { cardSlugIndex } from '$lib/server/card-slugs';
 
 export async function load({ url, locals }) {
 	const query = (url.searchParams.get('q') || '').trim();
@@ -127,7 +128,7 @@ export async function load({ url, locals }) {
 	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
 	// Get paginated results
-	const resultSql = `SELECT cards.id, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.price_eur_foil, cards.price_usd_foil, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling}, cards.id ASC LIMIT ? OFFSET ?`;
+	const resultSql = `SELECT cards.id, cards.oracle_id, cards.layout, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.price_eur_foil, cards.price_usd_foil, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling}, cards.id ASC LIMIT ? OFFSET ?`;
 	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
 
 	// Get all unique sets for the filter dropdown (cached, changes only on import)
@@ -150,6 +151,14 @@ export async function load({ url, locals }) {
 			.prepare(`SELECT DISTINCT card_id FROM wishlist_cards WHERE user_id = ? AND card_id IN (${placeholders})`)
 			.all(userId, ...pageCardIds) as Array<{ card_id: string }>;
 		wishlistCardIds = new Set(wishlistRows.map((r) => r.card_id));
+	}
+
+	// "Unique only" lists cards, so its tiles open the card page (all printings).
+	if (unique) {
+		const slugs = cardSlugIndex(sqlite).byOracle;
+		for (const r of results) {
+			r.slug = r.oracle_id && r.layout !== 'art_series' ? slugs.get(r.oracle_id as string) ?? null : null;
+		}
 	}
 
 	return {

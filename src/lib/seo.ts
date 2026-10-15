@@ -22,3 +22,8 @@ export function catalogSeo(search: URLSearchParams, page: number) {
 	if (page > 1) params.set('page', String(page));
 	return { canonical: `${SITE_URL}/cards${params.size ? `?${params}` : ''}`, noindex };
 }
+
+/** Canonical URL of a card page (one per card; printings point here). */
+export function cardPageUrl(slug: string): string {
+	return `${SITE_URL}/cards/${slug}`;
+}
