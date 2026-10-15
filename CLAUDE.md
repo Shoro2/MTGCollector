@@ -79,7 +79,7 @@ Google OAuth with session cookies:
 3. `hooks.server.ts` — validates session on every request, sets `locals.user`
 4. Sessions expire after 30 days
 
-**Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`, `/api/health`, `/api/scan-log` (POST; its GET is admin-only)
+**Public routes**: `/`, `/cards`, `/cards/[slug]`, `/cards/[id=printing]`, `/scan`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`, `/api/health`, `/api/scan-log` (POST; its GET is admin-only)
 **Protected routes**: `/collection`, `/wishlist`, `/prices`, `/tags` — redirect to `/login`
 **Admin routes**: `/admin`, `/admin/api/*` — redirect non-admins to `/`. User must have `isAdmin: true` in `App.Locals`.
 
@@ -182,7 +182,8 @@ src/
 | Route | Purpose |
 |-------|---------|
 | `/cards` | Browse/search all cards (FTS, color/type/rarity/set filters, sorting, pagination, unique toggle, configurable page size) |
-| `/cards/[id]` | Card detail (reprints, price history chart, collection/wishlist status) |
+| `/cards/[slug]` | Card page, one per card (readable slug from `card-slug.ts`): rules, every printing with prices, printed names; the canonical URL and the only card URLs in the sitemap |
+| `/cards/[id=printing]` | Printing detail at its Scryfall id (reprints, price history chart, collection/wishlist status); canonical points to the card page |
 | `/scan` | Card scanner — public, no auth required. Adding to collection requires login |
 | `/collection` | User's collection (search, sort by name/date/price/profit/set, tags, edit modal, purchase price tracking) |
 | `/collection/import` | Moxfield CSV import (sync or append mode) |
@@ -466,6 +467,7 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 
 ### Done
 
+- Search engine indexing (2026-10-15): one page per card at `/cards/<slug>` with every printing and its prices; printing pages point their canonical there and the sitemap lists the ~37k cards instead of ~115k printings (Search Console had 108,508 printing URLs "discovered – currently not indexed"). The catalogue search finds names with apostrophes ("Teferi's Protection" returned 0 cards). See AGENTS.md, "Search engine indexing".
 - Live auto-capture no longer repeats a card that stays in place while the detector flickers (`capturedStillInPlace()`): a Windows webcam session (2026-10-12/13) had captured one static object 285 times. Unit tests in `rearm.test.ts`, a flicker / second-copy scenario in `session-ux-check.mjs`; `live-ux-check.mjs` unchanged (21 / 21).
 - German cards by name (owner request 2026-09-23): `npm run import-names` imports the names printed on German printings (Scryfall's all-cards bulk) into `card_names`, the name search looks them up (equal once normalised, or close when better than the English answer), every scanner row carries its printed names, name candidates carry their language and count on a card whose footer names another language only at ≥ 0.8, and the scan page adds cards in the scanned language. German dark-mat scenes (28, live pipeline, full catalogue): confirmed right 18 → 27 of 27 captured, printings 15 → 24, 0 wrong; development set 103 / 83 of 104, hold-out 19 / 9 of 26, 0 wrong.
 - Phone session 2026-09-18 (German Magic Origins / Battle for Zendikar cards on the dark mat, 15 captures, 7 confirmed): cards printed in another language no longer take uncertain English name matches as evidence, footer-only confirmations are checked against the rarity letter of every strip, disagreeing strips and a contradicting artwork, an artwork up to 12 bits plus an exactly read footer number confirms, a single misread number no longer drops an artwork, and joins ignore stray digits against a structural reading. The footer window bridges the collector text in the bottom border (the number line of M15-frame cards fell out), and a frame whose card touches the edge never becomes the best frame. Development set unchanged (103 / 83, 0 wrong), hold-out 19 / 9 of 26 (was 18 / 7), German scenes: 0 wrong confirmations, wrong one-tap offers 3 → 2.

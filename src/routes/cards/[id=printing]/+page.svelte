@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { SITE_URL, jsonLd } from '$lib/seo';
+	import { SITE_URL, cardPageUrl, jsonLd } from '$lib/seo';
 	import { formatPrice, getRarityColor, conditionLabel, priceDate, priceDivergence, isSuspiciousDivergence, type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
 	import { invalidate } from '$app/navigation';
@@ -21,7 +21,8 @@
 
 	let card = $derived(data.card);
 	let cardLabel = $derived(`${card.name} - ${card.set_name} #${card.collector_number}`);
-	let canonical = $derived(`${SITE_URL}/cards/${card.id}`);
+	let canonical = $derived(data.cardSlug ? cardPageUrl(data.cardSlug) : `${SITE_URL}/cards/${card.id}`);
+	let pageUrl = $derived(`${SITE_URL}/cards/${card.id}`);
 	let socialImage = $derived(getImageSrc() ? new URL(getImageSrc(), SITE_URL).href : undefined);
 
 	// Cardmarket's trend price (Scryfall `eur`) sometimes collapses for thinly
@@ -177,21 +178,26 @@
 		"@graph": [
 			{
 				"@type": "WebPage",
-				"@id": canonical,
-				"url": canonical,
+				"@id": pageUrl,
+				"url": pageUrl,
 				"name": cardLabel,
 				"description": metaDescription,
 				"image": socialImage,
 				"inLanguage": "en",
-				"breadcrumb": { "@id": canonical + '#breadcrumb' }
+				"breadcrumb": { "@id": pageUrl + '#breadcrumb' }
 			},
 			{
 				"@type": "BreadcrumbList",
-				"@id": canonical + '#breadcrumb',
+				"@id": pageUrl + '#breadcrumb',
 				"itemListElement": [
 					{ "@type": "ListItem", "position": 1, "name": "MTG Collector", "item": SITE_URL + '/' },
 					{ "@type": "ListItem", "position": 2, "name": "Cards", "item": SITE_URL + '/cards' },
-					{ "@type": "ListItem", "position": 3, "name": cardLabel, "item": canonical }
+					...(data.cardSlug ? [
+						{ "@type": "ListItem", "position": 3, "name": card.name, "item": cardPageUrl(data.cardSlug) },
+						{ "@type": "ListItem", "position": 4, "name": cardLabel, "item": pageUrl }
+					] : [
+						{ "@type": "ListItem", "position": 3, "name": cardLabel, "item": pageUrl }
+					])
 				]
 			}
 		]
@@ -204,7 +210,13 @@
 		<span aria-hidden="true">/</span>
 		<a href="/cards" class="text-[var(--color-primary)] hover:underline">Cards</a>
 		<span aria-hidden="true">/</span>
-		<span aria-current="page">{cardLabel}</span>
+		{#if data.cardSlug}
+			<a href="/cards/{data.cardSlug}" class="text-[var(--color-primary)] hover:underline">{card.name}</a>
+			<span aria-hidden="true">/</span>
+			<span aria-current="page">{card.set_name} #{card.collector_number}</span>
+		{:else}
+			<span aria-current="page">{cardLabel}</span>
+		{/if}
 	</nav>
 
 	<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-8">
@@ -448,6 +460,9 @@
 			{#if data.reprints.length > 0}
 				<div>
 					<h3 class="text-sm text-[var(--color-text-muted)] mb-2">Other Printings ({data.reprints.length})</h3>
+					{#if data.cardSlug}
+						<a href="/cards/{data.cardSlug}" class="mb-2 inline-block text-sm text-[var(--color-primary)] hover:underline">Compare all printings of {card.name} →</a>
+					{/if}
 					<div class="flex flex-wrap gap-2">
 						{#each data.reprints as reprint (reprint.id)}
 							<a

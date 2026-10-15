@@ -13,15 +13,20 @@ mkdirSync(dir, { recursive: true });
 const dbPath = resolve(dir, 'mtg.db');
 const db = new Database(dbPath);
 db.exec(SCHEMA_SQL);
-const insert = db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,price_eur)
-	VALUES (?,?,'Fixture Card','tst','Test Set',?,'common','Creature',1)`);
+// Printing ids are Scryfall UUIDs (the /cards/<id> route only matches that shape); three
+// printings per card, all named alike, plus one card whose name has an apostrophe.
+const printingId = (i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+const oracleId = (k) => `a${String(k).padStart(7, '0')}-0000-4000-8000-000000000000`;
+const insert = db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,price_eur,layout,released_at)
+	VALUES (?,?,?,'tst','Test Set',?,'common','Creature',?,'normal','2020-01-01')`);
 db.transaction(() => {
-	for (let i = 1; i <= 81; i++) {
-		const id = `fixture-${String(i).padStart(3, '0')}`;
-		insert.run(id, id, String(i));
-	}
+	for (let i = 1; i <= 81; i++) insert.run(printingId(i), oracleId(Math.ceil(i / 3)), 'Fixture Card', String(i), 1);
+	insert.run(printingId(82), oracleId(99), "Teferi's Protection", '82', 30);
+	insert.run(printingId(83), oracleId(99), "Teferi's Protection", '83', 12.5);
 })();
-db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('/favicon.ico', 'fixture-001');
+db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('/favicon.ico', printingId(1));
+// The FTS triggers only exist once the app has booted; index the fixture rows now.
+db.exec("INSERT INTO cards_fts(cards_fts) VALUES('rebuild')");
 db.close();
 
 const port = Number(process.env.SEO_CHECK_PORT || 5191);
@@ -59,7 +64,8 @@ try {
 		const xml = await response.text();
 		urls.push(...locations(xml));
 	}
-	check(urls.length === 87 && new Set(urls).size === 87, 'all 81 printings and six public pages appear exactly once');
+	check(urls.length === 34 && new Set(urls).size === 34, 'all 28 cards and six public pages appear exactly once');
+	check(!urls.some((url) => /\/cards\/[0-9a-f]{8}-/.test(url)) && urls.includes(publicOrigin + '/cards/teferis-protection'), 'the sitemap lists card pages, not printings');
 	for (const path of ['/sitemap-cards-0.xml', '/sitemap-cards-2.xml', '/sitemap-unknown.xml']) {
 		check((await fetch(origin + path, { redirect: 'manual' })).status === 404, `missing sitemap returns 404: ${path}`);
 	}
@@ -93,7 +99,23 @@ try {
 	check((await fetch(origin + '/cards?q=%22%22')).status === 200, 'empty quoted search does not cause a crawler-facing server error');
 	await page.goto(origin + '/cards?q=NothingMatchesThisFixture');
 	check((await page.locator('body').innerText()).includes('page 1 of 1'), 'empty search has a coherent page count');
-	await page.goto(origin + '/cards/fixture-001');
+	await page.goto(origin + '/cards?q=' + encodeURIComponent("Teferi's"));
+	check(await page.locator('a.card-shell').count() === 2, 'search finds a name with an apostrophe');
+	await page.goto(origin + '/cards?unique=1&q=Teferi');
+	check(await page.locator('a.card-shell').getAttribute('href') === '/cards/teferis-protection', 'unique catalogue tiles open the card page');
+	await page.goto(origin + '/cards/teferis-protection');
+	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'card page is its own canonical');
+	check((await page.title()).startsWith("Teferi's Protection – Price, Printings & Rules"), 'card page title names the card, not a printing');
+	check((await page.locator('meta[name="description"]').getAttribute('content')).includes('2 printings, from €12.50'), 'card snippet states printings and the lowest price');
+	check(await page.getByRole('heading', { level: 1 }).innerText() === "Teferi's Protection", 'card page heading is the card name');
+	check(await page.locator(`a[href="/cards/${printingId(82)}"]`).count() === 1 && await page.locator(`a[href="/cards/${printingId(83)}"]`).count() === 1, 'card page links every printing');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'card page fits a mobile viewport');
+	await page.screenshot({ path: resolve(dir, 'card-mobile.png'), fullPage: true });
+	await page.goto(origin + '/cards/' + printingId(82));
+	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'printing page points its canonical to the card page');
+	check(await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: "Teferi's Protection" }).count() === 1, 'printing breadcrumb links the card page');
+	check(await page.locator('script[type="application/ld+json"]').textContent().then((t) => JSON.parse(t)['@graph'][0].url === publicOrigin + '/cards/' + printingId(82)), 'printing JSON-LD describes the printing URL itself');
+	await page.goto(origin + '/cards/' + printingId(1));
 	check((await page.title()).includes('Test Set #1'), 'printing title identifies its set and collector number');
 	const schema = await page.locator('script[type="application/ld+json"]').textContent();
 	const graph = JSON.parse(schema)['@graph'];
@@ -102,6 +124,7 @@ try {
 	check(await page.locator('meta[property="og:type"]').count() === 1, 'Open Graph type is not duplicated');
 	check(await page.locator('meta[property="og:image"]').getAttribute('content') === publicOrigin + '/favicon.ico', 'local social images become absolute public URLs');
 	check((await fetch(origin + '/cards/does-not-exist')).status === 404, 'missing card retains its real 404 status');
+	check((await fetch(origin + '/cards/' + printingId(999))).status === 404, 'missing printing retains its real 404 status');
 	await page.goto(origin + '/');
 	check(JSON.parse(await page.locator('script[type="application/ld+json"]').textContent())['@type'] === 'WebSite', 'home page declares its site identity');
 	check(await page.getByRole('heading', { level: 1 }).innerText() === 'MTG card scanner and collection tracker', 'home page explains the app in visible content');

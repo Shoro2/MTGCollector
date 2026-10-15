@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3';
 import { SITE_URL } from '../seo';
 
 export const SITEMAP_PAGE_SIZE = 10_000;
@@ -11,17 +10,16 @@ function escapeXml(value: string): string {
 		.replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
-function cardCount(db: Database.Database): number {
-	return (db.prepare('SELECT COUNT(*) AS count FROM cards').get() as { count: number }).count;
-}
-
-export function sitemapIndex(db: Database.Database): string {
-	const parts = ['pages', ...Array.from({ length: Math.ceil(cardCount(db) / SITEMAP_PAGE_SIZE) }, (_, i) => `cards-${i + 1}`)];
+// Card pages only (one per card, see card-slugs.ts). The ~115k printing pages point
+// to them by canonical: Google left 108k of the printing URLs "discovered - currently
+// not indexed" (Search Console, 2026-10), and near-identical printings dilute a new domain.
+export function sitemapIndex(cardSlugs: readonly string[]): string {
+	const parts = ['pages', ...Array.from({ length: Math.ceil(cardSlugs.length / SITEMAP_PAGE_SIZE) }, (_, i) => `cards-${i + 1}`)];
 	return `${XML_HEADER}<sitemapindex xmlns="${XML_NAMESPACE}">\n${parts.map(part =>
 		`<sitemap><loc>${SITE_URL}/sitemap-${part}.xml</loc></sitemap>`).join('\n')}\n</sitemapindex>`;
 }
 
-export function sitemapPart(db: Database.Database, part: string): string | null {
+export function sitemapPart(cardSlugs: readonly string[], part: string): string | null {
 	let paths: string[];
 	if (part === 'pages') {
 		paths = STATIC_PATHS;
@@ -29,11 +27,10 @@ export function sitemapPart(db: Database.Database, part: string): string | null 
 		const match = /^cards-([1-9]\d*)$/.exec(part);
 		if (!match) return null;
 		const page = Number(match[1]);
-		if (!Number.isSafeInteger(page) || page > Math.ceil(cardCount(db) / SITEMAP_PAGE_SIZE)) return null;
-		// The primary-key index supplies a stable order; never sort the entire catalogue by name.
-		const cards = db.prepare('SELECT id FROM cards ORDER BY id LIMIT ? OFFSET ?')
-			.all(SITEMAP_PAGE_SIZE, (page - 1) * SITEMAP_PAGE_SIZE) as { id: string }[];
-		paths = cards.map(card => `/cards/${encodeURIComponent(card.id)}`);
+		if (!Number.isSafeInteger(page) || page > Math.ceil(cardSlugs.length / SITEMAP_PAGE_SIZE)) return null;
+		// The slug list is ordered by oracle id, so a new card only shifts the parts after it.
+		paths = cardSlugs.slice((page - 1) * SITEMAP_PAGE_SIZE, page * SITEMAP_PAGE_SIZE)
+			.map(slug => `/cards/${encodeURIComponent(slug)}`);
 	}
 	// No invented modification dates: the catalogue has no content-updated timestamp.
 	return `${XML_HEADER}<urlset xmlns="${XML_NAMESPACE}">\n${paths.map(path =>
