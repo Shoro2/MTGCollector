@@ -4,7 +4,7 @@
 	import { createQuickDetector, DETECT_WORKER_URL, type QuickDetector, type QuickRect } from '$lib/scanner/detect';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { SceneStabilizer, sceneDiffers, sceneSignature } from '$lib/scanner/stability';
-	import { CaptureRearm, sameCardContent } from '$lib/scanner/rearm';
+	import { CaptureRearm, capturedStillInPlace, sameCardContent } from '$lib/scanner/rearm';
 	import { IdentityRearm } from '$lib/scanner/identity-rearm';
 	import { probeLiveIdentity } from '$lib/scanner/live-identity';
 	import { BestFrameSelector, type FrameQuality } from '$lib/scanner/quality';
@@ -463,9 +463,19 @@
 		contentCheckReason = !stabilizer.isStable(lastRects, now) ? 'not steady'
 			: cutOff.some(Boolean) ? 'cut off' : quality.glare >= 0.03 ? 'glare'
 			: quality.sharpness <= 0 ? 'no sharpness' : 'eligible';
+		// Detection can flicker on a card that lies still: a webcam session (2026-10-12) found one
+		// object in 0-4 of 18 frames, every dropout counted as "the card left" and it was captured
+		// 285 times. The pixels at the captured corners tell whether it is really gone.
+		const baseline = rearm.baseline;
+		let stillInPlace = false;
+		if (valid && baseline) {
+			const pixels = ctx.getImageData(0, 0, aw, ah);
+			stillInPlace = capturedStillInPlace([...baseline], pixels.data, aw, ah, vw / aw);
+		}
 		const changed = rearm.update(lastRects, now, {
 			valid,
-			contentEligible: contentCheckReason === 'eligible'
+			contentEligible: contentCheckReason === 'eligible',
+			stillInPlace
 		});
 		if (changed) {
 			cancelIdentityProbe();

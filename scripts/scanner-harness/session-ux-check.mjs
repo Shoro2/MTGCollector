@@ -44,7 +44,7 @@ export async function createQuickDetector() {
  return { mode: 'main', busy: false, dispose() {}, async detect(canvas, opts = {}) {
   const s = window.sessionTest;
   if (s.invalid) return { valid:false, rects:[], quality:{sharpness:0,glare:0,score:0} };
-  if (s.blank) return { rects:[], quality:{sharpness:0,glare:0,score:0} };
+  if (s.blank || s.missed) return { rects:[], quality:{sharpness:0,glare:0,score:0} };
   const scale = canvas.width / 1280, x = 430 + s.offset, y = 70;
   const corners = [[x,y],[x+420,y],[x+420,y+580],[x,y+580]];
   const pixels = canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;
@@ -235,6 +235,20 @@ try {
  assert(await count() === 9, 'reference checks respect disabled auto-capture');
  await page.getByLabel('Auto-capture').check(); await waitCount(10); await release();
  assert(await page.evaluate(()=>window.sessionTest.captures[9].card === 'A'), 'auto-capture resumes and captures the new identity once');
+ // Webcam session 2026-10-12: a still card that the detector only finds now and then must
+ // not be captured again after every dropout; taking it away still allows a second copy.
+ await set({coarseCollision:false, blank:true}); await page.waitForTimeout(1000);
+ await set({blank:false}); await waitCount(11); await release(); await page.waitForTimeout(1500);
+ const settled = await count();
+ for (let i = 0; i < 3; i++) {
+  await set({missed:true}); await page.waitForTimeout(1500);
+  await set({missed:false}); await page.waitForTimeout(1800);
+ }
+ assert(await count() === settled, 'detection dropouts on a card that stays in place do not capture it again');
+ assert(await page.evaluate(() => window.sessionTest.logs.some((l) => l.includes('captured card still in place'))), 'rearm telemetry says the captured card is still in place');
+ await set({blank:true}); await page.waitForTimeout(1000);
+ await set({blank:false}); await waitCount(settled + 1); await release();
+ assert(await page.evaluate((n) => window.sessionTest.captures[n].card === 'A', settled), 'a second copy put down after the first was taken away is captured');
  assert(errors.length === 0, 'no browser errors: ' + errors.join('; '));
  console.log('PASS: component integration with simulated detection and OCR busy state.');
 } finally {

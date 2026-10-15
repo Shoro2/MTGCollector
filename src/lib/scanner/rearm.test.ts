@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CaptureRearm, cardFingerprint, contentDistance, sameCardContent, type ContentRect } from './rearm';
+import { CaptureRearm, capturedStillInPlace, cardFingerprint, contentDistance, sameCardContent, type ContentRect } from './rearm';
 
 const a = { hash: '0000ffffffff0000', rotatedHash: '0000ffffffff0000' };
 const b = { hash: 'ffff00000000ffff', rotatedHash: 'ffff00000000ffff' };
@@ -89,6 +89,38 @@ describe('CaptureRearm', () => {
 		expect(r.update([card(b)], 3000, { contentEligible: false })).toBeNull();
 		expect(r.update([card(b)], 4000)).toBeNull();
 	});
+	// Webcam session 2026-10-12/13: one static object, found by the coarse pass in 0-4 of 18
+	// frames, was captured 285 times because every dropout counted as "the card left".
+	it('does not rearm while the captured card still lies in place and only the detection drops out', () => {
+		const r = new CaptureRearm(); r.capture([card()]);
+		for (let t = 0; t < 5000; t += 166) expect(r.update([], t, { stillInPlace: true })).toBeNull();
+		expect(r.waiting).toBe(true);
+		expect(r.describe(5000)).toContain('still in place');
+		expect(r.update([card()], 5166, { stillInPlace: true })).toBeNull();
+	});
+	it('does not rearm on a different outline of the object that still lies in place', () => {
+		const r = new CaptureRearm(); r.capture([card()]);
+		const wider: ContentRect = { rect: { x: 40, y: 60, width: 330, height: 360 }, fingerprint: b };
+		for (let t = 0; t < 2000; t += 166) expect(r.update([wider], t, { stillInPlace: true })).toBeNull();
+		expect(r.waiting).toBe(true);
+	});
+	it('still rearms for a new card next to the one that stays in place', () => {
+		const r = new CaptureRearm(); r.capture([card()]);
+		const both = [card(), card(b, 600)];
+		r.update(both, 0, { stillInPlace: true }); r.update(both, 166, { stillInPlace: true });
+		expect(r.update(both, 333, { stillInPlace: true })).toBe('layout');
+	});
+	it('rearms when the captured card was taken away, so a second copy can be scanned', () => {
+		const r = new CaptureRearm(); r.capture([card()]);
+		r.update([], 0, { stillInPlace: false }); r.update([], 166, { stillInPlace: false });
+		expect(r.update([], 333, { stillInPlace: false })).toBe('layout');
+	});
+	it('keeps the captured corners for the in-place check', () => {
+		const corners: Array<[number, number]> = [[100, 100], [300, 100], [300, 380], [100, 380]];
+		const r = new CaptureRearm(); r.capture([{ ...card(), corners }]);
+		corners[0][0] = 0;
+		expect(r.baseline?.[0].corners?.[0]).toEqual([100, 100]);
+	});
 	it('matches content by position regardless of detection order', () => {
 		const r = new CaptureRearm(); r.capture([card(a, 100), card(b, 500)]);
 		for (let t = 0; t < 2000; t += 166) expect(r.update([card(b, 502), card(a, 98)], t)).toBeNull();
@@ -113,5 +145,45 @@ describe('card content fingerprints', () => {
 		const base = cardFingerprint(source, width, height, corners);
 		expect(contentDistance(base, cardFingerprint(pixels(25), width, height, corners))).toBeLessThanOrEqual(2);
 		expect(contentDistance(base, cardFingerprint(rotated, width, height, corners))).toBeLessThanOrEqual(2);
+	});
+});
+
+describe('capturedStillInPlace', () => {
+	const width = 200, height = 120;
+	const corners: Array<[number, number]> = [[60, 10], [140, 10], [140, 110], [60, 110]];
+	const frame = (cardPattern: boolean, noise = 0) => {
+		const data = new Uint8ClampedArray(width * height * 4);
+		for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+			const i = (y * width + x) * 4;
+			const inCard = cardPattern && x >= 60 && x <= 140 && y >= 10 && y <= 110;
+			// Smooth card content on purpose: its hash flips under a few grey levels of noise.
+			const l = inCard ? 110 + 60 * Math.sin(x / 7) + 40 * Math.cos(y / 11) : 40 + 10 * Math.sin((x * 3 + y) / 2);
+			const grain = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+			data[i] = data[i + 1] = data[i + 2] = l + noise * 2 * (grain - Math.floor(grain) - 0.5); data[i + 3] = 255;
+		}
+		return data;
+	};
+	const captured = (scale = 1): ContentRect[] => [{
+		rect: { x: 60 * scale, y: 10 * scale, width: 80 * scale, height: 100 * scale },
+		corners: corners.map(([x, y]) => [x * scale, y * scale] as [number, number]),
+		fingerprint: cardFingerprint(frame(true), width, height, corners)
+	}];
+	it('sees the captured card in a later frame with sensor noise and another exposure', () => {
+		expect(capturedStillInPlace(captured(), frame(true, 12), width, height)).toBe(true);
+		const darker = frame(true, 12).map((v, i) => (i % 4 === 3 ? v : v * 0.7));
+		expect(capturedStillInPlace(captured(), darker, width, height)).toBe(true);
+	});
+	it('maps captured video coordinates into the analysis frame', () => {
+		expect(capturedStillInPlace(captured(2.5), frame(true, 6), width, height, 2.5)).toBe(true);
+	});
+	it('notices the card is gone when only the background is left', () => {
+		expect(capturedStillInPlace(captured(), frame(false), width, height)).toBe(false);
+	});
+	it('never claims presence without corners or a fingerprint', () => {
+		const [c] = captured();
+		expect(capturedStillInPlace([{ rect: c.rect, fingerprint: c.fingerprint }], frame(true), width, height)).toBe(false);
+		expect(capturedStillInPlace([{ ...c, fingerprint: { hash: c.fingerprint!.hash, rotatedHash: c.fingerprint!.rotatedHash } }], frame(true), width, height)).toBe(false);
+		expect(capturedStillInPlace([{ rect: c.rect, corners: c.corners }], frame(true), width, height)).toBe(false);
+		expect(capturedStillInPlace([], frame(true), width, height)).toBe(false);
 	});
 });
