@@ -1,6 +1,7 @@
 import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
 import { setsCache } from '$lib/server/cache';
+import { ftsPrefixQuery } from '$lib/fts';
 
 export async function load({ url, locals }) {
 	const query = (url.searchParams.get('q') || '').trim();
@@ -27,15 +28,9 @@ export async function load({ url, locals }) {
 	const params: (string | number)[] = [];
 
 	// Full-text search
-	if (query.replace(/['"]/g, '').trim()) {
+	const ftsQuery = ftsPrefixQuery(query);
+	if (ftsQuery) {
 		conditions.push(`cards.rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)`);
-		// Escape FTS5 special characters and add prefix matching
-		const ftsQuery = query
-			.replace(/['"]/g, '')
-			.split(/\s+/)
-			.filter(Boolean)
-			.map((term) => `"${term}"*`)
-			.join(' ');
 		params.push(ftsQuery);
 	}
 
