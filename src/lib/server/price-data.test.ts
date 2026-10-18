@@ -9,7 +9,7 @@ beforeEach(() => {
 	db.exec(`CREATE TABLE cards (id TEXT PRIMARY KEY, name TEXT, set_name TEXT, image_uri TEXT, local_image_path TEXT,
 		price_eur REAL, price_eur_foil REAL, price_usd REAL, price_usd_foil REAL);
 		CREATE TABLE collection_cards (id INTEGER PRIMARY KEY, card_id TEXT, user_id TEXT, quantity INTEGER,
-		foil INTEGER, language TEXT, purchase_price REAL, added_at TEXT);
+		foil INTEGER, language TEXT, purchase_price REAL, added_at TEXT, proxy INTEGER NOT NULL DEFAULT 0);
 		CREATE TABLE card_prices_lang (card_id TEXT, language TEXT, price_eur REAL, price_eur_foil REAL, price_usd REAL, price_usd_foil REAL);
 		CREATE TABLE price_history (id INTEGER PRIMARY KEY, card_id TEXT, language TEXT, snapshot_date TEXT, recorded_at TEXT,
 		price_eur REAL, price_eur_foil REAL, price_usd REAL, price_usd_foil REAL);
@@ -24,6 +24,10 @@ function card(id: string, eur: number | null, usd: number | null = null, foil: n
 function own(id: string, cost: number | null, quantity = 1, language: string | null = 'en', added = '2026-10-01', foil = 0, user = 'owner') {
 	db.prepare('INSERT INTO collection_cards(card_id,user_id,quantity,foil,language,purchase_price,added_at) VALUES (?,?,?,?,?,?,?)')
 		.run(id, user, quantity, foil, language, cost, added);
+}
+function ownProxy(id: string, cost: number | null, quantity = 1) {
+	db.prepare("INSERT INTO collection_cards(card_id,user_id,quantity,foil,language,purchase_price,added_at,proxy) VALUES (?,'owner',?,0,'en',?,'2026-10-01',1)")
+		.run(id, quantity, cost);
 }
 function snap(id: string, day: string, eur: number | null, language = 'en', usd: number | null = null, foil: number | null = null, time = '05:00:00') {
 	db.prepare('INSERT INTO price_history(card_id,language,snapshot_date,recorded_at,price_eur,price_usd,price_eur_foil) VALUES (?,?,?,?,?,?,?)')
@@ -41,6 +45,18 @@ describe('portfolio totals and history', () => {
 		expect(data.missingPriceCount).toBe(4);
 		expect(data.missingMarketCount).toBe(2);
 		expect(data.profitHistory.at(-1)).toMatchObject({ total_value: 30, total_purchase: 10, missing_market_count: 2 });
+	});
+	it('counts proxies as cards but never as value, cost or profit', () => {
+		card('a', 10); card('b', 50); card('c', null);
+		own('a', 3, 2); ownProxy('b', 0.2, 3); ownProxy('a', null); ownProxy('c', null); snap('b', '2026-10-02', 40);
+		const data = result();
+		expect(data.stats).toEqual({ totalValue: 20, totalPurchaseValue: 6, profitValue: 20, profitCost: 6,
+			profitCopies: 2, uniqueCards: 3, totalCards: 7 });
+		expect(data.proxyCopies).toBe(5);
+		expect([data.missingPriceCount, data.missingMarketCount]).toEqual([0, 0]);
+		expect(data.topCards.map(c => c.id)).toEqual(['a']);
+		expect(data.profitHistory.map(p => p.recorded_at)).toEqual(['2026-10-01', '2026-10-04']);
+		expect(data.profitHistory.at(-1)).toMatchObject({ total_value: 20, total_purchase: 6 });
 	});
 	it('keeps collection values but returns no profit history without purchase prices', () => {
 		card('a', 10); own('a', null, 3); snap('a', '2026-10-02', 9);

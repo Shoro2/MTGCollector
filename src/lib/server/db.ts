@@ -344,7 +344,14 @@ const MIGRATIONS: Migration[] = [
 			db.exec('CREATE INDEX IF NOT EXISTS idx_collection_user_location ON collection_cards(user_id, location)');
 		}
 	},
-	{ id: '0025_cards_paper_availability', run: ensureAvailabilityColumn }
+	{ id: '0025_cards_paper_availability', run: ensureAvailabilityColumn },
+	{
+		// Proxy copies (printed stand-ins) count as cards but never as value or
+		// profit/loss. Appended last, like every added column, so fresh and
+		// migrated databases share the column order of the positional user-data dump.
+		id: '0026_collection_proxy',
+		run: (db) => addColumnIfMissing(db, 'collection_cards', 'proxy', 'INTEGER NOT NULL DEFAULT 0')
+	}
 ];
 
 export function initDb() {

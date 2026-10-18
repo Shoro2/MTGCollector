@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS collection_cards (
 	purchase_price REAL,
 	notes TEXT,
 	added_at TEXT,
-	location TEXT NOT NULL DEFAULT ''
+	location TEXT NOT NULL DEFAULT '',
+	proxy INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS card_prices_lang (

@@ -39,7 +39,7 @@ function cleanPurchasePrice(raw: unknown): number | null {
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { cardId, quantity, condition, foil, language, purchasePrice, location = '' } = await request.json();
+	const { cardId, quantity, condition, foil, language, purchasePrice, location = '', proxy } = await request.json();
 	if (typeof cardId !== 'string' || !sqlite.prepare('SELECT 1 FROM cards WHERE id = ?').get(cardId)) {
 		throw error(400, 'Unknown card');
 	}
@@ -47,7 +47,7 @@ export async function POST({ request, locals }) {
 
 	sqlite
 		.prepare(
-			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at, location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at, location, proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 		)
 		.run(
 			locals.user.id,
@@ -58,7 +58,8 @@ export async function POST({ request, locals }) {
 			lang,
 			cleanPurchasePrice(purchasePrice),
 			new Date().toISOString(),
-			locationInput(location)
+			locationInput(location),
+			proxy === true ? 1 : 0
 		);
 
 	priceDataCache.invalidate(locals.user.id);
@@ -72,13 +73,14 @@ export async function POST({ request, locals }) {
 
 export async function PUT({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { id, quantity, condition, foil, language, notes, purchasePrice, location } = await request.json();
+	const { id, quantity, condition, foil, language, notes, purchasePrice, location, proxy } = await request.json();
 	if (!Number.isInteger(id)) throw error(400, 'Invalid id');
 	const lang = parseLanguageInput(language);
 
+	// Location and proxy status stay as they are when a caller leaves them out.
 	const result = sqlite
 		.prepare(
-			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ?, location = COALESCE(?, location) WHERE id = ? AND user_id = ?'
+			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ?, location = COALESCE(?, location), proxy = COALESCE(?, proxy) WHERE id = ? AND user_id = ?'
 		)
 		.run(
 			cleanQuantity(quantity),
@@ -88,6 +90,7 @@ export async function PUT({ request, locals }) {
 			typeof notes === 'string' ? notes : null,
 			cleanPurchasePrice(purchasePrice),
 			location === undefined ? null : locationInput(location),
+			typeof proxy === 'boolean' ? Number(proxy) : null,
 			id,
 			locals.user.id
 		);
@@ -125,6 +128,7 @@ export async function PATCH({ locals }) {
 	// shows: per-language overlay first, then English, then USD*rate fallback.
 	// (Previously this used the English EUR price only, so USD-only and
 	// non-English cards were either left unset or recorded at the wrong price.)
+	// Proxies are skipped: the market price of the original is not their cost.
 	const result = sqlite
 		.prepare(
 			`UPDATE collection_cards SET purchase_price = (
@@ -136,7 +140,7 @@ export async function PATCH({ locals }) {
 				LEFT JOIN card_prices_lang cpl ON cpl.card_id = c.id AND cpl.language = collection_cards.language
 				WHERE c.id = collection_cards.card_id
 			)
-			WHERE purchase_price IS NULL AND user_id = ?`
+			WHERE purchase_price IS NULL AND user_id = ? AND proxy = 0`
 		)
 		.run(usdToEur, locals.user.id);
 

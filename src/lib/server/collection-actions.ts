@@ -26,7 +26,7 @@ export function bulkEditCollection(db: Database, userId: string, rawIds: unknown
 	})();
 }
 
-/** Moving a subset preserves quantity, cost, acquisition date, notes and tags. */
+/** Moving a subset preserves quantity, cost, acquisition date, notes, tags and the proxy flag. */
 export function moveCollectionCopies(db: Database, userId: string, id: unknown, quantity: unknown, location: unknown) {
 	if (!Number.isSafeInteger(id) || !Number.isSafeInteger(quantity) || Number(quantity) < 1) throw new Error('Invalid copy count.');
 	const target = cleanLocation(location);
@@ -41,8 +41,8 @@ export function moveCollectionCopies(db: Database, userId: string, id: unknown, 
 			return;
 		}
 		const inserted = db.prepare(`INSERT INTO collection_cards
-			(user_id, card_id, quantity, condition, foil, language, purchase_price, notes, added_at, location)
-			SELECT user_id, card_id, ?, condition, foil, language, purchase_price, notes, added_at, ?
+			(user_id, card_id, quantity, condition, foil, language, purchase_price, notes, added_at, location, proxy)
+			SELECT user_id, card_id, ?, condition, foil, language, purchase_price, notes, added_at, ?, proxy
 			FROM collection_cards WHERE id = ? AND user_id = ?`).run(quantity, target, id, userId);
 		db.prepare(`INSERT INTO collection_card_tags (collection_card_id, tag_id)
 			SELECT ?, tag_id FROM collection_card_tags WHERE collection_card_id = ?`).run(inserted.lastInsertRowid, id);

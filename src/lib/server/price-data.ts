@@ -16,6 +16,7 @@ interface Holding extends Quote {
 	language: string;
 	quantity: number;
 	foil: number;
+	proxy: number;
 	purchase_price: number | null;
 	added_at: string | null;
 	local_eur: number | null;
@@ -52,21 +53,23 @@ const key = (card: string, language: string) => `${card}/${language}`;
 
 /** Inject the connection: tests use an isolated in-memory database, never db.ts. */
 export function getPriceData(db: Database, userId: string, rate: number, today = new Date().toISOString().slice(0, 10)) {
-	const holdings = db.prepare(`SELECT c.id, c.name, c.set_name, c.image_uri, c.local_image_path,
+	const all = db.prepare(`SELECT c.id, c.name, c.set_name, c.image_uri, c.local_image_path,
 		c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil,
-		cc.id AS collection_id, cc.quantity, cc.foil, cc.purchase_price, cc.added_at,
+		cc.id AS collection_id, cc.quantity, cc.foil, cc.proxy, cc.purchase_price, cc.added_at,
 		COALESCE(cc.language, 'en') AS language,
 		cpl.price_eur AS local_eur, cpl.price_eur_foil AS local_eur_foil,
 		cpl.price_usd AS local_usd, cpl.price_usd_foil AS local_usd_foil
 		FROM collection_cards cc JOIN cards c ON c.id = cc.card_id
 		LEFT JOIN card_prices_lang cpl ON cpl.card_id = cc.card_id AND cpl.language = COALESCE(cc.language, 'en')
 		WHERE cc.user_id = ?`).all(userId) as Holding[];
+	// Proxies count as cards, never as value, cost or profit/loss.
+	const holdings = all.filter(h => !h.proxy);
 
 	// Read each relevant series once. Re-running the distinct-day lookup for
 	// every holding previously took ~5 seconds for 379 rows on production.
 	const snapshots = db.prepare(`WITH series AS MATERIALIZED (
-		SELECT card_id, COALESCE(language, 'en') AS language FROM collection_cards WHERE user_id = ?
-		UNION SELECT card_id, 'en' FROM collection_cards WHERE user_id = ?
+		SELECT card_id, COALESCE(language, 'en') AS language FROM collection_cards WHERE user_id = ? AND proxy = 0
+		UNION SELECT card_id, 'en' FROM collection_cards WHERE user_id = ? AND proxy = 0
 	) SELECT ph.card_id, ph.language, ph.snapshot_date,
 		ph.price_eur, ph.price_eur_foil, ph.price_usd, ph.price_usd_foil
 		FROM series s JOIN price_history ph ON ph.card_id = s.card_id AND ph.language = s.language
@@ -97,11 +100,10 @@ export function getPriceData(db: Database, userId: string, rate: number, today =
 		};
 	});
 	const stats = { totalValue: 0, totalPurchaseValue: 0, profitValue: 0, profitCost: 0, profitCopies: 0,
-		uniqueCards: new Set(holdings.map(h => h.id)).size, totalCards: 0 };
+		uniqueCards: new Set(all.map(h => h.id)).size, totalCards: all.reduce((n, h) => n + h.quantity, 0) };
 	let missingPriceCount = 0, missingMarketCount = 0, estimatedCount = 0;
 	for (const h of topCards) {
 		const value = inEur(h, rate);
-		stats.totalCards += h.quantity;
 		stats.totalValue += (value ?? 0) * h.quantity;
 		stats.totalPurchaseValue += (h.purchase_price ?? 0) * h.quantity;
 		if (h.purchase_price == null) missingPriceCount += h.quantity;
@@ -154,8 +156,9 @@ export function getPriceData(db: Database, userId: string, rate: number, today =
 		profitHistory.push({ recorded_at: day, total_value: priced ? value : null, total_purchase: priced ? cost : null,
 			missing_market_count: missing, estimated_count: estimated });
 	}
+	const proxyCopies = all.reduce((n, h) => n + (h.proxy ? h.quantity : 0), 0);
 	return { topCards: topCards.filter(h => inEur(h, rate) != null), stats, missingPriceCount, missingMarketCount,
-		estimatedCount, profitHistory, usdToEur: rate };
+		estimatedCount, proxyCopies, profitHistory, usdToEur: rate };
 }
 
 export type PriceData = ReturnType<typeof getPriceData>;

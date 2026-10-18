@@ -19,7 +19,7 @@ export function validLanguage(value: unknown): value is string {
 	return typeof value === 'string' && LANGUAGES.some(l => l.code === value);
 }
 
-export type CollectionChanges = { location?: string; condition?: string; language?: string; foil?: boolean };
+export type CollectionChanges = { location?: string; condition?: string; language?: string; foil?: boolean; proxy?: boolean };
 
 export function collectionChanges(raw: unknown): CollectionChanges {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Choose at least one field to change.');
@@ -37,6 +37,10 @@ export function collectionChanges(raw: unknown): CollectionChanges {
 	if ('foil' in input) {
 		if (typeof input.foil !== 'boolean') throw new Error('Invalid finish.');
 		changes.foil = input.foil;
+	}
+	if ('proxy' in input) {
+		if (typeof input.proxy !== 'boolean') throw new Error('Invalid proxy status.');
+		changes.proxy = input.proxy;
 	}
 	if (!Object.keys(changes).length) throw new Error('Choose at least one field to change.');
 	return changes;
