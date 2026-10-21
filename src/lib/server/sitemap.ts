@@ -1,7 +1,7 @@
 import { SITE_URL } from '../seo';
 
 export const SITEMAP_PAGE_SIZE = 10_000;
-const STATIC_PATHS = ['/', '/cards', '/scan', '/contact', '/impressum', '/datenschutz'];
+const STATIC_PATHS = ['/', '/cards', '/scan', '/portfolio-tracker', '/contact', '/impressum', '/datenschutz'];
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>\n';
 const XML_NAMESPACE = 'http://www.sitemaps.org/schemas/sitemap/0.9';
 

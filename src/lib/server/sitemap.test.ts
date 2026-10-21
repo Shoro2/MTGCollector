@@ -26,7 +26,7 @@ it('keeps private pages out and works for an empty catalogue', () => {
 	expect(locations(sitemapIndex([]))).toEqual(['https://mtg-collector.com/sitemap-pages.xml']);
 	expect(locations(sitemapPart([], 'pages')!)).toEqual([
 		'https://mtg-collector.com/', 'https://mtg-collector.com/cards', 'https://mtg-collector.com/scan',
-		'https://mtg-collector.com/contact', 'https://mtg-collector.com/impressum', 'https://mtg-collector.com/datenschutz'
+		'https://mtg-collector.com/portfolio-tracker', 'https://mtg-collector.com/contact', 'https://mtg-collector.com/impressum', 'https://mtg-collector.com/datenschutz'
 	]);
 	expect(sitemapPart([], 'cards-1')).toBeNull();
 });

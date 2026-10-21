@@ -79,7 +79,7 @@ Google OAuth with session cookies:
 3. `hooks.server.ts` — validates session on every request, sets `locals.user`
 4. Sessions expire after 30 days
 
-**Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`, `/api/health`, `/api/scan-log` (POST; its GET is admin-only)
+**Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/portfolio-tracker`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`, `/api/health`, `/api/scan-log` (POST; its GET is admin-only)
 **Protected routes**: `/collection`, `/wishlist`, `/prices`, `/tags` — redirect to `/login`
 **Admin routes**: `/admin`, `/admin/api/*` — redirect non-admins to `/`. User must have `isAdmin: true` in `App.Locals`.
 
@@ -194,6 +194,7 @@ src/
 | `/cards` | Browse/search all cards (FTS, color/type/rarity/set filters, sorting, pagination, unique toggle, configurable page size) |
 | `/cards/[id]` | Card detail (reprints, price history chart, collection/wishlist status) |
 | `/scan` | Card scanner — public, no auth required. Adding to collection requires login |
+| `/portfolio-tracker` | Public landing page for the portfolio features (value over time, profit and loss, purchase price and collection imports), linked from the homepage and the footer and listed in the sitemap |
 | `/collection` | User's collection (search, sort by name/date/price/profit/set, tags, edit modal, purchase price tracking) |
 | `/collection/import` | CSV / Moxfield text preview and confirmed import (skip existing, append or replace; optionally every card as a proxy) |
 | `/collection/export` | Collector CSV with metadata, Moxfield CSV or text |
@@ -283,6 +284,7 @@ Verification: `npm test` includes isolated in-memory SQL fixtures for language/c
 - Printing pages stay at `/cards/<Scryfall id>` (`src/routes/cards/[id=printing]`, matcher `src/params/printing.ts`: lower-case UUIDs only) and keep their collection/wishlist actions and price history; their canonical is the card page, their breadcrumb links it, and their JSON-LD describes the printing URL itself. "Unique only" catalogue tiles open the card page.
 - Printing pages identify the set and collector number in their titles. JSON-LD describes the page and visible breadcrumbs, not a shop offer: Scryfall reference prices do not establish stock or an actual selling price. `jsonLd()` escapes `<` before embedding imported text in a script element.
 - `npm test` covers sitemap limits with 50,001 synthetic slugs, the slug rules, the card-page helpers and canonical/JSON-LD regressions without opening the application DB. After `npm run build`, run `node scripts/seo-check.mjs` for anonymous production HTTP and browser checks against an isolated synthetic database, including pagination without JavaScript, card-page canonicals, the apostrophe search and mobile screenshots. Its fixture printing ids must be UUID-shaped. Set `PLAYWRIGHT_CHROMIUM_PATH` for an installed Chromium browser.
+- **Landing page** `/portfolio-tracker` (`src/routes/portfolio-tracker/+page.svelte`) answers the product queries that ranked on page 3 ("mtg portfolio tracker", "mtg card collection manager"): what the tracker does today, an example dashboard built from HTML and SVG and labelled as example data (no card images or WotC symbols), where the prices come from, and visible questions without FAQPage markup (Google restricts FAQ results to government and health sites). It must stay in `publicRoutes` in `src/hooks.server.ts`: routes are protected by default, and without the entry visitors and Googlebot are redirected to `/login`. Visitor-facing copy on it, as on the card snippets, follows the owner's rule: no dashes, no marketing phrases.
 - After deployment, submit `/sitemap.xml` in Google Search Console and inspect sample home, scanner and card URLs. Local tests establish crawlability and markup correctness; they do not establish indexing or ranking. German landing pages and language routing are separate content work; the app's main pages remain English.
 
 ## Testing
@@ -478,6 +480,8 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 - **Self-hosting the scanner libraries in production** (`PUBLIC_SCANNER_ASSETS_URL=/vendor`, ~50 MB static files, no CDN calls, Apache-2.0 licences with attribution). The mechanism exists; this is a deployment/privacy decision.
 
 ### Done
+
+- Portfolio tracker landing page (2026-10-21, Search Console had "mtg portfolio tracker" at position 26.5 and "mtg card collection manager" at 25.4): public `/portfolio-tracker` with title "Free MTG Portfolio Tracker: Collection Value and Profit", an example dashboard in HTML and SVG (labelled as example data, no card images), the tracking, import and organizing features, sourcing of the prices and plain FAQ text (no FAQPage markup). In `publicRoutes` (routes are protected by default), the sitemap, the homepage ("3. Track" tile, "Track prices" for visitors) and the footer. Copy follows the owner's rule: no dashes, no marketing phrases. `seo-check.mjs` 64 / 64.
 
 - Card-page search snippets (2026-10-21, Search Console CTR 0.2 % at position 23.4): titles lead with the lowest price and the printing count within 60 characters, never promise a price for digital-only or unpriced cards, and drop the site suffix; descriptions state facts first, then the rules text. No price markup: Google's product-snippet documentation rules out `AggregateOffer` for product variants, and reference prices are not offers. The favicon link declares the 48 px image the `.ico` already contains. Unit tests in `card-page.test.ts`; `seo-check.mjs` 52 / 52 with a digital-only fixture card.
 
