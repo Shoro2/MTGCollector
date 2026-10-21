@@ -62,6 +62,8 @@ function clip(text: string, max: number): string {
  * Title and description for the search snippet: the facts a searcher wants first (lowest
  * price and printing count), never a price the card does not have. Digital-only cards
  * (Alchemy, MTGO) never get one, so their title says what they are instead.
+ * Owner rule for visitor-facing copy: no dashes. Type lines get commas
+ * ("Creature, Human"), ability words and modes a colon ("Landfall: Whenever").
  */
 export function cardPageMeta(
 	card: { name: string; type_line: string | null; oracle_text?: string | null; set_name?: string | null },
@@ -73,18 +75,19 @@ export function cardPageMeta(
 	const digital = printings.length > 0 && printings.every((x) => x.is_paper === 0);
 	let titles: string[], facts: string;
 	if (cheapest) {
-		titles = [`${name} – MTG price from ${cheapest.text}`, `${name} – price from ${cheapest.text}`];
+		titles = [`${name}: MTG price from ${cheapest.text}`, `${name}: price from ${cheapest.text}`];
 		if (printings.length > 1) titles.unshift(`${titles[0]}, ${count}`);
 		facts = `${count} from ${cheapest.text}${cheapest.foil ? ' (foil)' : ''} with price history.`;
 	} else if (digital) {
-		titles = [...(set ? [`${name} – digital MTG card, ${set}`] : []), `${name} – digital MTG card`];
-		facts = `digital-only card${set ? ` from ${set}` : ''}.`;
+		titles = [...(set ? [`${name}: digital MTG card, ${set}`] : []), `${name}: digital MTG card`];
+		facts = `digital card${set ? ` from ${set}` : ''}.`;
 	} else {
-		titles = [...(set ? [`${name} – MTG card, ${set}`] : []), `${name} – MTG card`];
+		titles = [...(set ? [`${name}: MTG card, ${set}`] : []), `${name}: MTG card`];
 		facts = `${count}, no price yet.`;
 	}
-	const lead = `${name}${card.type_line ? ` (${card.type_line})` : ''}: ${facts}`;
-	const rules = (card.oracle_text ?? '').replace(/\s+/g, ' ').trim();
+	const type = card.type_line?.replace(/\s*[—–]\s*/g, ', ');
+	const lead = `${name}${type ? ` (${type})` : ''}: ${facts}`;
+	const rules = (card.oracle_text ?? '').replace(/\s+/g, ' ').replace(/\s*[—–]\s*/g, ': ').trim();
 	const room = DESCRIPTION_MAX - lead.length - 1;
 	return {
 		title: titles.find((title) => title.length <= TITLE_MAX) ?? name,

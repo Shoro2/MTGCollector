@@ -110,17 +110,18 @@ try {
 	check(await page.locator('a.card-shell').getAttribute('href') === '/cards/teferis-protection', 'unique catalogue tiles open the card page');
 	await page.goto(origin + '/cards/teferis-protection');
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'card page is its own canonical');
-	check(await page.title() === "Teferi's Protection – MTG price from €12.50, 2 printings", 'card page title leads with the lowest price and the printings');
+	check(await page.title() === "Teferi's Protection: MTG price from €12.50, 2 printings", 'card page title leads with the lowest price and the printings');
 	check((await page.locator('meta[name="description"]').getAttribute('content')).startsWith("Teferi's Protection (Creature): 2 printings from €12.50 with price history."), 'card snippet states printings and the lowest price');
 	check(await page.getByRole('heading', { level: 1 }).innerText() === "Teferi's Protection", 'card page heading is the card name');
 	check(await page.locator(`a[href="/cards/${printingId(82)}"]`).count() === 1 && await page.locator(`a[href="/cards/${printingId(83)}"]`).count() === 1, 'card page links every printing');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'card page fits a mobile viewport');
 	await page.goto(origin + '/cards/killian-spotlight-chaser');
 	const digitalTitle = await page.title();
-	check(digitalTitle === 'Killian, Spotlight Chaser – digital MTG card' && digitalTitle.length <= 60, 'a digital-only card title says what it is and fits 60 characters');
+	check(digitalTitle === 'Killian, Spotlight Chaser: digital MTG card' && digitalTitle.length <= 60, 'a digital-only card title says what it is and fits 60 characters');
 	const digitalSnippet = await page.locator('meta[name="description"]').getAttribute('content');
-	check(digitalSnippet.includes('digital-only card from Alchemy: Reality Fracture. Whenever') && !/price|€|\$/i.test(digitalSnippet) && digitalSnippet.length <= 155,
+	check(digitalSnippet.includes('(Legendary Creature, Human Bard): digital card from Alchemy: Reality Fracture. Whenever') && !/price|€|\$/i.test(digitalSnippet) && digitalSnippet.length <= 155,
 		'a digital-only card snippet promises no price and quotes the rules');
+	check(!/[–—]/.test(digitalTitle + digitalSnippet), 'card snippets use no dashes, even where the type line has one');
 	await page.screenshot({ path: resolve(dir, 'card-mobile.png'), fullPage: true });
 	await page.goto(origin + '/cards/' + printingId(82));
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'printing page points its canonical to the card page');
