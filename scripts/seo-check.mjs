@@ -215,7 +215,7 @@ try {
 	const policyDe = await visitor.locator('main').innerText();
 	const unnamed = [...external].filter(host => !providers[host] || !policyEn.includes(providers[host]) || !policyDe.includes(providers[host]));
 	check(unnamed.length === 0, `the privacy policy names every third party the browser contacts (missing: ${unnamed.join(', ')})`);
-	check(['Cloudflare', 'IONOS'].every(name => policyEn.includes(name) && policyDe.includes(name)) && !/STRATO/.test(policyEn + policyDe),
+	check(['Cloudflare', 'STRATO'].every(name => policyEn.includes(name) && policyDe.includes(name)),
 		'the privacy policy names the server provider and Cloudflare');
 	await privacy.close();
 	console.log(`${checks} SEO checks passed. Screenshots: ${dir}`);
