@@ -12,11 +12,14 @@
 		label: string;
 		protected?: boolean;
 		admin?: boolean;
+		guestOnly?: boolean;
 	};
 
 	const navItems: NavItem[] = [
 		{ href: '/cards', label: 'Cards' },
 		{ href: '/scan', label: 'Scanner' },
+		// Visitors learn what the tracker does; signed-in users have Prices instead.
+		{ href: '/portfolio-tracker', label: 'Portfolio', guestOnly: true },
 		{ href: '/collection', label: 'Collection', protected: true },
 		{ href: '/wishlist', label: 'Wishlist', protected: true },
 		{ href: '/prices', label: 'Prices', protected: true },
@@ -27,6 +30,7 @@
 		navItems.filter((item) => {
 			if (item.admin) return data.user?.isAdmin;
 			if (item.protected) return data.user;
+			if (item.guestOnly) return !data.user;
 			return true;
 		})
 	);
