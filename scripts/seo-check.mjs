@@ -23,6 +23,11 @@ db.transaction(() => {
 	for (let i = 1; i <= 81; i++) insert.run(printingId(i), oracleId(Math.ceil(i / 3)), 'Fixture Card', String(i), 1);
 	insert.run(printingId(82), oracleId(99), "Teferi's Protection", '82', 30);
 	insert.run(printingId(83), oracleId(99), "Teferi's Protection", '83', 12.5);
+	// A digital-only (Alchemy) card never has a price; its snippet must not promise one.
+	db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,oracle_text,layout,released_at,is_paper)
+		VALUES (?,?,'Killian, Spotlight Chaser','yrf','Alchemy: Reality Fracture','1','uncommon','Legendary Creature — Human Bard',
+		'Whenever a source you control deals noncombat damage to an opponent, seek a card with mana value equal to the damage dealt.','normal','2026-10-13',0)`)
+		.run(printingId(84), oracleId(98));
 })();
 db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('/favicon.ico', printingId(1));
 // The FTS triggers only exist once the app has booted; index the fixture rows now.
@@ -64,7 +69,7 @@ try {
 		const xml = await response.text();
 		urls.push(...locations(xml));
 	}
-	check(urls.length === 34 && new Set(urls).size === 34, 'all 28 cards and six public pages appear exactly once');
+	check(urls.length === 35 && new Set(urls).size === 35, 'all 29 cards and six public pages appear exactly once');
 	check(!urls.some((url) => /\/cards\/[0-9a-f]{8}-/.test(url)) && urls.includes(publicOrigin + '/cards/teferis-protection'), 'the sitemap lists card pages, not printings');
 	for (const path of ['/sitemap-cards-0.xml', '/sitemap-cards-2.xml', '/sitemap-unknown.xml']) {
 		check((await fetch(origin + path, { redirect: 'manual' })).status === 404, `missing sitemap returns 404: ${path}`);
@@ -105,11 +110,17 @@ try {
 	check(await page.locator('a.card-shell').getAttribute('href') === '/cards/teferis-protection', 'unique catalogue tiles open the card page');
 	await page.goto(origin + '/cards/teferis-protection');
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'card page is its own canonical');
-	check((await page.title()).startsWith("Teferi's Protection – Price, Printings & Rules"), 'card page title names the card, not a printing');
-	check((await page.locator('meta[name="description"]').getAttribute('content')).includes('2 printings, from €12.50'), 'card snippet states printings and the lowest price');
+	check(await page.title() === "Teferi's Protection – MTG price from €12.50, 2 printings", 'card page title leads with the lowest price and the printings');
+	check((await page.locator('meta[name="description"]').getAttribute('content')).startsWith("Teferi's Protection (Creature): 2 printings from €12.50 with price history."), 'card snippet states printings and the lowest price');
 	check(await page.getByRole('heading', { level: 1 }).innerText() === "Teferi's Protection", 'card page heading is the card name');
 	check(await page.locator(`a[href="/cards/${printingId(82)}"]`).count() === 1 && await page.locator(`a[href="/cards/${printingId(83)}"]`).count() === 1, 'card page links every printing');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'card page fits a mobile viewport');
+	await page.goto(origin + '/cards/killian-spotlight-chaser');
+	const digitalTitle = await page.title();
+	check(digitalTitle === 'Killian, Spotlight Chaser – digital MTG card' && digitalTitle.length <= 60, 'a digital-only card title says what it is and fits 60 characters');
+	const digitalSnippet = await page.locator('meta[name="description"]').getAttribute('content');
+	check(digitalSnippet.includes('digital-only card from Alchemy: Reality Fracture. Whenever') && !/price|€|\$/i.test(digitalSnippet) && digitalSnippet.length <= 155,
+		'a digital-only card snippet promises no price and quotes the rules');
 	await page.screenshot({ path: resolve(dir, 'card-mobile.png'), fullPage: true });
 	await page.goto(origin + '/cards/' + printingId(82));
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'printing page points its canonical to the card page');

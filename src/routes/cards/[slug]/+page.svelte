@@ -16,7 +16,13 @@
 	let card = $derived(data.card);
 	let name = $derived(card.name as string);
 	let canonical = $derived(cardPageUrl(data.slug));
-	let meta = $derived(cardPageMeta({ name, type_line: card.type_line as string | null }, data.printings));
+	// Double-faced cards keep their rules text on the faces.
+	let meta = $derived(cardPageMeta({
+		name,
+		type_line: card.type_line as string | null,
+		oracle_text: (card.oracle_text || data.faces[0]?.oracle_text || null) as string | null,
+		set_name: card.set_name as string | null
+	}, data.printings));
 	let cheapest = $derived(cheapestPrice(data.printings));
 	let image = $derived((card.local_image_path || card.image_uri || '') as string);
 	let socialImage = $derived(image ? new URL(image, SITE_URL).href : undefined);
@@ -26,7 +32,8 @@
 </script>
 
 <svelte:head>
-	<title>{meta.title} | MTG Collector</title>
+	<!-- No site suffix: Google shows the site name above the result, the facts need the room. -->
+	<title>{meta.title}</title>
 	<meta name="description" content={meta.description} />
 	<link rel="canonical" href={canonical} />
 	<meta property="og:title" content={meta.title} />
