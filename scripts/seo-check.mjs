@@ -146,6 +146,7 @@ try {
 	await page.screenshot({ path: resolve(dir, 'home-mobile.png'), fullPage: true });
 	check(await page.locator('main a[href="/portfolio-tracker"]').count() >= 1 && await page.locator('footer a[href="/portfolio-tracker"]').count() === 1,
 		'home page and footer link the portfolio tracker');
+	check(await page.locator('nav.app-nav a[href="/portfolio-tracker"]').count() === 1, 'the menu lists Portfolio for visitors');
 	check((await fetch(origin + '/portfolio-tracker', { redirect: 'manual' })).status === 200, 'the portfolio tracker page is public');
 	await page.goto(origin + '/portfolio-tracker');
 	const trackerTitle = await page.title();
@@ -161,6 +162,11 @@ try {
 	check((await page.locator('main').innerText()).includes('Example data'), 'the dashboard preview is labelled as example data');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'portfolio tracker page fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'portfolio-tracker-mobile.png'), fullPage: true });
+	await page.goto(origin + '/login');
+	const loginText = await page.locator('main').innerText();
+	check(loginText.includes('free to use') && loginText.includes('never sell your data') && !/[–—]/.test(loginText),
+		'the sign in page says it is free and what happens with the data, without dashes');
+	check(await page.locator('main a[href="/datenschutz"]').count() === 1, 'the sign in page links the privacy policy');
 	await page.goto(origin + '/scan');
 	const description = await page.locator('meta[name="description"]').getAttribute('content');
 	check(description.includes('German') && !description.includes('foil detection'), 'scanner snippet describes supported use without guaranteed foil recognition');
@@ -179,6 +185,10 @@ try {
 	await hydrated.waitForURL('**/cards?page=2');
 	await hydrated.waitForFunction(() => document.querySelector('link[rel="canonical"]')?.href.endsWith('/cards?page=2'));
 	check(true, 'client navigation updates the canonical URL');
+	await hydrated.getByRole('button', { name: 'Toggle navigation menu' }).click();
+	await hydrated.getByRole('link', { name: 'Portfolio', exact: true }).click();
+	await hydrated.waitForURL('**/portfolio-tracker');
+	check(true, 'the mobile menu leads visitors to the portfolio tracker');
 	check(errors.length === 0, 'client pagination has no runtime errors');
 	await client.close();
 

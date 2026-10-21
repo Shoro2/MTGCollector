@@ -45,5 +45,12 @@
 		<p class="text-xs text-[var(--color-text-muted)]">
 			Sign in to create and manage your personal card collection.
 		</p>
+
+		<!-- Keep this accurate: Google, Cloudflare and Scryfall (card images) still see technical data such as the IP address. -->
+		<p class="text-xs text-[var(--color-text-muted)]">
+			MTG Collector is free to use. There are no ads, and we never sell your data or share your collection. When you
+			sign in, Google passes us your name, email address and profile picture.
+			<a href="/datenschutz" class="text-[var(--color-primary)] hover:underline">Privacy policy</a>
+		</p>
 	</div>
 </div>
