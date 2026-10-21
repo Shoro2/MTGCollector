@@ -157,14 +157,16 @@ src/
 │   │   ├── import-names.ts          # CLI for the printed names (npm run import-names)
 │   │   ├── scan-logs.ts             # Server-side scan logs: data/scan-logs/<day>/*.log, 30-day retention, list/read for /admin
 │   │   ├── cardtrader-xls.ts        # Cardtrader order export (.xls/.xlsx) -> purchase-price rows; the only place that parses an uploaded workbook (DB-free, unit-tested)
+│   │   ├── home-data.ts             # Homepage reads: price-mover rows, recently added, wishlist count, a card's printing prices (DB injected, unit-tested)
 │   │   ├── schema.ts               # Drizzle ORM table definitions
 │   │   └── seed.ts                  # Scryfall import script
+│   ├── home.ts                      # Homepage logic: pickMovers, collectionMoves, dashboardSummary, chartPaths, movesHeading (pure, + home.test.ts)
 │   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
 │   └── utils.ts                     # formatPrice, displayPrice, priceDivergence, formatManaCost, conditionLabel, getRarityColor, priceDate (+ utils.test.ts)
 └── routes/
     ├── +layout.svelte               # Nav bar, footer (Impressum/Datenschutz)
     ├── +layout.server.ts            # Passes user to all pages via layout data
-    ├── +page.svelte                 # Homepage with stats
+    ├── +page.svelte                 # Homepage: entry paths and price moves for visitors, collection dashboard when signed in
     ├── admin/                       # Admin dashboard (users, DB stats, scan logs) — admin only
     ├── api/
     │   ├── import/+server.ts        # Admin DB-init trigger
@@ -189,6 +191,7 @@ src/
 
 | Route | Purpose |
 |-------|---------|
+| `/` | Homepage. Visitors: three entry paths (portfolio tracker, card database, scanner) and the latest price moves. Signed in: dashboard with value, profit/loss, cards, wishlist, a 90-day chart, the biggest moves of the own copies and the newest entries |
 | `/cards` | Browse/search all cards (FTS, color/type/rarity/set filters, sorting, pagination, unique toggle, configurable page size) |
 | `/cards/[slug]` | Card page, one per card (readable slug from `card-slug.ts`): rules, every printing with prices, printed names; the canonical URL and the only card URLs in the sitemap |
 | `/cards/[id=printing]` | Printing detail at its Scryfall id (reprints, price history chart, collection/wishlist status); canonical points to the card page |
@@ -255,6 +258,12 @@ src/
 ### Price Change Indicator
 
 Collection and prices pages show purchase price vs current price with color-coded percentage (green = up, red = down). When only USD price exists and purchase price is EUR, USD is converted to EUR for the calculation.
+
+### Homepage
+
+- **Visitors** see three entry paths (portfolio tracker, card database with the real printing prices of Lightning Bolt, scanner) and the price moves of the latest snapshot day. `priceMoverRows()` pairs every English snapshot of that day (from €2) with the printing's previous snapshot; `pickMovers()` drops pairs whose EUR price is more than 2× off USD×rate before or after (Cardmarket trend anomalies, special printings such as 30th Anniversary rose by over 1000% unfiltered) and lists every card once, by its largest move, five up and five down. When the update before was more than two days earlier (server down, a stale copy), the heading names the span ("Price moves from June 21 to September 16"). Everything sits in `homeCatalogueCache` (one hour, invalidated by the price updater); the query takes ~130 ms over 3.5M history rows.
+- **Signed-in users** get a dashboard from the same `getPriceData()` result as `/prices` (`priceDataCache`): value with today's change (current price against the last snapshot before today, so "No change today" until the day's update ran), profit/loss over the copies with a purchase price, cards incl. proxies, wishlist entries, an inline SVG of value and purchase cost over 90 days (`chartPaths()`, no Chart.js; the last point before the window is carried to its edge), the biggest moves of their own copies from €1 (proxies excluded) and the five newest entries with location and price (proxies "not valued").
+- Visitor copy follows the owner's rule (no dashes, no marketing phrases); `seo-check.mjs` fails on a dash in the homepage's main text, title or description.
 
 ### Async Page Loading (Prices)
 
@@ -476,6 +485,7 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 
 ### Done
 
+- Homepage redesign (2026-10-22, the owner's drafts F and D): visitors get a hero with one sign-in button, three entry cards (portfolio tracker, card database, scanner) and real price moves with links to the card pages; signed-in users get a dashboard (value and today's change, profit/loss, cards, wishlist, 90-day chart, collection moves, recently added) from the cached price data. The beta notice, the static KPIs and the quick actions are gone. Title "MTG Collector: Free Card Scanner and Collection Tracker". Unit tests in `home.test.ts` / `home-data.test.ts`; `seo-check.mjs` 78 / 78, `collector-workflows-check.mjs` 44 / 44.
 - Privacy policy matches what the browser loads (2026-10-22): Cloudflare in front of the site, card images from Scryfall (`cards.scryfall.io`), the scanner libraries from jsDelivr and OpenCV, the Google profile picture, the contact form and IONOS as the email provider for info@mtg-collector.com, in German and English. The server provider stays STRATO: STRATO's VPS run in the IONOS network, so the origin's IP range is registered to IONOS SE. `seo-check.mjs` records every external host the browser contacts on the public pages and in live scan mode and fails until the policy names it. Self-hosting the scanner libraries (`PUBLIC_SCANNER_ASSETS_URL=/vendor`) or serving card images ourselves would remove those providers from the policy.
 - Portfolio tracker landing page (2026-10-21, Search Console had "mtg portfolio tracker" at position 26.5 and "mtg card collection manager" at 25.4): public `/portfolio-tracker` with title "Free MTG Portfolio Tracker: Collection Value and Profit", an example dashboard in HTML and SVG (labelled as example data, no card images), the tracking, import and organizing features, sourcing of the prices and plain FAQ text (no FAQPage markup). In `publicRoutes` (routes are protected by default), the sitemap, the homepage ("3. Track" tile, "Track prices" for visitors), the footer and the menu for visitors ("Portfolio", desktop and mobile; signed-in users have "Prices" there). Copy follows the owner's rule: no dashes, no marketing phrases. `seo-check.mjs` 66 / 66, `collector-workflows-check.mjs` 39 / 39.
 - Card-page search snippets (2026-10-21, Search Console CTR 0.2 % at position 23.4): `cardPageMeta()` titles lead with the lowest price and the printing count within 60 characters (`Lightning Bolt: MTG price from €0.94, 73 printings`, no dashes by the owner's rule for visitor-facing copy), never promise a price for digital-only (`is_paper = 0`) or unpriced cards, and carry no site suffix; descriptions state facts first, then the rules text, within 155 characters. No price markup (Google rules out `AggregateOffer` for product variants; reference prices are not offers). The favicon link declares the 48 px image the `.ico` already contains. See AGENTS.md, "Search engine indexing"; `seo-check.mjs` 52 / 52.

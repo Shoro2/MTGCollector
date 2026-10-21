@@ -1,45 +1,48 @@
-import { db } from '$lib/server/db';
-import { cards, collectionCards } from '$lib/server/schema';
-import { sql, eq, and } from 'drizzle-orm';
+import { sqlite } from '$lib/server/db';
+import { cardSlugIndex } from '$lib/server/card-slugs';
+import { homeCatalogueCache, priceDataCache } from '$lib/server/cache';
+import { recentlyAdded, setCodes, wishlistCount } from '$lib/server/home-data';
+import { chartPaths, collectionMoves, dashboardSummary, movesHeading, type Mover } from '$lib/home';
 
 export async function load({ locals }) {
-	const totalCardsResult = db.select({ count: sql<number>`count(*)` }).from(cards).get();
-
+	const slugs = cardSlugIndex(sqlite);
+	const cardCount = slugs.slugs.length;
+	const catalogueEmpty = !sqlite.prepare('SELECT 1 FROM cards LIMIT 1').get();
 	const userId = locals.user?.id;
 
 	if (!userId) {
+		const home = await homeCatalogueCache.get('catalogue');
+		const withLink = (m: Mover) => ({ ...m, href: slugs.byOracle.has(m.oracleId) ? `/cards/${slugs.byOracle.get(m.oracleId)}` : null });
 		return {
-			totalCards: totalCardsResult?.count ?? 0,
-			collectionCount: 0,
-			collectionValue: 0
+			cardCount,
+			catalogueEmpty,
+			visitor: {
+				movesHeading: home.date ? movesHeading(home.date, home.previousDate) : null,
+				up: home.moves.up.map(withLink),
+				down: home.moves.down.map(withLink),
+				sample: home.sample
+			},
+			dashboard: null
 		};
 	}
 
-	const collectionResult = db
-		.select({
-			count: sql<number>`count(*)`,
-			totalQty: sql<number>`COALESCE(sum(${collectionCards.quantity}), 0)`
-		})
-		.from(collectionCards)
-		.where(eq(collectionCards.userId, userId))
-		.get();
-
-	const valueResult = db
-		.select({
-			total: sql<number>`COALESCE(sum(
-				CASE WHEN ${collectionCards.foil} = 1 THEN ${cards.priceEurFoil} ELSE ${cards.priceEur} END
-				* ${collectionCards.quantity}
-			), 0)`
-		})
-		.from(collectionCards)
-		.innerJoin(cards, sql`${collectionCards.cardId} = ${cards.id}`)
-		// Proxies count as cards above, never as value.
-		.where(and(eq(collectionCards.userId, userId), eq(collectionCards.proxy, false)))
-		.get();
-
+	const data = await priceDataCache.get(userId);
+	const today = new Date().toISOString().slice(0, 10);
+	const moves = collectionMoves(data.topCards, data.usdToEur);
+	const codes = setCodes(sqlite, [...moves.up, ...moves.down].map(m => m.id));
+	const withSet = <T extends { id: string }>(m: T) => ({ ...m, setCode: (codes.get(m.id) ?? '').toUpperCase() });
 	return {
-		totalCards: totalCardsResult?.count ?? 0,
-		collectionCount: collectionResult?.totalQty ?? 0,
-		collectionValue: valueResult?.total ?? 0
+		cardCount,
+		catalogueEmpty,
+		visitor: null,
+		dashboard: {
+			summary: dashboardSummary(data),
+			profitCopies: data.stats.profitCopies,
+			wishlist: wishlistCount(sqlite, userId),
+			chart: chartPaths(data.profitHistory, { today }),
+			up: moves.up.map(withSet),
+			down: moves.down.map(withSet),
+			recent: recentlyAdded(sqlite, userId)
+		}
 	};
 }

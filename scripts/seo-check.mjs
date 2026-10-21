@@ -28,6 +28,13 @@ db.transaction(() => {
 		VALUES (?,?,'Killian, Spotlight Chaser','yrf','Alchemy: Reality Fracture','1','uncommon','Legendary Creature — Human Bard',
 		'Whenever a source you control deals noncombat damage to an opponent, seek a card with mana value equal to the damage dealt.','normal','2026-10-13',0)`)
 		.run(printingId(84), oracleId(98));
+	// Two price updates for the homepage's price moves: Teferi's Protection rises, a fixture
+	// card falls, and a trend price far off the USD price stays out.
+	const snapshot = db.prepare("INSERT INTO price_history(card_id,language,snapshot_date,recorded_at,price_eur,price_usd) VALUES (?,'en',?,?,?,?)");
+	for (const [i, before, after, usdBefore, usdAfter] of [[82, 20, 30, 22, 33], [4, 10, 8, 11, 9], [7, 3, 300, 3.3, 3.5]]) {
+		snapshot.run(printingId(i), '2026-10-01', '2026-10-01T05:00:00Z', before, usdBefore);
+		snapshot.run(printingId(i), '2026-10-09', '2026-10-09T05:00:00Z', after, usdAfter);
+	}
 })();
 db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('/favicon.ico', printingId(1));
 // Card images come from Scryfall's image server, as in production (the privacy check below expects it).
@@ -141,9 +148,24 @@ try {
 	check((await fetch(origin + '/cards/' + printingId(999))).status === 404, 'missing printing retains its real 404 status');
 	await page.goto(origin + '/');
 	check(JSON.parse(await page.locator('script[type="application/ld+json"]').textContent())['@type'] === 'WebSite', 'home page declares its site identity');
-	check(await page.getByRole('heading', { level: 1 }).innerText() === 'MTG card scanner and collection tracker', 'home page explains the app in visible content');
+	check(await page.getByRole('heading', { level: 1 }).innerText() === 'Scan, look up and track your Magic cards', 'home page says what the app does');
+	const homeTitle = await page.title(), homeDescription = await page.locator('meta[name="description"]').getAttribute('content');
+	check(homeTitle.length <= 60 && homeDescription.length <= 155, 'home title and description fit their snippet lengths');
+	check(!/[-–—]/.test(await page.locator('main').innerText() + homeTitle + homeDescription), 'home page copy uses no dashes');
+	check(await page.getByRole('link', { name: 'Start your collection' }).getAttribute('href') === '/login', 'home page sends visitors to sign in');
+	for (const path of ['/portfolio-tracker', '/cards', '/scan']) {
+		check(await page.locator(`section[aria-label="Where to start"] a[href="${path}"]`).count() === 1, `home page offers a way in: ${path}`);
+	}
+	check((await page.locator('main').innerText()).includes('29 cards in every printing'), 'home page counts the cards in the database');
+	const moves = page.locator('section[aria-labelledby="price-moves"]');
+	check(await moves.getByRole('heading').innerText() === 'Price moves from October 1 to October 9', 'price moves name the span between the two price updates');
+	check(await moves.locator('a[href="/cards/teferis-protection"]', { hasText: '▲ 50.0%' }).count() === 1, 'a rising card links its card page');
+	check(await moves.locator('.move-row').count() === 2 && (await moves.innerText()).includes('▼ 20.0%'), 'a falling card is listed, the trend price outlier is not');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'home page fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'home-mobile.png'), fullPage: true });
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.screenshot({ path: resolve(dir, 'home-desktop.png'), fullPage: true });
+	await page.setViewportSize({ width: 390, height: 844 });
 	check(await page.locator('main a[href="/portfolio-tracker"]').count() >= 1 && await page.locator('footer a[href="/portfolio-tracker"]').count() === 1,
 		'home page and footer link the portfolio tracker');
 	check(await page.locator('nav.app-nav a[href="/portfolio-tracker"]').count() === 1, 'the menu lists Portfolio for visitors');

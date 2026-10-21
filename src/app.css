@@ -310,45 +310,6 @@ tbody tr:hover {
 	color: #fff;
 }
 
-.notice-beta {
-	background: linear-gradient(100deg, rgba(245, 166, 35, 0.09), rgba(245, 166, 35, 0.03));
-	border-color: rgba(245, 166, 35, 0.22);
-	color: #d9c08a;
-}
-
-.notice-beta-strong {
-	color: #f5c265;
-}
-
-.notice-beta-button {
-	color: #a98a4d;
-}
-
-.notice-beta-button:hover {
-	background: rgba(245, 166, 35, 0.12);
-	color: #f5c265;
-}
-
-.tone-info {
-	background: rgba(111, 178, 255, 0.12);
-	color: var(--color-primary);
-}
-
-.tone-success {
-	background: rgba(70, 197, 120, 0.12);
-	color: var(--color-success);
-}
-
-.tone-accent {
-	background: rgba(245, 166, 35, 0.12);
-	color: var(--color-accent);
-}
-
-.tone-violet {
-	background: rgba(165, 150, 192, 0.14);
-	color: var(--pip-b);
-}
-
 .set-code {
 	font-family: var(--font-data);
 	font-size: 0.7rem;
