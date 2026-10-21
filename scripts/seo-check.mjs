@@ -30,6 +30,8 @@ db.transaction(() => {
 		.run(printingId(84), oracleId(98));
 })();
 db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('/favicon.ico', printingId(1));
+// Card images come from Scryfall's image server, as in production (the privacy check below expects it).
+db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('https://cards.scryfall.io/normal/front/0/0/fixture.jpg', printingId(84));
 // The FTS triggers only exist once the app has booted; index the fixture rows now.
 db.exec("INSERT INTO cards_fts(cards_fts) VALUES('rebuild')");
 db.close();
@@ -189,6 +191,43 @@ try {
 	check(true, 'the mobile menu leads visitors to the portfolio tracker');
 	check(errors.length === 0, 'client pagination has no runtime errors');
 	await client.close();
+
+	// Every third party the browser contacts must be named in the privacy policy, in both languages.
+	// A new external host fails here until the policy and this list name it.
+	const providers = {
+		'analytics.mtg-collector.com': 'Plausible',
+		'cards.scryfall.io': 'Scryfall',
+		'docs.opencv.org': 'OpenCV',
+		'cdn.jsdelivr.net': 'jsDelivr',
+		'lh3.googleusercontent.com': 'Google',
+		'accounts.google.com': 'Google'
+	};
+	const privacy = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	await privacy.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+	const external = new Set();
+	privacy.on('request', request => {
+		const url = new URL(request.url());
+		if (url.origin !== origin && url.protocol.startsWith('http')) external.add(url.hostname);
+	});
+	const visitor = await privacy.newPage();
+	for (const path of ['/', '/cards', '/cards/killian-spotlight-chaser', '/portfolio-tracker', '/login', '/contact', '/scan']) {
+		await visitor.goto(origin + path);
+		await visitor.waitForLoadState('networkidle');
+	}
+	await visitor.getByRole('button', { name: 'Live camera', exact: true }).first().click();
+	await visitor.waitForLoadState('networkidle');
+	await visitor.waitForFunction(() => performance.getEntriesByType('resource').some(e => e.name.includes('opencv')), null, { timeout: 15000 }).catch(() => {});
+	check(['cards.scryfall.io', 'docs.opencv.org', 'cdn.jsdelivr.net'].every(host => external.has(host)),
+		`the check sees card images and scanner libraries load from third parties (seen: ${[...external].join(', ')})`);
+	await visitor.goto(origin + '/datenschutz');
+	const policyEn = await visitor.locator('main').innerText();
+	await visitor.getByRole('button', { name: 'Deutsch', exact: true }).click();
+	const policyDe = await visitor.locator('main').innerText();
+	const unnamed = [...external].filter(host => !providers[host] || !policyEn.includes(providers[host]) || !policyDe.includes(providers[host]));
+	check(unnamed.length === 0, `the privacy policy names every third party the browser contacts (missing: ${unnamed.join(', ')})`);
+	check(['Cloudflare', 'STRATO', 'IONOS'].every(name => policyEn.includes(name) && policyDe.includes(name)),
+		'the privacy policy names the server, mail and network providers');
+	await privacy.close();
 	console.log(`${checks} SEO checks passed. Screenshots: ${dir}`);
 } finally {
 	await browser?.close();
