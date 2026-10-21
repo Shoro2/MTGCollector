@@ -144,6 +144,7 @@ try {
 	await page.screenshot({ path: resolve(dir, 'home-mobile.png'), fullPage: true });
 	check(await page.locator('main a[href="/portfolio-tracker"]').count() >= 1 && await page.locator('footer a[href="/portfolio-tracker"]').count() === 1,
 		'home page and footer link the portfolio tracker');
+	check(await page.locator('nav.app-nav a[href="/portfolio-tracker"]').count() === 1, 'the menu lists Portfolio for visitors');
 	check((await fetch(origin + '/portfolio-tracker', { redirect: 'manual' })).status === 200, 'the portfolio tracker page is public');
 	await page.goto(origin + '/portfolio-tracker');
 	const trackerTitle = await page.title();
@@ -177,6 +178,10 @@ try {
 	await hydrated.waitForURL('**/cards?page=2');
 	await hydrated.waitForFunction(() => document.querySelector('link[rel="canonical"]')?.href.endsWith('/cards?page=2'));
 	check(true, 'client navigation updates the canonical URL');
+	await hydrated.getByRole('button', { name: 'Toggle navigation menu' }).click();
+	await hydrated.getByRole('link', { name: 'Portfolio', exact: true }).click();
+	await hydrated.waitForURL('**/portfolio-tracker');
+	check(true, 'the mobile menu leads visitors to the portfolio tracker');
 	check(errors.length === 0, 'client pagination has no runtime errors');
 	await client.close();
 	console.log(`${checks} SEO checks passed. Screenshots: ${dir}`);

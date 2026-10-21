@@ -194,7 +194,7 @@ src/
 | `/cards` | Browse/search all cards (FTS, color/type/rarity/set filters, sorting, pagination, unique toggle, configurable page size) |
 | `/cards/[id]` | Card detail (reprints, price history chart, collection/wishlist status) |
 | `/scan` | Card scanner — public, no auth required. Adding to collection requires login |
-| `/portfolio-tracker` | Public landing page for the portfolio features (value over time, profit and loss, purchase price and collection imports), linked from the homepage and the footer and listed in the sitemap |
+| `/portfolio-tracker` | Public landing page for the portfolio features (value over time, profit and loss, purchase price and collection imports), linked from the homepage, the footer and the visitors' menu ("Portfolio", hidden for signed-in users) and listed in the sitemap |
 | `/collection` | User's collection (search, sort by name/date/price/profit/set, tags, edit modal, purchase price tracking) |
 | `/collection/import` | CSV / Moxfield text preview and confirmed import (skip existing, append or replace; optionally every card as a proxy) |
 | `/collection/export` | Collector CSV with metadata, Moxfield CSV or text |
@@ -481,7 +481,7 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 
 ### Done
 
-- Portfolio tracker landing page (2026-10-21, Search Console had "mtg portfolio tracker" at position 26.5 and "mtg card collection manager" at 25.4): public `/portfolio-tracker` with title "Free MTG Portfolio Tracker: Collection Value and Profit", an example dashboard in HTML and SVG (labelled as example data, no card images), the tracking, import and organizing features, sourcing of the prices and plain FAQ text (no FAQPage markup). In `publicRoutes` (routes are protected by default), the sitemap, the homepage ("3. Track" tile, "Track prices" for visitors) and the footer. Copy follows the owner's rule: no dashes, no marketing phrases. `seo-check.mjs` 64 / 64.
+- Portfolio tracker landing page (2026-10-21, Search Console had "mtg portfolio tracker" at position 26.5 and "mtg card collection manager" at 25.4): public `/portfolio-tracker` with title "Free MTG Portfolio Tracker: Collection Value and Profit", an example dashboard in HTML and SVG (labelled as example data, no card images), the tracking, import and organizing features, sourcing of the prices and plain FAQ text (no FAQPage markup). In `publicRoutes` (routes are protected by default), the sitemap, the homepage ("3. Track" tile, "Track prices" for visitors), the footer and the menu for visitors ("Portfolio", desktop and mobile; signed-in users have "Prices" there). Copy follows the owner's rule: no dashes, no marketing phrases. `seo-check.mjs` 66 / 66, `collector-workflows-check.mjs` 39 / 39.
 
 - Card-page search snippets (2026-10-21, Search Console CTR 0.2 % at position 23.4): titles lead with the lowest price and the printing count within 60 characters, never promise a price for digital-only or unpriced cards, and drop the site suffix; descriptions state facts first, then the rules text. No price markup: Google's product-snippet documentation rules out `AggregateOffer` for product variants, and reference prices are not offers. The favicon link declares the 48 px image the `.ico` already contains. Unit tests in `card-page.test.ts`; `seo-check.mjs` 52 / 52 with a digital-only fixture card.
 
