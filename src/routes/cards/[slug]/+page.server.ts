@@ -14,7 +14,7 @@ export async function load({ params }) {
 
 	const printings = sqlite.prepare(`
 		SELECT id, set_code, set_name, collector_number, rarity, released_at, image_uri, local_image_path,
-			price_eur, price_usd, price_eur_foil, price_usd_foil
+			price_eur, price_usd, price_eur_foil, price_usd_foil, is_paper
 		FROM cards
 		WHERE oracle_id = ? AND COALESCE(layout, '') != 'art_series'
 		ORDER BY released_at DESC, set_name, collector_number
