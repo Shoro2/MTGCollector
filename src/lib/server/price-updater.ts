@@ -2,7 +2,7 @@ import { invalidateArtIndex } from './art-index.js';
 import { invalidateNameIndex } from './card-search.js';
 import { availabilityWriter } from './card-availability.js';
 import { sqlite } from './db.js';
-import { priceDataCache, setsCache } from './cache.js';
+import { homeCatalogueCache, priceDataCache, setsCache } from './cache.js';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -419,6 +419,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		lastSuccessfulSnapshotDate = snapshotDate;
 
 		priceDataCache.invalidateAll();
+		homeCatalogueCache.invalidateAll();
 		setsCache.invalidate();
 
 		try {

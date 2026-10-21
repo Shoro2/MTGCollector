@@ -92,6 +92,15 @@ try {
 		moxfieldRows.some(row => row.startsWith('"2","2","War Horn"') && row.includes('"False","False"')), 'Moxfield export marks proxies and keeps them off the tradelist');
 	await page.goto(origin + '/');
 	check(await page.locator('.kpi-value', { hasText: '€10.00' }).count() === 1, 'homepage value leaves proxies out');
+	check((await page.getByRole('heading', { level: 1 }).innerText()).startsWith('Welcome back, Fixture'), 'signed in, the homepage is the dashboard');
+	check((await page.locator('.kpi-card', { hasText: 'Cards' }).first().innerText()).includes('2 of them proxies'), 'dashboard counts proxies as cards');
+	check((await page.locator('.kpi-card', { hasText: 'Profit / loss' }).innerText()).includes('+€6.00') &&
+		(await page.locator('.kpi-card', { hasText: 'Profit / loss' }).innerText()).includes('+150.0% on what you paid'), 'dashboard profit matches the prices page');
+	const recent = page.locator('section[aria-labelledby="recently-added"]');
+	check(await recent.locator('a', { hasText: 'Proxy, Box B' }).filter({ hasText: 'not valued' }).count() === 1 &&
+		await recent.locator('a', { hasText: 'Box A' }).filter({ hasText: '€5.00' }).count() === 1, 'recently added shows locations, prices and unvalued proxies');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'dashboard fits mobile width');
+	await page.screenshot({ path: resolve(dir, 'home-dashboard-mobile.png'), fullPage: true });
 	await page.goto(origin + '/collection');
 	const forbidden = await context.request.post(origin + '/collection/bulk', { data: { action: 'edit', ids: [1, 2], changes: { location: 'Wrong' } } });
 	check(forbidden.status() === 400 && db.prepare('SELECT location FROM collection_cards WHERE id=1').get().location === 'Box A', 'mixed-owner request fails atomically');

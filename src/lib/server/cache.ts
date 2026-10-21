@@ -1,6 +1,8 @@
 import { sqlite } from './db.js';
 import { getUsdToEurRate } from './exchange-rate.js';
 import { getPriceData } from './price-data.js';
+import { priceMoverRows, printingPriceSample } from './home-data.js';
+import { pickMovers } from '../home.js';
 
 export function createCache<T>(fetcher: () => T, ttlMs: number) {
 	let cached: { value: T; at: number } | null = null;
@@ -119,3 +121,12 @@ export const priceDataCache = createUserCache(async (userId: string) => {
 	const rate = await getUsdToEurRate();
 	return getPriceData(sqlite, userId, rate);
 }, 10 * 60 * 1000);
+
+// Visitor homepage: price moves of the latest snapshot day (~0.1 s over the whole
+// history) and one card's printing prices. Same for everyone, so one key; the price
+// updater invalidates it, the TTL covers a missed run.
+export const homeCatalogueCache = createUserCache(async () => {
+	const rate = await getUsdToEurRate();
+	const { date, previousDate, rows } = priceMoverRows(sqlite);
+	return { date, previousDate, moves: pickMovers(rows, { rate }), sample: printingPriceSample(sqlite, 'Lightning Bolt') };
+}, 60 * 60 * 1000);
