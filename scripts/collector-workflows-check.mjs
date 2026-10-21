@@ -49,6 +49,7 @@ try {
 	const page = await context.newPage(), errors = [];
 	page.on('pageerror', error => errors.push(error.message));
 	await page.goto(origin + '/collection');
+	check(await page.locator('nav.app-nav a[href="/portfolio-tracker"]').count() === 0, 'signed-in users get no Portfolio menu item');
 	await page.getByRole('button', { name: 'Select this page', exact: true }).click();
 	await page.getByLabel('Change location (empty clears it)').check();
 	await page.getByLabel('New location', { exact: true }).fill('Box A');
