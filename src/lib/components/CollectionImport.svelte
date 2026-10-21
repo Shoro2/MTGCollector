@@ -11,6 +11,7 @@
 	let currency = $state('EUR');
 	let location = $state('');
 	let ignorePrices = $state(false);
+	let allProxies = $state(false);
 	let headers = $state<string[]>([]);
 	let mapping = $state<ImportMapping>({});
 	let busy = $state(false);
@@ -20,7 +21,7 @@
 	type Preview = {
 		digest: string;
 		summary: { total: number; ready: number; copies: number; duplicates: number; skipped: number; issues: number; existingEntries: number; existingCopies: number };
-		rows: { line: number; name: string; set: string; number: string; quantity: number; foil: number; language: string; condition: string; purchasePrice: number | null; location: string; duplicate: boolean }[];
+		rows: { line: number; name: string; set: string; number: string; quantity: number; foil: number; proxy: number; language: string; condition: string; purchasePrice: number | null; location: string; duplicate: boolean }[];
 		issues: ImportIssue[];
 	};
 	let preview = $state<Preview | null>(null);
@@ -34,6 +35,7 @@
 		const form = new FormData();
 		form.set('action', action); form.set('format', format); form.set('mode', mode);
 		form.set('currency', currency); form.set('location', location); form.set('ignorePrices', String(ignorePrices));
+		form.set('allProxies', String(allProxies));
 		if (file && format === 'csv') form.set('file', file); else form.set('text', text);
 		if (headers.length && format === 'csv') form.set('mapping', JSON.stringify(mapping));
 		if (action === 'commit' && preview) { form.set('digest', preview.digest); form.set('confirmReplace', String(confirmReplace)); }
@@ -65,13 +67,14 @@
 			<label class="block">Card list<textarea bind:value={text} oninput={changed} rows="5" placeholder="1 Sol Ring (CMM) 396" class="block w-full rounded border p-2 bg-[var(--color-bg)]"></textarea></label>
 		{/if}
 		<div class="grid gap-3 sm:grid-cols-2">
-			<label>Import mode<select aria-label="Import mode" bind:value={mode} onchange={changed} class="block w-full rounded border p-2 bg-[var(--color-bg)]"><option value="merge">Skip existing entries</option><option value="append">Add every matched entry</option><option value="sync">Replace entire collection</option></select></label>
+			<label>Import mode<select aria-label="Import mode" bind:value={mode} onchange={changed} class="block w-full rounded border p-2 bg-[var(--color-bg)]"><option value="merge">Skip existing entries</option><option value="append">Add every matched entry</option><option value="sync">{allProxies ? 'Replace existing proxies' : 'Replace entire collection'}</option></select></label>
 			<label>Location for rows without a folder<input bind:value={location} oninput={changed} maxlength="120" list="import-locations" placeholder="Unassigned" class="block w-full rounded border p-2 bg-[var(--color-bg)]" /></label>
 			<label>Currency when not specified<select aria-label="Currency when not specified" bind:value={currency} onchange={changed} class="block w-full rounded border p-2 bg-[var(--color-bg)]"><option value="EUR">EUR</option><option value="unknown">Unknown — flag prices for review</option></select></label>
 			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={ignorePrices} onchange={changed} />Ignore purchase prices</label>
+			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={allProxies} onchange={changed} />Import every card as a proxy</label>
 		</div>
 		<datalist id="import-locations">{#each locations as value}<option value={value}></option>{/each}</datalist>
-		<p class="text-xs text-[var(--color-text-muted)]">A duplicate has the same printing, finish, condition, language, location and purchase price as an existing entry. Skipping it does not increase its quantity. Missing quantity defaults to 1, language to English, condition to Near Mint and finish to Non-Foil. Missing costs stay empty. Only EUR costs are imported; other currencies are flagged. Etched finishes require review.</p>
+		<p class="text-xs text-[var(--color-text-muted)]">A duplicate has the same printing, finish, proxy status, condition, language, location and purchase price as an existing entry. Skipping it does not increase its quantity. Missing quantity defaults to 1, language to English, condition to Near Mint and finish to Non-Foil. Rows are real cards unless a Proxy column (as in Moxfield exports) says otherwise or every card is imported as a proxy; proxies count as cards, never toward value or profit. Missing costs stay empty. Only EUR costs are imported; other currencies are flagged. Etched finishes require review.</p>
 		{#if headers.length && format === 'csv'}
 			<details class="rounded border p-3"><summary class="cursor-pointer">Review column mapping</summary>
 				<div class="grid gap-2 mt-3 sm:grid-cols-2">{#each IMPORT_FIELDS as [key, label]}
@@ -93,11 +96,11 @@
 				{/if}
 				<details open><summary class="cursor-pointer">Matched entries (first {preview.rows.length})</summary>
 					<div class="mt-2 space-y-2 max-h-72 overflow-y-auto">{#each preview.rows as row}
-						<div class="rounded border border-[var(--color-border)] p-2 text-sm"><p class="font-medium">{row.quantity}× {row.name} · {row.set.toUpperCase()} #{row.number}</p><p>{row.foil ? 'Foil' : 'Non-Foil'} · {row.language.toUpperCase()} · {row.condition.replaceAll('_', ' ')} · {row.location || 'Unassigned'} · Cost: {row.purchasePrice === null ? 'Unknown' : `€${row.purchasePrice.toFixed(2)}`}{row.duplicate ? ' · Already present' : ''}</p></div>
+						<div class="rounded border border-[var(--color-border)] p-2 text-sm"><p class="font-medium">{row.quantity}× {row.name} · {row.set.toUpperCase()} #{row.number}</p><p>{row.foil ? 'Foil' : 'Non-Foil'}{row.proxy ? ' · Proxy' : ''} · {row.language.toUpperCase()} · {row.condition.replaceAll('_', ' ')} · {row.location || 'Unassigned'} · Cost: {row.purchasePrice === null ? 'Unknown' : `€${row.purchasePrice.toFixed(2)}`}{row.duplicate ? ' · Already present' : ''}</p></div>
 					{/each}</div>
 				</details>
 				{#if mode === 'sync'}
-					<label class="flex gap-2 items-start text-red-300"><input type="checkbox" bind:checked={confirmReplace} class="mt-1" />Replace all {preview.summary.existingCopies} existing copies ({preview.summary.existingEntries} entries) and their tag assignments with this file.</label>
+					<label class="flex gap-2 items-start text-red-300"><input type="checkbox" bind:checked={confirmReplace} class="mt-1" />{#if allProxies}Replace all {preview.summary.existingCopies} existing proxy copies ({preview.summary.existingEntries} entries) and their tag assignments with this file. Real cards are kept.{:else}Replace all {preview.summary.existingCopies} existing copies ({preview.summary.existingEntries} entries) and their tag assignments with this file.{/if}</label>
 				{/if}
 				<button onclick={() => send('commit')} disabled={!preview.summary.ready || mode === 'sync' && (!confirmReplace || preview.summary.issues > 0)} class="rounded bg-[var(--color-primary-button)] px-4 py-2 disabled:opacity-50">Import {preview.summary.copies} copies</button>
 			</section>

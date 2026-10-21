@@ -12,8 +12,12 @@ const dir = resolve('data', `collector-workflows-${Date.now()}`);
 mkdirSync(dir, { recursive: true });
 const dbPath = resolve(dir, 'mtg.db');
 const db = new Database(dbPath);
-// Simulate an existing database without the new location column.
-db.exec(SCHEMA_SQL.replace(/\tadded_at TEXT,\r?\n\tlocation TEXT NOT NULL DEFAULT ''/, '\tadded_at TEXT'));
+// Simulate an existing database without the newer location and proxy columns.
+const legacySchema = SCHEMA_SQL.replace(/\tadded_at TEXT,\r?\n\tlocation TEXT NOT NULL DEFAULT '',\r?\n\tproxy INTEGER NOT NULL DEFAULT 0/, '\tadded_at TEXT');
+assert.notEqual(legacySchema, SCHEMA_SQL, 'the legacy schema simulation must remove location and proxy');
+db.exec(legacySchema);
+const legacyColumns = db.prepare('PRAGMA table_info(collection_cards)').all().map(column => column.name);
+assert.ok(!legacyColumns.includes('location') && !legacyColumns.includes('proxy'), 'the simulated old database lacks location and proxy');
 const token = randomBytes(32).toString('hex');
 db.exec(`INSERT INTO users(id,google_id,email,name) VALUES ('owner','owner','fixture@example.invalid','Fixture'),('other','other','other@example.invalid','Other');
 	INSERT INTO cards(id,name,set_code,set_name,collector_number,price_eur) VALUES ('horn','War Horn','ori','Magic Origins','243',5),
@@ -38,6 +42,7 @@ try {
 	}
 	check(db.prepare('SELECT location FROM collection_cards WHERE id=1').get().location === '', 'migration keeps existing entries unassigned');
 	check(db.prepare("SELECT 1 FROM sqlite_master WHERE name='idx_collection_user_location'").get(), 'location index is installed');
+	check(db.prepare('SELECT proxy FROM collection_cards WHERE id=1').get().proxy === 0, 'migration keeps existing entries real cards');
 	browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
 	const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 	await context.addCookies([{ name: 'session', value: token, url: origin }]);
@@ -65,6 +70,29 @@ try {
 	check(await page.getByRole('checkbox', { name: 'Select War Horn' }).count() === 1, 'location filter finds only the matching entry');
 	await page.screenshot({ path: resolve(dir, 'collection-mobile.png'), fullPage: true });
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'collection fits mobile width');
+	await page.getByText('War Horn', { exact: true }).first().click();
+	await page.getByLabel('Proxy (not counted in value)', { exact: true }).check();
+	await page.getByRole('button', { name: 'Save', exact: true }).click();
+	await page.getByText('PROXY', { exact: true }).waitFor();
+	check(db.prepare("SELECT proxy FROM collection_cards WHERE user_id='owner' AND location='Box B'").get().proxy === 1, 'edit dialog marks an entry as proxy');
+	check(db.prepare("SELECT proxy FROM collection_cards WHERE user_id='owner' AND location='Box A'").get().proxy === 0, 'other entries stay real cards');
+	const marked = db.prepare("SELECT quantity,location,purchase_price,added_at,proxy FROM collection_cards WHERE user_id='owner' AND card_id='horn' ORDER BY location").all();
+	await page.goto(origin + '/collection');
+	check(await page.locator('.kpi-card', { hasText: 'Total Value' }).locator('.kpi-value').innerText() === '€10.00', 'collection value leaves proxies out');
+	check((await page.locator('.kpi-card', { hasText: 'Total Cards' }).innerText()).includes('incl. 2 proxies'), 'card count includes proxies');
+	const priceData = await (await context.request.get(origin + '/api/prices/data')).json();
+	check(priceData.stats.totalValue === 10 && priceData.stats.totalCards === 4 && priceData.proxyCopies === 2, 'price statistics count proxies as cards, not as value');
+	await page.getByLabel('Proxy filter', { exact: true }).selectOption('only');
+	await page.waitForURL('**/collection?proxy=only');
+	check(await page.getByRole('checkbox', { name: 'Select War Horn' }).count() === 1, 'proxy filter shows only proxies');
+	await page.screenshot({ path: resolve(dir, 'collection-proxies-mobile.png'), fullPage: true });
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'collection with proxies fits mobile width');
+	const moxfieldRows = (await (await context.request.get(origin + '/collection/export?format=csv')).text()).split('\n');
+	check(moxfieldRows.some(row => row.startsWith('"2","0","War Horn"') && row.includes('"False","True"')) &&
+		moxfieldRows.some(row => row.startsWith('"2","2","War Horn"') && row.includes('"False","False"')), 'Moxfield export marks proxies and keeps them off the tradelist');
+	await page.goto(origin + '/');
+	check(await page.locator('.kpi-value', { hasText: '€10.00' }).count() === 1, 'homepage value leaves proxies out');
+	await page.goto(origin + '/collection');
 	const forbidden = await context.request.post(origin + '/collection/bulk', { data: { action: 'edit', ids: [1, 2], changes: { location: 'Wrong' } } });
 	check(forbidden.status() === 400 && db.prepare('SELECT location FROM collection_cards WHERE id=1').get().location === 'Box A', 'mixed-owner request fails atomically');
 	const largeCsv = 'Name,Set Code,Collector Number,Notes\n' + Array.from({ length: 90 }, () => 'War Horn,ori,243,' + 'x'.repeat(8000)).join('\n');
@@ -101,10 +129,37 @@ try {
 	await page.getByRole('checkbox', { name: /Replace all 7 existing copies/ }).check();
 	await page.getByRole('button', { name: 'Import 7 copies', exact: true }).click();
 	await page.getByRole('status').filter({ hasText: 'Imported 7 copies' }).waitFor();
-	const restored = db.prepare("SELECT quantity,location,purchase_price,added_at FROM collection_cards WHERE user_id='owner' AND card_id='horn' ORDER BY location").all();
-	check(JSON.stringify(restored) === JSON.stringify(owned), 'full export and re-import preserve split holdings');
+	const restored = db.prepare("SELECT quantity,location,purchase_price,added_at,proxy FROM collection_cards WHERE user_id='owner' AND card_id='horn' ORDER BY location").all();
+	check(JSON.stringify(restored) === JSON.stringify(marked), 'full export and re-import preserve split holdings and proxies');
 	check(db.prepare("SELECT COUNT(*) AS n FROM collection_card_tags cct JOIN tags t ON cct.tag_id=t.id WHERE t.name='Red; Blue'").get().n === 2, 'full export preserves tags containing delimiters');
 	await page.getByRole('button', { name: 'Close import', exact: true }).click();
+
+	await page.getByRole('button', { name: 'Import', exact: true }).click();
+	await page.getByLabel('File format', { exact: true }).selectOption('text');
+	await page.getByLabel('Card list', { exact: true }).fill('1 Lightning Bolt (TST) 1\n2 War Horn (ORI) 243p');
+	await page.getByLabel('Import every card as a proxy', { exact: true }).check();
+	await page.getByLabel('Import mode', { exact: true }).selectOption('sync');
+	check(await page.getByRole('option', { name: 'Replace existing proxies', exact: true }).count() === 1, 'replace mode names its proxy scope');
+	await page.getByRole('button', { name: 'Preview import', exact: true }).click();
+	await page.getByText('2 entries ready · 3 copies · 0 unresolved rows', { exact: true }).waitFor();
+	await page.getByRole('checkbox', { name: /Replace all 2 existing proxy copies/ }).check();
+	await page.getByRole('button', { name: 'Import 3 copies', exact: true }).click();
+	await page.getByRole('status').filter({ hasText: 'Imported 3 copies' }).waitFor();
+	check(JSON.stringify(db.prepare("SELECT card_id,quantity,location,proxy FROM collection_cards WHERE user_id='owner' ORDER BY proxy,card_id,location").all()) === JSON.stringify([
+		{ card_id: 'bolt', quantity: 3, location: 'Trades', proxy: 0 }, { card_id: 'horn', quantity: 2, location: 'Box A', proxy: 0 },
+		{ card_id: 'bolt', quantity: 1, location: '', proxy: 1 }, { card_id: 'horn-p', quantity: 2, location: '', proxy: 1 }]), 'a proxy list replaces only the previous proxies');
+	check(db.prepare("SELECT COUNT(*) AS n FROM collection_card_tags cct JOIN tags t ON cct.tag_id=t.id WHERE t.name='Red; Blue'").get().n === 1, 'real cards keep their tags');
+	await page.getByRole('button', { name: 'Close import', exact: true }).click();
+	await context.request.patch(origin + '/collection');
+	check(db.prepare('SELECT COUNT(*) AS n FROM collection_cards WHERE proxy=1 AND purchase_price IS NOT NULL').get().n === 0, 'filling missing purchase prices skips proxies');
+	db.prepare("INSERT INTO wishlist_cards(user_id,card_id) VALUES ('owner','horn-p')").run();
+	await page.goto(origin + '/wishlist');
+	check(await page.getByTitle('In collection').count() === 0 && await page.getByRole('button', { name: 'Collect', exact: true }).count() === 1, 'a card owned only as proxy can still be collected from the wishlist');
+	const added = await context.request.post(origin + '/collection', { data: { cardId: 'horn', quantity: 1, proxy: true } });
+	const addedRow = db.prepare("SELECT id,proxy FROM collection_cards WHERE user_id='owner' ORDER BY id DESC LIMIT 1").get();
+	check(added.ok() && addedRow.proxy === 1, 'adding a card can mark it as proxy');
+	await context.request.put(origin + '/collection', { data: { id: addedRow.id, quantity: 2, condition: 'near_mint', language: 'en' } });
+	check(db.prepare('SELECT proxy FROM collection_cards WHERE id=?').get(addedRow.id).proxy === 1, 'an edit without the proxy field keeps the flag');
 	await page.goto(origin + '/scan');
 	await page.getByText(/^Scan settings ·/).click();
 	await page.getByLabel('Set restriction', { exact: true }).selectOption('ori');

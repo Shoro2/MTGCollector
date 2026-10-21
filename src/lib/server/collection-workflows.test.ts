@@ -138,3 +138,50 @@ describe('collection CSV and text imports', () => {
 		expect(parsed.issues).toHaveLength(1);
 	});
 });
+
+describe('proxy copies', () => {
+	const moxfield = (...proxies: string[]) => '"Count","Tradelist Count","Name","Edition","Condition","Language","Foil","Tags","Last Modified","Collector Number","Alter","Proxy","Purchase Price"\n' +
+		proxies.map(p => `"1","1","War Horn","ori","Near Mint","English","","","2026-01-01 10:00:00.000000","243","False","${p}",""`).join('\n');
+	it('reads the Moxfield Proxy column and reports unknown values', () => {
+		const parsed = parse(moxfield('True', 'False', '', 'maybe'));
+		expect(parsed.entries.map(e => e.proxy)).toEqual([1, 0, 0]);
+		expect(parsed.issues).toHaveLength(1);
+	});
+	it('imports every row as a proxy when asked, whatever the column says', () => {
+		const csv = parseCollectionImport(moxfield('False', 'maybe'), 'csv', { ...options, allProxies: true });
+		expect(csv.entries.map(e => e.proxy)).toEqual([1, 1]);
+		expect(csv.issues).toEqual([]);
+		expect(csv.allProxies).toBe(true);
+		expect(parseCollectionImport('1 War Horn (ORI) 243', 'text', { ...options, allProxies: true }).entries[0].proxy).toBe(1);
+	});
+	it('stores the flag and never treats a proxy as a duplicate of a real copy', () => {
+		const db = fixture();
+		const parsed = parse('Name,Set Code,Collector Number,Language,Location,Purchase Price,Proxy\nWar Horn,ori,243,German,Box A,2,true\nWar Horn,ori,243,German,Box A,2,false');
+		const plan = prepareCollectionImport(db, 'a', parsed, 'merge');
+		expect(plan.summary).toMatchObject({ ready: 1, skipped: 1 });
+		commitCollectionImport(db, 'a', parsed, 'merge', plan.digest, false);
+		expect(db.prepare("SELECT proxy FROM collection_cards WHERE user_id='a' ORDER BY id").all()).toEqual([{ proxy: 0 }, { proxy: 1 }]); db.close();
+	});
+	it('replaces only proxies when a whole list is imported as proxies', () => {
+		const db = fixture();
+		db.exec(`INSERT INTO collection_cards(id,user_id,card_id,quantity,location,proxy) VALUES (3,'a','horn-alt',1,'Deck',1);
+			INSERT INTO collection_card_tags VALUES(3,1);`);
+		const parsed = parseCollectionImport('2 War Horn (NEW) 9', 'text', { ...options, allProxies: true });
+		const plan = prepareCollectionImport(db, 'a', parsed, 'sync');
+		expect(plan.summary).toMatchObject({ existingEntries: 1, existingCopies: 1 });
+		commitCollectionImport(db, 'a', parsed, 'sync', plan.digest, true);
+		expect(db.prepare("SELECT card_id,quantity,proxy FROM collection_cards WHERE user_id='a' ORDER BY id").all()).toEqual([
+			{ card_id: 'horn', quantity: 4, proxy: 0 }, { card_id: 'new-horn', quantity: 2, proxy: 1 }]);
+		expect(db.prepare('SELECT collection_card_id FROM collection_card_tags').all()).toEqual([{ collection_card_id: 1 }]);
+		expect(db.prepare("SELECT SUM(quantity) AS n FROM collection_cards WHERE user_id='b'").get()).toEqual({ n: 7 }); db.close();
+	});
+	it('keeps the flag when copies move and changes it only by explicit bulk edit', () => {
+		const db = fixture();
+		db.prepare('UPDATE collection_cards SET proxy=1 WHERE id=1').run();
+		moveCollectionCopies(db, 'a', 1, 1, 'Deck');
+		expect(db.prepare("SELECT proxy FROM collection_cards WHERE user_id='a'").all()).toEqual([{ proxy: 1 }, { proxy: 1 }]);
+		bulkEditCollection(db, 'a', [1], { proxy: false });
+		expect(db.prepare('SELECT proxy FROM collection_cards WHERE id=1').get()).toEqual({ proxy: 0 });
+		expect(() => bulkEditCollection(db, 'a', [1], { proxy: 'yes' })).toThrow('Invalid proxy'); db.close();
+	});
+});

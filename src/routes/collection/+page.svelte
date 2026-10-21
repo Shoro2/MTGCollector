@@ -21,6 +21,12 @@
 		params.delete('page');
 		goto(`/collection?${params}`);
 	}
+	function filterProxy(value: string) {
+		const params = new URLSearchParams(page.url.searchParams);
+		if (value === '') params.delete('proxy'); else params.set('proxy', value);
+		params.delete('page');
+		goto(`/collection?${params}`);
+	}
 
 	// Price history modal
 	let modalOpen = $state(false);
@@ -108,6 +114,7 @@
 	let editQuantity = $state(1);
 	let editCondition = $state('near_mint');
 	let editFoil = $state(false);
+	let editProxy = $state(false);
 	let editLanguage = $state('en');
 	let editNotes = $state('');
 	let editLocation = $state('');
@@ -120,6 +127,7 @@
 		editQuantity = item.quantity as number;
 		editCondition = item.condition as string;
 		editFoil = !!(item.foil as number);
+		editProxy = !!(item.proxy as number);
 		editLanguage = (item.language as string) || 'en';
 		editNotes = (item.notes as string) || '';
 		editLocation = (item.location as string) || '';
@@ -143,6 +151,7 @@
 					quantity: editQuantity,
 					condition: editCondition,
 					foil: editFoil,
+					proxy: editProxy,
 					language: editLanguage,
 					notes: editNotes || null,
 					location: editLocation,
@@ -376,6 +385,7 @@
 	}
 
 	function priceChange(item: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
+		if (item.proxy) return null; // a proxy has no market value to gain or lose
 		const purchasePrice = item.purchase_price as number | null;
 		let currentPrice = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
 		// Fallback: convert USD to EUR if no EUR price available
@@ -495,6 +505,11 @@
 						</div>
 					</div>
 
+					<label class="flex items-center gap-2 text-sm">
+						<input type="checkbox" bind:checked={editProxy} />
+						<span>Proxy (not counted in value)</span>
+					</label>
+
 					<!-- Language -->
 					<div>
 						<label for="edit-language" class="block text-xs text-[var(--color-text-muted)] mb-1">Language</label>
@@ -530,14 +545,14 @@
 					{/key}
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
-							<span class="text-xs text-[var(--color-text-muted)]">Current Price</span>
-							<p class="font-medium text-[var(--color-accent)]">
+							<span class="text-xs text-[var(--color-text-muted)]">{editProxy ? 'Original Price' : 'Current Price'}</span>
+							<p class="font-medium {editProxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-accent)]'}">
 								{formatPrice((editItem.foil ? editItem.price_eur_foil : editItem.price_eur) as number | null, (editItem.foil ? editItem.price_usd_foil : editItem.price_usd) as number | null)}
 							</p>
 						</div>
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
 							<span class="text-xs text-[var(--color-text-muted)]">Since Purchase</span>
-							{#if priceChange(editItem)}
+							{#if !editProxy && priceChange(editItem)}
 								<p class="font-medium {priceChange(editItem)!.color}">
 									{priceChange(editItem)!.direction} {Math.abs(priceChange(editItem)!.percent).toFixed(1)}%
 								</p>
@@ -666,10 +681,12 @@
 		<div class="kpi-card">
 			<p class="kpi-label">Total Cards</p>
 			<p class="kpi-value">{data.stats.totalCards}</p>
+			{#if data.stats.proxyCards}<p class="text-xs text-[var(--color-text-muted)]">incl. {data.stats.proxyCards} {data.stats.proxyCards === 1 ? 'proxy' : 'proxies'}</p>{/if}
 		</div>
 		<div class="kpi-card">
 			<p class="kpi-label">Total Value</p>
 			<p class="kpi-value text-[var(--color-accent)]">{formatPrice(data.stats.totalValue)}</p>
+			{#if data.stats.proxyCards}<p class="text-xs text-[var(--color-text-muted)]">Proxies not counted</p>{/if}
 		</div>
 	</div>
 
@@ -742,6 +759,9 @@
 				{#each data.locations as value}<option value={`location:${value}`}>{value}</option>{/each}
 			</select>
 		</label>
+		<select aria-label="Proxy filter" value={data.filters.proxyFilter ?? ''} onchange={e => filterProxy(e.currentTarget.value)} class="rounded border p-2 bg-[var(--color-bg)] max-w-full">
+			<option value="">All cards</option><option value="none">Real cards only</option><option value="only">Proxies only</option>
+		</select>
 		{#if data.items.length}
 			<button class="rounded border px-3 py-2" onclick={() => selectedIds = selectedIds.length === data.items.length ? [] : data.items.map(i => i.id as number)}>{selectedIds.length === data.items.length ? 'Clear selection' : 'Select this page'}</button>
 		{/if}
@@ -788,6 +808,9 @@
 								{#if item.foil}
 									<span class="text-[var(--color-accent)]">FOIL</span>
 								{/if}
+								{#if item.proxy}
+									<span class="tracking-wide text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-dashed border-[var(--color-border)]" title="Proxy — not counted in value or profit/loss">PROXY</span>
+								{/if}
 								{#if item.language && item.language !== 'en'}
 									<span class="uppercase tracking-wide text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">{languageLabel(item.language as string)}</span>
 								{/if}
@@ -810,10 +833,12 @@
 						<div class="flex items-center justify-between sm:justify-end gap-2 mt-2 sm:mt-0 sm:flex-shrink-0">
 							<!-- Price -->
 							<div class="text-left sm:text-right">
-								<p class="text-[var(--color-accent)] font-medium">
+								<p class="font-medium {item.proxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-accent)]'}">
 									{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null, (item.foil ? item.price_usd_foil : item.price_usd) as number | null)}
 								</p>
-								{#if priceChange(item)}
+								{#if item.proxy}
+									<p class="text-xs text-[var(--color-text-muted)]">original price</p>
+								{:else if priceChange(item)}
 									<p class="text-xs {priceChange(item)!.color}">
 										{priceChange(item)!.direction} {Math.abs(priceChange(item)!.percent).toFixed(1)}%
 									</p>
@@ -901,11 +926,11 @@
 				</div>
 
 				{#if exportFormat === 'collector'}
-					<p class="text-sm">Includes locations, notes, tags, purchase costs and acquisition dates for re-import into MTG Collector.</p>
+					<p class="text-sm">Includes locations, notes, tags, purchase costs, acquisition dates and proxy status for re-import into MTG Collector.</p>
 					<a href="/collection/export?format=collector" class="block rounded border p-3 mt-3 text-center">Download collection CSV</a>
 				{:else if exportFormat === 'csv'}
 					<div class="bg-[var(--color-bg)] rounded-lg p-3 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
-						Downloads a CSV file compatible with Moxfield's collection import.
+						Downloads a CSV file compatible with Moxfield's collection import. Proxies keep Moxfield's Proxy flag.
 					</div>
 					<a
 						href="/collection/export"
@@ -1090,7 +1115,7 @@
 							{#if priceImportResult.notInCollection && priceImportResult.notInCollection > 0}
 								<div class="mt-3">
 									<p class="text-sm text-yellow-300">
-										{priceImportResult.notInCollection} card{priceImportResult.notInCollection === 1 ? '' : 's'} not in your collection (or already had a price in fill-only mode):
+										{priceImportResult.notInCollection} card{priceImportResult.notInCollection === 1 ? '' : 's'} not in your collection as a real card (or already had a price in fill-only mode):
 									</p>
 									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
 										{#each priceImportResult.notInCollectionLabels ?? [] as lbl}

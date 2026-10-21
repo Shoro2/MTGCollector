@@ -3,17 +3,18 @@ import { LANGUAGES } from './utils';
 
 export const IMPORT_FIELDS = [
 	['id', 'Scryfall ID'], ['name', 'Card name'], ['set', 'Set code'], ['setName', 'Set name'],
-	['number', 'Collector number'], ['quantity', 'Quantity'], ['finish', 'Finish / foil'],
+	['number', 'Collector number'], ['quantity', 'Quantity'], ['finish', 'Finish / foil'], ['proxy', 'Proxy'],
 	['condition', 'Condition'], ['language', 'Language'], ['price', 'Purchase price per copy'],
 	['currency', 'Purchase price currency'], ['location', 'Location / folder'], ['notes', 'Notes'],
 	['tags', 'Tags'], ['added', 'Date added']
 ] as const;
 export type ImportField = typeof IMPORT_FIELDS[number][0];
 export type ImportMapping = Partial<Record<ImportField, string>>;
-export type ImportOptions = { mapping?: ImportMapping; currency: string; location: string; ignorePrices: boolean };
+/** `allProxies` imports every row as a proxy and limits a replacement to the existing proxies. */
+export type ImportOptions = { mapping?: ImportMapping; currency: string; location: string; ignorePrices: boolean; allProxies?: boolean };
 export type ImportEntry = {
 	line: number; id: string; name: string; set: string; setName: string; number: string; quantity: number;
-	foil: number; condition: string; language: string; purchasePrice: number | null;
+	foil: number; proxy: number; condition: string; language: string; purchasePrice: number | null;
 	location: string; notes: string; tags: string[]; addedAt: string | null;
 };
 export type ImportIssue = { line: number; name: string; message: string };
@@ -21,7 +22,7 @@ const normal = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '');
 const aliases: Record<ImportField, string[]> = {
 	id: ['scryfallid', 'scryfalluuid'], name: ['name', 'cardname'], set: ['setcode', 'edition', 'editioncode', 'set'],
 	setName: ['setname', 'editionname'], number: ['collectornumber', 'cardnumber', 'collectorno', 'number'],
-	quantity: ['quantity', 'count', 'amount'], finish: ['foil', 'printing', 'finish'],
+	quantity: ['quantity', 'count', 'amount'], finish: ['foil', 'printing', 'finish'], proxy: ['proxy', 'isproxy'],
 	condition: ['condition'], language: ['language', 'lang'], price: ['purchaseprice', 'pricebought', 'acquiredprice', 'purchasepriceeur'],
 	currency: ['purchasepricecurrency', 'currency'], location: ['location', 'foldername', 'bindername', 'listname', 'folder', 'binder'],
 	notes: ['notes', 'note'], tags: ['tags', 'tagsjson'], added: ['dateadded', 'addedat', 'datebought', 'acquireddate']
@@ -110,6 +111,10 @@ export function parseCollectionImport(text: string, format: 'csv' | 'text', opti
 			if (!['', 'normal', 'regular', 'nonfoil', 'false', '0', 'no', 'foil', 'true', '1', 'yes'].includes(finish)) {
 				throw new Error(`Unsupported finish: ${get('finish')}. Etched and special finishes need separate review.`);
 			}
+			const proxy = normal(get('proxy'));
+			if (!options.allProxies && !['', 'false', '0', 'no', 'true', '1', 'yes'].includes(proxy)) {
+				throw new Error(`Unsupported proxy value: ${get('proxy')}. Use true or false.`);
+			}
 			const rawLang = get('language').toLowerCase();
 			const language = rawLang ? LANGUAGES.find(l => l.code === rawLang || l.label.toLowerCase() === rawLang)?.code : 'en';
 			if (!language) throw new Error(`Unknown language: ${rawLang}.`);
@@ -125,10 +130,12 @@ export function parseCollectionImport(text: string, format: 'csv' | 'text', opti
 			if (get('notes').length > 10000) throw new Error('Notes are too long (maximum 10,000 characters).');
 			entries.push({ line: i + 1, id: get('id'), name: get('name'), set: get('set').toLowerCase(), setName: get('setName'),
 				number: get('number'), quantity, foil: ['foil', 'true', '1', 'yes'].includes(finish) ? 1 : 0,
+				proxy: options.allProxies || ['true', '1', 'yes'].includes(proxy) ? 1 : 0,
 				condition: conditionOf(get('condition')), language, purchasePrice: price ? decimal(price) : null,
 				location: cleanLocation(get('location') || options.location), notes: get('notes'), tags,
 				addedAt: added ? new Date(added).toISOString() : null });
 		} catch (error) { issues.push({ line: i + 1, name: get('name'), message: (error as Error).message }); }
 	}
-	return { headers, mapping, entries, issues, total: table.length - 1 };
+	// The option travels with the parse result, so the confirmation digest covers it.
+	return { headers, mapping, entries, issues, total: table.length - 1, allProxies: !!options.allProxies };
 }

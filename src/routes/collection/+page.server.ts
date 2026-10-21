@@ -14,6 +14,8 @@ export async function load({ url, locals, depends }) {
 
 	const tagFilter = url.searchParams.get('tag');
 	const locationFilter = url.searchParams.get('location');
+	const proxyParam = url.searchParams.get('proxy');
+	const proxyFilter = proxyParam === 'only' || proxyParam === 'none' ? proxyParam : null;
 	const search = url.searchParams.get('q') || '';
 	const sortBy = url.searchParams.get('sort') || 'added_at';
 	const sortDir = url.searchParams.get('dir') || 'desc';
@@ -28,6 +30,8 @@ export async function load({ url, locals, depends }) {
 		params.push(locationFilter);
 	}
 
+	if (proxyFilter) conditions.push(proxyFilter === 'only' ? 'cc.proxy = 1' : 'cc.proxy = 0');
+
 	if (search) {
 		conditions.push('c.name LIKE ?');
 		params.push(`%${search}%`);
@@ -40,17 +44,18 @@ export async function load({ url, locals, depends }) {
 
 	const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
+	// Proxies have no profit; entries without a value sort last in both directions.
 	const validSorts: Record<string, string> = {
 		name: 'c.name',
 		added_at: 'cc.added_at',
 		price: 'CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END',
-		profit: `CASE WHEN cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
+		profit: `CASE WHEN cc.proxy = 0 AND cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
 			(COALESCE(
 				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
 				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
 			) - cc.purchase_price) / cc.purchase_price * 100
 			ELSE NULL END`,
-		profit_total: `CASE WHEN cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
+		profit_total: `CASE WHEN cc.proxy = 0 AND cc.purchase_price IS NOT NULL AND cc.purchase_price > 0 THEN
 			(COALESCE(
 				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
 				CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
@@ -87,7 +92,7 @@ export async function load({ url, locals, depends }) {
 			LEFT JOIN card_prices_lang cpl
 				ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 			${whereClause}
-			ORDER BY ${orderColumn} ${orderDir}
+			ORDER BY ${orderColumn} ${orderDir} NULLS LAST, cc.id ${orderDir}
 			LIMIT ? OFFSET ?`
 		)
 		.all(...itemsQueryParams, pageSize, offset) as Array<Record<string, unknown>>;
@@ -118,24 +123,25 @@ export async function load({ url, locals, depends }) {
 	// Get the user's tags (cached per-user, short TTL)
 	const allTags = tagsCache.get(userId);
 
-	// Get collection stats
+	// Get collection stats. Proxies count as cards, never as value.
 	const stats = sqlite
 		.prepare(
 			`SELECT
 				COUNT(DISTINCT cc.card_id) as uniqueCards,
 				COALESCE(SUM(cc.quantity), 0) as totalCards,
-				COALESCE(SUM(
+				COALESCE(SUM(CASE WHEN cc.proxy = 1 THEN cc.quantity ELSE 0 END), 0) as proxyCards,
+				COALESCE(SUM(CASE WHEN cc.proxy = 0 THEN
 					COALESCE(
 						CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
 						CASE WHEN cc.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END * ?
 					) * cc.quantity
-				), 0) as totalValue
+				END), 0) as totalValue
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
 			LEFT JOIN card_prices_lang cpl ON cpl.card_id = cc.card_id AND cpl.language = cc.language
 			WHERE cc.user_id = ?`
 		)
-		.get(usdToEur, userId) as { uniqueCards: number; totalCards: number; totalValue: number };
+		.get(usdToEur, userId) as { uniqueCards: number; totalCards: number; proxyCards: number; totalValue: number };
 
 	// Load a specific card for edit modal (e.g. from prices page link)
 	const editId = url.searchParams.get('edit');
@@ -173,7 +179,7 @@ export async function load({ url, locals, depends }) {
 		totalPages: Math.ceil(countResult.count / pageSize),
 		tags: allTags,
 		stats,
-		filters: { search, tagFilter, sortBy, sortDir, locationFilter },
+		filters: { search, tagFilter, sortBy, sortDir, locationFilter, proxyFilter },
 		locations: collectionLocations(sqlite, userId),
 		editCard,
 		usdToEur

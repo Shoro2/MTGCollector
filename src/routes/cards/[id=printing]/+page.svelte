@@ -15,6 +15,7 @@
 	let addQuantity = $state(1);
 	let addCondition = $state('near_mint');
 	let addFoil = $state(false);
+	let addProxy = $state(false);
 	let addPurchasePrice = $state('');
 	let adding = $state(false);
 	let showAddForm = $state(false);
@@ -47,6 +48,7 @@
 				quantity: addQuantity,
 				condition: addCondition,
 				foil: addFoil,
+				proxy: addProxy,
 				purchasePrice: addPurchasePrice ? parseFloat(addPurchasePrice) : null
 			})
 		});
@@ -402,10 +404,14 @@
 									<option value="damaged">Damaged</option>
 								</select>
 							</div>
-							<div class="flex items-end">
+							<div class="flex items-end gap-4">
 								<label class="flex items-center gap-2">
 									<input type="checkbox" bind:checked={addFoil} class="rounded" />
 									<span class="text-sm">Foil</span>
+								</label>
+								<label class="flex items-center gap-2" title="Proxies count as cards, never toward value or profit/loss">
+									<input type="checkbox" bind:checked={addProxy} class="rounded" />
+									<span class="text-sm">Proxy</span>
 								</label>
 							</div>
 						</div>
@@ -440,6 +446,9 @@
 									<span class="text-[var(--color-text-muted)]">{conditionLabel(entry.condition as string)}</span>
 									{#if entry.foil}
 										<span class="text-[var(--color-accent)] text-xs">FOIL</span>
+									{/if}
+									{#if entry.proxy}
+										<span class="text-xs px-1.5 py-0.5 rounded border border-dashed border-[var(--color-border)]">PROXY</span>
 									{/if}
 								</div>
 								<button

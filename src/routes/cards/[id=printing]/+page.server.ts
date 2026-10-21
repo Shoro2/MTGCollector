@@ -51,7 +51,7 @@ export async function load({ params, locals, depends }) {
 	// Check if in collection (user-specific)
 	const userId = locals?.user?.id;
 	const inCollection = userId
-		? sqlite.prepare('SELECT id, quantity, condition, foil, notes FROM collection_cards WHERE card_id = ? AND user_id = ?').all(params.id, userId) as Array<Record<string, unknown>>
+		? sqlite.prepare('SELECT id, quantity, condition, foil, proxy, notes FROM collection_cards WHERE card_id = ? AND user_id = ?').all(params.id, userId) as Array<Record<string, unknown>>
 		: [];
 
 	// Check if on wishlist (user-specific)

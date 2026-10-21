@@ -17,7 +17,7 @@ export async function POST({ request, locals }) {
 		const parsed = parseCollectionImport(text, format, {
 			mapping: form.get('mapping') ? JSON.parse(String(form.get('mapping'))) : undefined,
 			currency: String(form.get('currency') || 'EUR'), location: String(form.get('location') || ''),
-			ignorePrices: form.get('ignorePrices') === 'true'
+			ignorePrices: form.get('ignorePrices') === 'true', allProxies: form.get('allProxies') === 'true'
 		});
 		const mode = String(form.get('mode') || 'merge') as ImportMode;
 		if (form.get('action') === 'commit') {
@@ -30,7 +30,7 @@ export async function POST({ request, locals }) {
 		const plan = prepareCollectionImport(sqlite, locals.user.id, parsed, mode);
 		return json({ success: true, headers: parsed.headers, mapping: parsed.mapping, digest: plan.digest,
 			summary: plan.summary, rows: plan.entries.slice(0, 50).map(row => ({ line: row.line, name: row.card.name,
-				set: row.card.set_code, number: row.card.collector_number, quantity: row.quantity, foil: row.foil, condition: row.condition,
+				set: row.card.set_code, number: row.card.collector_number, quantity: row.quantity, foil: row.foil, proxy: row.proxy, condition: row.condition,
 				language: row.language, purchasePrice: row.purchasePrice, location: row.location, duplicate: row.duplicate })),
 			issues: plan.issues.slice(0, 100) }, { headers: { 'Cache-Control': 'private, no-store' } });
 	} catch (cause) {

@@ -1,6 +1,6 @@
 import { db } from '$lib/server/db';
 import { cards, collectionCards } from '$lib/server/schema';
-import { sql, eq } from 'drizzle-orm';
+import { sql, eq, and } from 'drizzle-orm';
 
 export async function load({ locals }) {
 	const totalCardsResult = db.select({ count: sql<number>`count(*)` }).from(cards).get();
@@ -33,7 +33,8 @@ export async function load({ locals }) {
 		})
 		.from(collectionCards)
 		.innerJoin(cards, sql`${collectionCards.cardId} = ${cards.id}`)
-		.where(eq(collectionCards.userId, userId))
+		// Proxies count as cards above, never as value.
+		.where(and(eq(collectionCards.userId, userId), eq(collectionCards.proxy, false)))
 		.get();
 
 	return {

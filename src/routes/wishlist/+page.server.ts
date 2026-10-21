@@ -43,9 +43,10 @@ export async function load({ url, locals, depends }) {
 		)
 		.all(...params) as Array<Record<string, unknown>>;
 
-	// Check which wishlist cards are already in collection
+	// Check which wishlist cards are already in collection. A proxy does not
+	// count: the real card can still be collected.
 	const collectedRows = sqlite
-		.prepare('SELECT DISTINCT card_id FROM collection_cards WHERE user_id = ?')
+		.prepare('SELECT DISTINCT card_id FROM collection_cards WHERE user_id = ? AND proxy = 0')
 		.all(userId) as Array<{ card_id: string }>;
 	const collectedCardIds = new Set(collectedRows.map(r => r.card_id));
 

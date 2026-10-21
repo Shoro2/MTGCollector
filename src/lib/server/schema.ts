@@ -74,7 +74,9 @@ export const collectionCards = sqliteTable('collection_cards', {
 	purchasePrice: real('purchase_price'),
 	location: text('location').notNull().default(''),
 	notes: text('notes'),
-	addedAt: text('added_at').$defaultFn(() => new Date().toISOString())
+	addedAt: text('added_at').$defaultFn(() => new Date().toISOString()),
+	// A printed stand-in: counted as a card, never as collection value or profit/loss.
+	proxy: integer('proxy', { mode: 'boolean' }).notNull().default(false)
 });
 
 export const cardPricesLang = sqliteTable(

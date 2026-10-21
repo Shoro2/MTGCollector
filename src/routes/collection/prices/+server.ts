@@ -196,15 +196,16 @@ export async function POST({ request, locals }) {
 
 	// Apply updates. For each matched card+foil, update all collection_cards
 	// rows belonging to this user. Mode controls whether existing non-null
-	// purchase_price values are overwritten.
+	// purchase_price values are overwritten. A marketplace order prices real
+	// cards, so proxies are never touched.
 	const updateStmt = mode === 'overwrite'
 		? sqlite.prepare(
 			`UPDATE collection_cards SET purchase_price = ?
-			 WHERE user_id = ? AND card_id = ? AND foil = ?`
+			 WHERE user_id = ? AND card_id = ? AND foil = ? AND proxy = 0`
 		)
 		: sqlite.prepare(
 			`UPDATE collection_cards SET purchase_price = ?
-			 WHERE user_id = ? AND card_id = ? AND foil = ? AND purchase_price IS NULL`
+			 WHERE user_id = ? AND card_id = ? AND foil = ? AND proxy = 0 AND purchase_price IS NULL`
 		);
 
 	let updatedRows = 0; // count of collection_cards rows touched

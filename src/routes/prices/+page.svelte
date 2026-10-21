@@ -17,6 +17,7 @@
 	let missingPriceCount = $state(0);
 	let missingMarketCount = $state(0);
 	let estimatedCount = $state(0);
+	let proxyCopies = $state(0);
 	let profitHistory = $state<ProfitPoint[]>([]);
 	let chartError = $state<string | null>(null);
 	let active = false;
@@ -55,6 +56,7 @@
 			missingPriceCount = result.missingPriceCount;
 			missingMarketCount = result.missingMarketCount;
 			estimatedCount = result.estimatedCount;
+			proxyCopies = result.proxyCopies;
 			profitHistory = result.profitHistory;
 			usdToEur = result.usdToEur;
 		} catch (err) {
@@ -422,6 +424,9 @@
 		{/if}
 		{#if estimatedCount > 0}
 			<p class="text-sm text-[var(--color-text-muted)]">English reference prices are used for {estimatedCount} {estimatedCount === 1 ? 'copy' : 'copies'} without a price in the card's language.</p>
+		{/if}
+		{#if proxyCopies > 0}
+			<p class="text-sm text-[var(--color-text-muted)]">{proxyCopies} {proxyCopies === 1 ? 'proxy counts' : 'proxies count'} as {proxyCopies === 1 ? 'a card' : 'cards'} but not toward value or profit/loss.</p>
 		{/if}
 		{#if profitHistory.length > 0}
 			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">

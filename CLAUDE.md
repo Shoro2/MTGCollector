@@ -87,6 +87,14 @@ Google OAuth with session cookies:
 
 All `collection_cards` and `wishlist_cards` queries filter by `user_id`. Each user has an isolated collection and wishlist. The `user_id` column is nullable for backward compatibility with pre-auth databases.
 
+### Proxy Copies
+
+- **Data:** `collection_cards.proxy` (0/1, default 0, migration `0026_collection_proxy`). Like the finish, it belongs to an entry: one printing can be held as real copies and as proxies side by side.
+- **Counted as cards, never as value:** proxies count toward unique printings and total cards. They never count toward value, purchase totals, profit/loss, the profit chart, top cards or the missing-price warnings (`getPriceData()` filters them and reports `proxyCopies`). "Set missing purchase prices", the Cardmarket/Cardtrader price import and the wishlist's "owned" marker ignore them.
+- **Marking:** edit dialog, bulk edit ("Proxy status") and the printing page's "Add to collection". `PUT /collection` keeps the flag when the field is absent.
+- **Import:** a `Proxy` column is read (Moxfield's collection CSV has one). "Import every card as a proxy" overrides it for CSV and text lists, and makes Replace touch only the existing proxies, never real cards or their tags.
+- **Export:** the Moxfield CSV writes its `Proxy` column and a `Tradelist Count` of 0 for proxies; the collector CSV has a `Proxy` column; the Moxfield text list has no proxy marker.
+
 ### Price System
 
 - **EUR primary, USD fallback**: Prices display in EUR when available, otherwise USD with `$` prefix
@@ -186,7 +194,7 @@ src/
 | `/cards/[id=printing]` | Printing detail at its Scryfall id (reprints, price history chart, collection/wishlist status); canonical points to the card page |
 | `/scan` | Card scanner — public, no auth required. Adding to collection requires login |
 | `/collection` | User's collection (search, sort by name/date/price/profit/set, tags, edit modal, purchase price tracking) |
-| `/collection/import` | Moxfield CSV import (sync or append mode) |
+| `/collection/import` | Moxfield CSV import (sync or append mode; optionally every card as a proxy) |
 | `/collection/export` | Moxfield CSV export |
 | `/wishlist` | Wishlist with priority, collect-to-collection with purchase price prompt |
 | `/prices` | Collection value over time (Chart.js), profit/loss chart, top cards with per-card price history popup. Data loaded async via `/api/prices/data` with skeleton loading state |
@@ -467,6 +475,7 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 
 ### Done
 
+- Proxy copies (owner request 2026-10-18): collection entries can be marked as proxies (edit dialog, bulk edit, printing page, a `Proxy` import column, "Import every card as a proxy" with a proxies-only Replace). Proxies count as cards, never as value or profit/loss; the Moxfield CSV export writes its Proxy flag. Unit tests in `collection-workflows.test.ts` / `price-data.test.ts`; `collector-workflows-check.mjs` 38 / 38 with 17 proxy checks.
 - Search engine indexing (2026-10-15): one page per card at `/cards/<slug>` with every printing and its prices; printing pages point their canonical there and the sitemap lists the ~37k cards instead of ~115k printings (Search Console had 108,508 printing URLs "discovered – currently not indexed"). The catalogue search finds names with apostrophes ("Teferi's Protection" returned 0 cards). See AGENTS.md, "Search engine indexing".
 - Live auto-capture no longer repeats a card that stays in place while the detector flickers (`capturedStillInPlace()`): a Windows webcam session (2026-10-12/13) had captured one static object 285 times. Unit tests in `rearm.test.ts`, a flicker / second-copy scenario in `session-ux-check.mjs`; `live-ux-check.mjs` unchanged (21 / 21).
 - German cards by name (owner request 2026-09-23): `npm run import-names` imports the names printed on German printings (Scryfall's all-cards bulk) into `card_names`, the name search looks them up (equal once normalised, or close when better than the English answer), every scanner row carries its printed names, name candidates carry their language and count on a card whose footer names another language only at ≥ 0.8, and the scan page adds cards in the scanned language. German dark-mat scenes (28, live pipeline, full catalogue): confirmed right 18 → 27 of 27 captured, printings 15 → 24, 0 wrong; development set 103 / 83 of 104, hold-out 19 / 9 of 26, 0 wrong.
