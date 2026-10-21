@@ -183,7 +183,8 @@
 	</main>
 
 	<footer class="border-t border-[var(--color-border-subtle)] px-4 py-5 text-center text-xs text-[var(--color-text-faint)] md:px-6">
-		<div class="mb-2 flex justify-center gap-5">
+		<div class="mb-2 flex flex-wrap justify-center gap-x-5 gap-y-1">
+			<a href="/portfolio-tracker" class="transition-colors hover:text-[var(--color-text)]">Portfolio tracker</a>
 			<a href="/contact" class="transition-colors hover:text-[var(--color-text)]">Contact</a>
 			<a href="/impressum" class="transition-colors hover:text-[var(--color-text)]">Legal Notice</a>
 			<a href="/datenschutz" class="transition-colors hover:text-[var(--color-text)]">Privacy Policy</a>

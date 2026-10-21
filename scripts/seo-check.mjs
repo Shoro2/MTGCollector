@@ -69,7 +69,7 @@ try {
 		const xml = await response.text();
 		urls.push(...locations(xml));
 	}
-	check(urls.length === 35 && new Set(urls).size === 35, 'all 29 cards and six public pages appear exactly once');
+	check(urls.length === 36 && new Set(urls).size === 36, 'all 29 cards and seven public pages appear exactly once');
 	check(!urls.some((url) => /\/cards\/[0-9a-f]{8}-/.test(url)) && urls.includes(publicOrigin + '/cards/teferis-protection'), 'the sitemap lists card pages, not printings');
 	for (const path of ['/sitemap-cards-0.xml', '/sitemap-cards-2.xml', '/sitemap-unknown.xml']) {
 		check((await fetch(origin + path, { redirect: 'manual' })).status === 404, `missing sitemap returns 404: ${path}`);
@@ -142,6 +142,23 @@ try {
 	check(await page.getByRole('heading', { level: 1 }).innerText() === 'MTG card scanner and collection tracker', 'home page explains the app in visible content');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'home page fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'home-mobile.png'), fullPage: true });
+	check(await page.locator('main a[href="/portfolio-tracker"]').count() >= 1 && await page.locator('footer a[href="/portfolio-tracker"]').count() === 1,
+		'home page and footer link the portfolio tracker');
+	check((await fetch(origin + '/portfolio-tracker', { redirect: 'manual' })).status === 200, 'the portfolio tracker page is public');
+	await page.goto(origin + '/portfolio-tracker');
+	const trackerTitle = await page.title();
+	check(trackerTitle.includes('MTG Portfolio Tracker') && trackerTitle.length <= 60, 'portfolio tracker title names the query and fits 60 characters');
+	check(!/[–—]/.test(await page.locator('main').innerText() + trackerTitle), 'portfolio tracker copy uses no dashes');
+	check((await page.locator('meta[name="description"]').getAttribute('content')).length <= 155, 'portfolio tracker description fits 155 characters');
+	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/portfolio-tracker', 'portfolio tracker page is its own canonical');
+	check(await page.getByRole('heading', { level: 1 }).innerText() === 'Free MTG portfolio tracker', 'portfolio tracker heading states the offer');
+	const trackerSchema = await page.locator('script[type="application/ld+json"]').textContent();
+	check(JSON.parse(trackerSchema)['@graph'].some(item => item['@type'] === 'BreadcrumbList') && !/Offer|FAQPage/.test(trackerSchema),
+		'portfolio tracker JSON-LD describes the page and its breadcrumb, no offer or FAQ markup');
+	check(await page.getByRole('link', { name: 'Start tracking' }).first().getAttribute('href') === '/login', 'portfolio tracker sends visitors to sign in');
+	check((await page.locator('main').innerText()).includes('Example data'), 'the dashboard preview is labelled as example data');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'portfolio tracker page fits a mobile viewport');
+	await page.screenshot({ path: resolve(dir, 'portfolio-tracker-mobile.png'), fullPage: true });
 	await page.goto(origin + '/scan');
 	const description = await page.locator('meta[name="description"]').getAttribute('content');
 	check(description.includes('German') && !description.includes('foil detection'), 'scanner snippet describes supported use without guaranteed foil recognition');

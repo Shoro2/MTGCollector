@@ -31,7 +31,7 @@
 			icon: 'collection'
 		},
 		{
-			href: data.user ? '/prices' : '/login',
+			href: data.user ? '/prices' : '/portfolio-tracker',
 			title: 'Track prices',
 			description: 'Value, profit and history',
 			tone: 'tone-violet',
@@ -153,7 +153,7 @@
 				<div class="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
 					<p class="eyebrow">3. Track</p>
 					<p class="mt-2 text-sm font-semibold">Watch value move</p>
-					<p class="mt-1 text-xs text-[var(--color-text-muted)]">Record purchase prices, organize cards with tags, and compare your collection's current value with what you paid.</p>
+					<p class="mt-1 text-xs text-[var(--color-text-muted)]">Record purchase prices, organize cards with tags, and compare your collection's current value with what you paid in the <a href="/portfolio-tracker" class="text-[var(--color-primary)] hover:underline">portfolio tracker</a>.</p>
 				</div>
 			</div>
 		</section>
