@@ -1,222 +1,490 @@
 # AGENTS.md - MTG Collector
 
-**All project files (code, comments, commit messages, documentation) must be written in English.**
+> Read this first in every agent session. It describes what MTG Collector is meant to do, how the code is built, how to run, test and deploy it, and where the work stands. It is the canonical project description; `AGENTS.md` carries the same text for Codex sessions (see [§13](#13-documentation-rules)).
+>
+> **All project files (code, comments, commit messages, documentation) must be written in English.** The owner writes German; answer the owner in German.
+>
+> Last full review against the code: **2026-10-22**, `master` at `17a9820` (PR #96).
 
-## Project Overview
+## Contents
 
-MTG Collector is a full-stack web app for tracking Magic: The Gathering card collections. Built with SvelteKit, SQLite, and Tailwind CSS. Features card browsing, collection locations and bulk editing, wishlist, price tracking with profit/loss analysis, card scanning (OCR + foil detection), and previewed CSV imports from ManaBox, Dragon Shield, Delver Lens and Moxfield.
+1. [Product: what MTG Collector is for](#1-product-what-mtg-collector-is-for)
+2. [Quick start and commands](#2-quick-start-and-commands)
+3. [Tech stack](#3-tech-stack)
+4. [Architecture](#4-architecture)
+5. [Features in detail](#5-features-in-detail)
+6. [Card scanner](#6-card-scanner)
+7. [Important patterns](#7-important-patterns)
+8. [Testing and verification](#8-testing-and-verification)
+9. [Deployment and operations](#9-deployment-and-operations)
+10. [External services](#10-external-services)
+11. [Dependencies and security updates](#11-dependencies-and-security-updates)
+12. [Coding conventions and agent workflow](#12-coding-conventions-and-agent-workflow)
+13. [Documentation rules](#13-documentation-rules)
+14. [Status, plan and open points](#14-status-plan-and-open-points)
 
-## Quick Start
+---
 
-Requires Node.js 22.12 or newer (Node 22 in production and CI).
+## 1. Product: what MTG Collector is for
+
+MTG Collector (<https://mtg-collector.com>, repository `Shoro2/MTGCollector`, default branch `master`) is a free web app for **Magic: The Gathering collectors**. It answers three questions:
+
+1. **What is a card worth?** A public catalogue of every Scryfall printing (~115k printings of ~37k cards) with EUR/USD prices, foil prices, price history and one search-engine-friendly page per card.
+2. **What do I own, and what is it worth now compared with what I paid?** A private, per-user collection with condition, finish, language, location, tags, proxies and purchase prices, and a portfolio view: collection value over time, profit/loss, top cards and daily price moves.
+3. **How do I get my cards into the app without typing?** A browser-side card scanner (photo upload or live camera) that identifies cards by name OCR, collector-line OCR and artwork hash, and adds them with an established printing; plus previewed CSV imports from Moxfield, ManaBox, Dragon Shield and Delver Lens.
+
+### Intended overall functionality
+
+| Area | Intended behaviour | State |
+|---|---|---|
+| Card catalogue | Browse and search the full catalogue (full-text search, colour/type/rarity/set/mana value/legality filters, sorting, pagination, unique-card toggle); every card has a page with all printings and prices; every printing has its own page with price history | ✅ live |
+| Collection | Isolated per-user collection; every entry is one "lot" (printing, quantity, condition, finish, language, location, purchase price, notes, acquisition date, tags, proxy flag); bulk edits, partial moves between locations, search/sort/filter | ✅ live |
+| Wishlist | Prioritised wants; "collect" moves an entry into the collection with a purchase-price prompt | ✅ live |
+| Portfolio and prices | Value over time, purchase cost, profit/loss over copies with both prices, top cards, per-card history, daily price snapshots, homepage dashboard | ✅ live |
+| Imports and exports | Previewed, mapped CSV import (skip existing / append / replace), Moxfield text lists, a collector CSV that round-trips every field, Moxfield CSV/text export; purchase prices from text lists, Cardmarket CSV and Cardtrader XLS/XLSX | ✅ live |
+| Scanner | Public `/scan`: single-card or spread photos, live camera with auto-capture; never adds a card whose identity and printing are not established; German cards by their printed names | ✅ live, continuously tuned (§6, §14) |
+| Search engines | Sitemap index, one canonical page per card, crawlable catalogue pagination, landing page for the portfolio features | ✅ live, indexing measured in Search Console |
+| Accounts | Google sign-in, 30-day sessions, account deletion, one admin account | ✅ live |
+| Operations | Daily Scryfall price import with watchdog and retries, admin dashboard, server-side scan logs, nightly user-data dump (host) | ✅ live |
+
+### Product principles (the owner's rules)
+
+- **Free, no ads, no data sales, collections are never shared.** The sign-in page says so; the privacy policy names every third party the browser contacts (§5.9).
+- **Honest numbers.** Proxies never count as value; profit/loss compares only copies that have both a purchase and a market price; missing prices are gaps, not zeros; a suspicious Cardmarket trend price is flagged, never silently altered.
+- **The scanner never guesses.** Wrong automatic identifications are the primary metric (target 0). An uncertain card becomes a one-tap offer or stays open; bulk import takes only confirmed identities with an established printing.
+- **Unofficial fan content.** No Wizards logos, official mana/set symbols or Magic fonts in the app chrome; original letter pips and text set codes; the footer disclaimer stays visible (`DESIGN.md`).
+- **Visitor-facing copy:** no dashes and no marketing phrases (homepage, card snippets, `/portfolio-tracker`; `seo-check.mjs` enforces part of it).
+- **Language:** UI in English; `/impressum`, `/datenschutz` and `/contact` are German with an English tab (the German privacy text is the binding one).
+
+### Audiences
+
+| Visitor (not signed in) | Signed-in user | Admin (`ADMIN_EMAIL`) |
+|---|---|---|
+| Homepage with entry paths and price moves, `/cards`, card and printing pages, `/scan` (identification only), `/portfolio-tracker`, `/contact`, legal pages | Everything a visitor has, plus `/collection`, `/wishlist`, `/prices`, `/settings`, adding scanned cards, the homepage dashboard | Everything, plus `/admin` (users, DB statistics, price snapshots, scan logs, contact messages) and the manual price-update trigger |
+
+---
+
+## 2. Quick start and commands
+
+Requires **Node.js 22.12 or newer** (Node 22 in production and CI). The SheetJS `xlsx` tarball comes from `cdn.sheetjs.com`, so the first `npm ci` on a machine needs that host (§11).
 
 ```bash
-npm install                  # Install dependencies
-npm run import-cards         # Download Scryfall bulk data (required first time, ~600MB)
-npm run dev                  # Start dev server at http://localhost:5173
-npm run build                # Production build (node adapter)
-npm run build:worker         # Bundle the live-scanner detection worker (runs automatically before dev/build)
-npm run hash-art             # Art-hash index for the scanner (resumable; --status, --limit N, --sets a,b, --delay ms, --retry-failed, --export/--import file)
-npm run import-names         # Printed names of non-English printings for the scanner (German by default; --langs de,fr, --status, --export/--import file); re-run after a set release
-npm run check                # TypeScript + Svelte validation
+npm ci                       # Install exactly the committed lock file
+cp .env.example .env         # Fill in the Google OAuth credentials (see below)
+npm run import-cards         # Download Scryfall bulk data and build data/mtg.db (required first time, ~600 MB download)
+npm run dev                  # Dev server at http://localhost:5173 (bundles the scanner worker first)
 ```
 
-### Environment Variables (`.env`)
+### npm scripts
 
-```
-GOOGLE_CLIENT_ID=...         # Google OAuth credentials
-GOOGLE_CLIENT_SECRET=...     # From console.cloud.google.com/apis/credentials
-ORIGIN=http://localhost:5173 # App URL (used for OAuth callback)
-MTG_DB_PATH=...              # Optional: SQLite file to use instead of data/mtg.db (a second instance on a seeded harness catalogue)
-DISABLE_PRICE_UPDATES=1      # Optional: no scheduled/catch-up price runs — freezes the catalogue for measurements (never set in production)
-```
+| Command | What it does |
+|---|---|
+| `npm run dev` | Vite dev server on port 5173. `predev` bundles the live-scanner detection worker |
+| `npm run build` | Production build with `@sveltejs/adapter-node` into `build/` (`prebuild` bundles the worker). Start with `node build/index.js` |
+| `npm run preview` | Serve the production build locally |
+| `npm run check` | `svelte-kit sync` + `svelte-check` (TypeScript and Svelte) |
+| `npm test` / `npm run test:watch` | vitest over `src/lib/**/*.test.ts` (offline, no application DB) |
+| `npm run build:worker` | Bundle `src/lib/scanner/detect-worker.ts` to `static/scanner/detect-worker.js` (gitignored) |
+| `npm run import-cards` | `src/lib/server/seed.ts`: download Scryfall `default_cards` (gzipped JSONL, ~600 MB) and import cards, faces, prices and paper availability; `--skip-download` reuses `data/scryfall-default-cards.jsonl.gz` |
+| `npm run import-new-cards` | `import-new-cards.ts`: insert only cards missing from the DB; never touches prices or `price_history` |
+| `npm run backfill-prices` | `backfill-prices.ts`: fill gaps in `price_history` from Scryfall's dated bulk files (`--log <server log>`, `--from/--to`, `--stamps`, `--dry-run`, `--keep`); only writes `price_history` |
+| `npm run import-availability` | `import-availability.ts`: backfill `cards.is_paper` only (optional bulk file argument; without it the current `default_cards` is downloaded). Restart afterwards to refresh the scanner indexes |
+| `npm run hash-art` | `hash-art.ts`: art-hash index for the scanner, resumable (`--status`, `--limit N`, `--sets a,b`, `--delay ms` (> 100), `--retry-failed`, `--export file`, `--import file`) |
+| `npm run import-names` | `import-names.ts`: printed names of non-English printings for the scanner (German by default; `--langs de,fr`, `--status`, `--export/--import file`). Re-run after a set release |
 
-Google OAuth redirect URI: `{ORIGIN}/auth/callback/google`
+### Verification scripts (after `npm run build`, Playwright Chromium; set `PLAYWRIGHT_CHROMIUM_PATH` for an installed browser)
 
-> **No cloud OCR.** The Google Vision retry (per-user API keys in `/settings`, `/api/ocr`, the on-page toggle, usage statistics) was removed on 2026-09-17 at the owner's request; the scanner runs on local OCR and the art-hash index only. `users.google_vision_api_key` and the `api_usage` table remain in the schema, unused, so existing databases and the positional INSERTs of the nightly user-data dump keep loading.
+| Script | Checks |
+|---|---|
+| `node scripts/seo-check.mjs` | Anonymous HTTP and browser checks on an isolated synthetic DB: sitemaps, canonicals, pagination without JavaScript, card snippets, the apostrophe search, mobile screenshots, dashes in visitor copy, and that the privacy policy names every external host the browser contacts |
+| `node scripts/collector-workflows-check.mjs` | Fresh synthetic DB: mobile migration, bulk edits, partial moves, import preview/replace, collector CSV round trip, proxies (marking, filtering, never valued, Moxfield export, proxies-only replace), preferences |
+| `node scripts/prices-admin-ux-check.mjs` | Production server on synthetic data: mobile `/prices` and `/admin`, retry, empty/error states, cache invalidation after collection changes |
+| `node scripts/prices-admin-benchmark.mjs --db data/mtg.db` | Read-only timing of the price payload and admin snapshot queries (`--baseline`, `--index-db`) |
+| `scripts/scanner-harness/*` | Scanner pipeline harness, live/UX checks and experiments (§8.3, `scripts/scanner-harness/README.md`) |
 
-## Tech Stack
+### Environment variables (`.env`, documented in `.env.example`)
 
-- **Framework**: SvelteKit 2 with Svelte 5 (runes enabled globally)
-- **Database**: SQLite via better-sqlite3 + Drizzle ORM
-- **Styling**: Tailwind CSS 4 with CSS custom properties (dark theme)
-- **Auth**: Google OAuth 2.0 via `arctic` (PKCE flow)
-- **Adapter**: `@sveltejs/adapter-node` for production
-- **External**: Scryfall API, OpenCV.js (CDN), Tesseract.js (CDN), Chart.js, Frankfurter API (exchange rates), Plausible Analytics (self-hosted)
+| Variable | Required | Purpose |
+|---|---|---|
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | yes | Google OAuth credentials (console.cloud.google.com/apis/credentials). Redirect URI: `{ORIGIN}/auth/callback/google` |
+| `ORIGIN` | yes | Public app URL (`http://localhost:5173` in dev); must match exactly or the OAuth callback fails |
+| `BODY_SIZE_LIMIT` | production | `12M`: adapter-node request limit for CSV imports up to 10 MB plus multipart overhead. The reverse proxy must allow the same size. The Dockerfile sets it; a systemd service must set it in its environment |
+| `ADMIN_EMAIL` | optional | The Google account (email, case-insensitive) that is admin. Without it nobody is admin |
+| `TURNSTILE_SECRET_KEY` | optional | Cloudflare Turnstile verification on `/contact`; blank disables it |
+| `PUBLIC_SCANNER_ASSETS_URL` | optional | Self-host the scanner libraries (e.g. `/vendor`, layout in `src/lib/scanner/assets.ts`); blank uses the CDNs |
+| `MTG_DB_PATH` | dev only | SQLite file instead of `data/mtg.db` (a second instance on a seeded harness catalogue). Never in production |
+| `DISABLE_PRICE_UPDATES=1` | dev only | No scheduled, watchdog or catch-up price runs; freezes the catalogue for measurements. Never in production |
+| `PORT`, `HOST` | production | adapter-node listen address (production: `127.0.0.1:3000` behind nginx) |
 
-## Architecture
+> **No cloud OCR.** The Google Vision retry (per-user API keys in `/settings`, `/api/ocr`, the on-page toggle, usage statistics) was removed on 2026-09-17 at the owner's request; the scanner runs on local OCR and the art-hash index only. `users.google_vision_api_key` and the `api_usage` table remain in the schema, unused, so existing databases and the positional INSERTs of the nightly user-data dump keep loading. A `GOOGLE_VISION_API_KEY` in a `.env` is dead.
 
-### Svelte 5 Runes
+---
+
+## 3. Tech stack
+
+| Layer | Choice |
+|---|---|
+| Framework | SvelteKit 2 with **Svelte 5, runes enabled globally** (`svelte.config.js`; `node_modules` excluded) |
+| Adapter | `@sveltejs/adapter-node` → `build/index.js` |
+| Database | SQLite via `better-sqlite3` 13 (WAL), Drizzle ORM for simple queries, raw prepared SQL for the rest |
+| Styling | Tailwind CSS 4 (`@tailwindcss/vite`) with CSS custom properties, dark theme (`src/app.css`, `DESIGN.md`) |
+| Auth | Google OAuth 2.0 with PKCE via `arctic`, session cookie |
+| Charts | Chart.js 4, loaded lazily (`src/lib/chart-loader.ts`); the homepage chart is inline SVG |
+| Server-side images | `sharp` (art-hash job only) |
+| Spreadsheets | `xlsx` (SheetJS 0.20.3 from the vendor CDN; Cardtrader order exports) |
+| Scripts | `tsx` for the TypeScript CLIs, `esbuild` for the detection worker, `playwright` for browser checks |
+| Browser-side scanner | OpenCV.js 4.9.0, Tesseract.js 5, onnxruntime-web 1.30.0 + PaddleOCR PP-OCRv4 recognition (all lazily from CDNs or self-hosted) |
+| External data | Scryfall (catalogue, prices, images), Frankfurter (USD→EUR), Plausible (self-hosted analytics) |
+| Tests | vitest 4 (Node environment), svelte-check, Playwright scripts |
+
+---
+
+## 4. Architecture
+
+### 4.1 Request lifecycle (`src/hooks.server.ts`)
+
+1. **Module load:** `initDb()` runs synchronously (base schema, FTS triggers, migrations, expired-session cleanup, `PRAGMA optimize`) before the server accepts traffic. A migration that indexes `price_history` takes minutes on the production DB.
+2. **Price scheduler** (unless `DISABLE_PRICE_UPDATES=1`): daily run at **18:00 server-local time**, re-armed against the wall clock after each run; an **hourly watchdog** runs the update when the slot has passed and today has no snapshot; a **boot catch-up** 30 s after start runs only when yesterday has no snapshot (§5.4).
+3. **Graceful shutdown:** SIGTERM/SIGINT run `wal_checkpoint(TRUNCATE)` and close the DB.
+4. **Per request:** the `session` cookie is validated (`validateSession()`, 5-minute in-memory cache) into `locals.user` (`{ id, email, name, avatarUrl, isAdmin }`).
+5. **Redirects:** `/collection/scan…` → `/scan` (302).
+6. **Access control:** routes are **protected by default**. Public: `/`, `publicRoutes` (`/login`, `/auth/`, `/cards`, `/scan`, `/portfolio-tracker`, `/impressum`, `/datenschutz`, `/contact`, `/api/health`, `/api/scan-log`) and the sitemaps (`/sitemap.xml`, `/sitemap-*.xml`). Anything else without a user: `/api/*` → 401, pages → 302 `/login`. `/admin*` for non-admins: `/admin/api/*` → 403, pages → 302 `/`. **A new public page must be added to `publicRoutes`**, or visitors and Googlebot are redirected to `/login`.
+7. **Security headers** on every response: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` (camera for self only), HSTS outside dev, and a hard-coded **CSP**. A new external host (script, image, fetch) must be added to the CSP array, or the scanner, images or analytics break silently. `csrf.trustedOrigins` is empty: cross-origin form POSTs are rejected.
+
+### 4.2 Svelte 5 runes
 
 This project uses **Svelte 5 runes exclusively** — no legacy `$:` reactivity or stores.
 
-- `$state` for reactive variables
-- `$derived` for computed values
+- `$state` for reactive variables, `$derived` / `$derived.by` for computed values
 - `$effect` for side effects (portal DOM manipulation, initialization)
-- `$props` with destructuring for component props
+- `$props` with destructuring for component props, `$bindable` for two-way props
 - `{@render children()}` instead of `<slot>` (Svelte 5 snippets)
 - `{@const}` only inside `{#if}`, `{#each}` blocks — never as direct child of `<div>`
+- `onMount` for one-time init (avoids `$effect` reactivity loops)
 
-### Database
+### 4.3 Database
 
-**File**: `data/mtg.db` (auto-created)
+**File:** `data/mtg.db` relative to `process.cwd()` (override `MTG_DB_PATH`), created on first start. Pragmas: WAL, `foreign_keys=ON`, `synchronous=NORMAL`, 128 MB page cache, `temp_store=MEMORY`, 30 MB mmap. Everything else under `data/` (secret key, exchange-rate cache, `last-bulk-update.txt`, bulk downloads, scan logs) stays there even with `MTG_DB_PATH`.
 
-Two query patterns coexist:
-- **Drizzle ORM** for simple queries (`src/routes/+page.server.ts`)
-- **Raw SQL** via `sqlite.prepare()` for complex queries (FTS5, joins, aggregations)
+**Query patterns:** Drizzle ORM (`schema.ts`) for simple queries (`src/routes/+page.server.ts`); raw `sqlite.prepare()` for everything complex (FTS5, joins, aggregations). Statements in modules that the build imports are **prepared lazily**, because the build discovers routes before `initDb()` has created the tables. Modules that unit tests import take an **injected** `Database` (`price-data.ts`, `home-data.ts`, `collection-actions.ts`, `collection-import.ts`, `admin-stats.ts`) and never import `db.ts` (§8.1).
 
-**Tables**: `cards`, `card_faces`, `users`, `sessions`, `collection_cards`, `wishlist_cards`, `tags`, `collection_card_tags`, `price_history`, `card_names` (names printed on non-English printings, catalogue data from `npm run import-names`), `api_usage` (legacy, unused)
+**Tables** (base DDL in `src/lib/server/schema-sql.ts`, the single source shared by `initDb()` and `seed.ts`):
 
-**FTS5**: `cards_fts` virtual table for full-text search (name, type_line, oracle_text)
+| Table | Content | Kind |
+|---|---|---|
+| `cards` | One row per English Scryfall printing: identity, rules, set, number, rarity, image, layout, legalities, current prices (`price_eur`, `price_eur_foil`, `price_usd`, `price_usd_foil`), `cardmarket_id`, `is_paper`, `art_hash` | catalogue |
+| `card_faces` | Faces of multi-faced printings (`face_index`, name, cost, type, text, image, `art_hash` of the back face) | catalogue |
+| `cards_fts` | FTS5 external-content index over `name`, `type_line`, `oracle_text` (kept in sync by triggers; query via `cards.rowid IN (SELECT rowid FROM cards_fts WHERE cards_fts MATCH ?)`) | catalogue |
+| `card_names` | Names printed on non-English printings (`name`, `lang`, `printed_name`), from `npm run import-names` | catalogue |
+| `card_prices_lang` | Current prices of non-English printings per `(card_id, language)`, created lazily when a user owns a card in that language and refreshed by every price update | price data |
+| `price_history` | Change-only daily snapshots per `(card_id, snapshot_date, language)` (UNIQUE), four prices, `recorded_at` | price data |
+| `users` | Google identity, email, name, avatar; `google_vision_api_key` (legacy, unused) | user data |
+| `sessions` | Session id, user, `expires_at` (30 days) | user data |
+| `collection_cards` | Collection lots: `user_id`, `card_id`, `quantity`, `condition`, `foil`, `language`, `purchase_price` (per copy, EUR), `notes`, `added_at`, `location`, `proxy` | user data |
+| `tags`, `collection_card_tags` | Per-user tags (`UNIQUE(user_id, name)`, colour) and their assignment to lots | user data |
+| `wishlist_cards` | Wants with `priority`, notes, `added_at` | user data |
+| `contact_messages` | `/contact` submissions (IP stored only as a keyed hash), `handled` flag | user data |
+| `api_usage` | Legacy Vision usage, unused | legacy |
+| `_schema_migrations` | Applied migration ids | bookkeeping |
 
-**Migrations**: Done via try/catch `ALTER TABLE ADD COLUMN` in `initDb()` — not via Drizzle migrations.
+`user_id` is nullable on the user tables for pre-auth databases; every query filters by it anyway.
 
-### Authentication
+**Migrations** (`src/lib/server/db.ts`, runner in `migrations.ts`): an ordered list of `{ id, run }`; each id runs once per database inside a transaction and is recorded in `_schema_migrations`; every `run` is idempotent (`addColumnIfMissing()` checks `PRAGMA table_info`, so real ALTER errors propagate). **Never change a released id; append a new one.** New columns are appended last so fresh and migrated databases share the column order of the positional user-data dump. Index DDL that depends on a migrated column belongs in the migration, not in `SCHEMA_SQL` (which runs first).
 
-Google OAuth with session cookies:
+| Id | Change |
+|---|---|
+| `0001`–`0005` | `purchase_price`; `collection_cards.user_id` + indexes; USD prices on `cards` and `price_history`; `users.google_vision_api_key` (legacy) |
+| `0006_fts_external_content` | FTS5 rebuilt as external content (no duplicated text) |
+| `0007_tags_per_user` | Tags become per-user (`UNIQUE(user_id, name)`); old global tags go to `ADMIN_EMAIL` or the oldest account |
+| `0008`, `0014` | Same-day dedup of `price_history`; materialised `snapshot_date` (UTC) with a UNIQUE index |
+| `0009`, `0010` | `api_usage` (legacy); `contact_messages` |
+| `0011`–`0013` | Indexes on `released_at`, `tags.user_id`, `wishlist_cards.user_id` |
+| `0015` | `cards.cardmarket_id` + index (Cardmarket price import) |
+| `0016`–`0019` | `collection_cards.language`; `card_prices_lang`; `price_history.language` with UNIQUE `(card_id, snapshot_date, language)`; lookup index `(card_id, language, snapshot_date DESC, recorded_at DESC)` |
+| `0020` | `price_history(recorded_at DESC)` for the "last update" status |
+| `0021_art_hash` | `cards.art_hash`, `card_faces.art_hash` |
+| `0022_card_names` | `card_names` |
+| `0023_price_history_snapshot_card` | `(snapshot_date DESC, card_id)` for the admin snapshot list |
+| `0024_collection_location` | `collection_cards.location` + `(user_id, location)` index |
+| `0025_cards_paper_availability` | `cards.is_paper` |
+| `0026_collection_proxy` | `collection_cards.proxy` |
+
+### 4.4 Authentication and accounts
+
+Google OAuth with session cookies (`src/lib/server/auth.ts`):
+
 1. `/auth/login/google` — generates state + PKCE verifier, redirects to Google
-2. `/auth/callback/google` — validates, creates/updates user, sets session cookie
-3. `hooks.server.ts` — validates session on every request, sets `locals.user`
-4. Sessions expire after 30 days
+2. `/auth/callback/google` — validates, creates or updates the user (`findOrCreateUser`), sets the `session` cookie
+3. `hooks.server.ts` — validates the session on every request (cached 5 minutes), sets `locals.user`
+4. Sessions expire after 30 days; expired rows are deleted at boot and by the admin action "cleanup sessions"
+5. `/auth/logout` deletes the session; `DELETE /api/account` (from `/settings`) deletes all sessions, then the user (collection, wishlist and tags cascade)
+6. **Admin** = the user whose email equals `ADMIN_EMAIL` (case-insensitive); `locals.user.isAdmin`
 
-**Public routes**: `/`, `/cards`, `/cards/[id]`, `/scan`, `/portfolio-tracker`, `/login`, `/auth/*`, `/impressum`, `/datenschutz`, `/api/health`, `/api/scan-log` (POST; its GET is admin-only)
-**Protected routes**: `/collection`, `/wishlist`, `/prices`, `/tags` — redirect to `/login`
-**Admin routes**: `/admin`, `/admin/api/*` — redirect non-admins to `/`. User must have `isAdmin: true` in `App.Locals`.
+### 4.5 Server caches (`src/lib/server/cache.ts`)
 
-### Multi-User Collections
+| Cache | Content | TTL / invalidation |
+|---|---|---|
+| `priceDataCache` (per user) | `getPriceData()` result for `/prices`, `/api/prices/data` and the homepage dashboard | 10 min; invalidated by collection mutations and the price updater |
+| `homeCatalogueCache` | Visitor homepage price moves and the Lightning Bolt printing sample | 1 h; invalidated by the price updater |
+| `setsCache` | Distinct sets (filters, scan settings) | 1 h; invalidated by the price updater |
+| `tagsCache` (per user) | The user's tags | 30 s |
+| Name index (`card-search.ts`), art index (`art-index.ts`) | Scanner name candidates and art hashes in memory | Rebuilt when the price updater or the jobs change the data |
+| Card slugs (`card-slugs.ts`) | ~37k card slugs (~0.5 s to build) | Rebuilt when `MAX(rowid)` of `cards` changes |
+| Exchange rate (`exchange-rate.ts`) | USD→EUR | 6 h, persisted in `data/exchange-rate.json` |
 
-All `collection_cards` and `wishlist_cards` queries filter by `user_id`. Each user has an isolated collection and wishlist. The `user_id` column is nullable for backward compatibility with pre-auth databases.
+Concurrent misses of a per-user cache share one fetch. All caches are in-process: the app is a **single Node process** by design (rate limiters and timers are per process too).
 
-### Collector workflows
+### 4.6 Directory structure
+
+```
+.claude/                             # Claude Code settings (opusplan, effort high) and the Haiku subagents search / tests / docs
+.github/workflows/ci.yml             # check, test, build on every push to master and every PR
+scripts/
+├── build-detect-worker.mjs          # esbuild bundle of the detection worker (predev / prebuild)
+├── seo-check.mjs                    # SEO + privacy-host browser checks on a synthetic DB
+├── collector-workflows-check.mjs    # Collection workflows end to end on a synthetic DB
+├── prices-admin-ux-check.mjs        # /prices and /admin on a synthetic DB
+├── prices-admin-benchmark.mjs       # Read-only query timing against a real DB
+└── scanner-harness/                 # Scanner harness, fixtures generators, experiments, baselines (README.md)
+src/
+├── app.css                          # Design tokens (dark theme), component classes, Tailwind imports
+├── app.d.ts                         # App.Locals type (user incl. isAdmin)
+├── app.html                         # HTML shell
+├── cdn-modules.d.ts                 # Types for CDN-loaded scanner modules
+├── hooks.server.ts                  # DB init, price scheduler, shutdown, auth guard, admin guard, CSP + security headers
+├── params/printing.ts               # Route matcher: lower-case Scryfall UUIDs (printing pages)
+├── lib/
+│   ├── card-page.ts                 # Card-page helpers: pickMainPrinting(), cardPageMeta() snippets (+ test)
+│   ├── card-slug.ts                 # Readable card slugs, collision rules, isPrintingId() (+ test)
+│   ├── chart-loader.ts              # Lazy Chart.js import + registration
+│   ├── collection-fields.ts         # Conditions, location/finish/proxy validation, CollectionChanges
+│   ├── collection-import.ts         # CSV/text import parser: delimiters, quoting, header aliases, field mapping, issues (pure)
+│   ├── fts.ts                       # ftsPrefixQuery(): FTS5 query that splits at apostrophes like the tokenizer (+ test)
+│   ├── home.ts                      # Homepage logic: pickMovers, collectionMoves, dashboardSummary, chartPaths, movesHeading (+ test)
+│   ├── seo.ts                       # SITE_URL, jsonLd() escaping, catalogSeo() canonical/noindex rules (+ test)
+│   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
+│   ├── utils.ts                     # formatPrice, displayPrice, priceDivergence, formatManaCost, conditionLabel, LANGUAGES, getRarityColor, priceDate (+ test)
+│   ├── components/
+│   │   ├── CardPreview.svelte       # Hover zoom on desktop, tap preview on touch (one shared portal on document.body)
+│   │   ├── CollectionBulkEdit.svelte    # Bulk edit of location, condition, language, finish, proxy status
+│   │   ├── CollectionImport.svelte      # Import dialog: file/text, column mapping, preview, issues, confirm
+│   │   ├── ColorPips.svelte / ManaCost.svelte   # Original letter pips (no official symbols)
+│   │   ├── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, best frame, hints, cues, receipts, pause/review, rearm)
+│   │   ├── MoveCollectionCopies.svelte  # Move part of a lot to another location
+│   │   ├── PriceTag.svelte          # List price with foil-only fallback + "Foil" chip (displayPrice)
+│   │   ├── ProtectedText.svelte     # Base64-obfuscated contact data on the legal pages
+│   │   └── ScanSessionSettings.svelte   # Scan presets: set, language, finish, condition, location
+│   ├── scanner/                     # Browser-side scanner library; pure modules are unit-tested (§6)
+│   │   ├── detect.ts                # createQuickDetector(): live detector, Web Worker with its own OpenCV copy, main-thread fallback
+│   │   ├── detect-worker.ts         # Detection Web Worker; bundled by scripts/build-detect-worker.mjs to static/scanner/ (gitignored)
+│   │   ├── quick-rects.ts           # Live rectangle scan on RGBA: fine + coarse Canny, card-quad and content checks, containment rules
+│   │   ├── quad.ts                  # Card-quad sanity (convex, angles, side ratios, aspect) and luminance sampling inside a quad
+│   │   ├── grid.ts                  # Spread geometry: oriented dimension filter, lattice indexing, affine/homography grid hypothesis
+│   │   ├── geometry.ts              # orderCornersForCard(), fitContain(), touchesFrameEdge(), loadImage()
+│   │   ├── warp.ts                  # expandedCardCorners(): the 5% corner expansion shared by recognition and rearm
+│   │   ├── crops.ts                 # OCR windows from the warp's intensity profiles (name band, collector strip)
+│   │   ├── quality.ts               # Laplacian sharpness, glare fraction, BestFrameSelector
+│   │   ├── stability.ts             # SceneStabilizer, sceneSignature(), sceneDiffers()
+│   │   ├── rearm.ts                 # CaptureRearm, content fingerprints, capturedStillInPlace()
+│   │   ├── identity-rearm.ts        # Reference-assisted rearm: identity from artwork matches (pure)
+│   │   ├── live-identity.ts         # probeLiveIdentity(): art hashes of the held card -> /scan identity probe
+│   │   ├── opencv.ts                # Lazy OpenCV.js loader with failure cooldown
+│   │   ├── tesseract.ts             # Tesseract.js worker pool (recognizeBatch, recognizeDetailed)
+│   │   ├── paddle.ts                # PaddleOCR PP-OCRv4 recognition via onnxruntime-web (lazy, second name engine)
+│   │   ├── ctc.ts                   # ctcDecode(): greedy CTC decoding
+│   │   ├── timeout.ts               # withTimeout(): deadline for the lazily loaded OCR engines
+│   │   ├── assets.ts                # CDN or self-hosted URLs of the scanner libraries
+│   │   ├── parse.ts                 # parseCollectorInfo(): set code / collector number / rarity / language / foil hint
+│   │   ├── similarity.ts            # Name similarity, OCR-junk heuristic, prefix-aware bestNameMatch(), nameAliases()
+│   │   ├── pipeline.ts              # disambiguateReprints(), normalizeCollectorNumber()
+│   │   ├── resolve.ts               # resolveCard(): evidence fusion -> identity / printing / finish states; nameIdentifies()
+│   │   ├── results.ts               # isImportable() and result reporting rules
+│   │   ├── session.ts               # Scan-session presets and the set restriction applied after identity resolution
+│   │   ├── foil.ts                  # Pixel-based foil check from the separator glyph (single-card mode)
+│   │   ├── feedback.ts              # Capture/result cues: WebAudio tones + navigator.vibrate, preferences in localStorage
+│   │   ├── phash.ts                 # 64-bit DCT perceptual hash of the art box (shared by server job and scanner)
+│   │   └── art-search.ts            # searchHashes(): Hamming search over hash entries (pure part of the art index)
+│   └── server/
+│       ├── db.ts                    # SQLite connection, pragmas, migration list, initDb()
+│       ├── migrations.ts            # Versioned migration runner (_schema_migrations)
+│       ├── schema-sql.ts            # Base DDL (shared by initDb and seed)
+│       ├── schema.ts                # Drizzle table definitions
+│       ├── auth.ts                  # OAuth client, sessions (+ 5-min cache), user CRUD, admin flag
+│       ├── crypto.ts                # data/secret-key.hex and hashIdentifier() (keyed hashes)
+│       ├── cache.ts                 # TTL caches (§4.5)
+│       ├── rate-limit.ts            # In-process fixed-window rate limiter
+│       ├── scryfall.ts              # scryfallFetch() with User-Agent/Accept, bulk metadata, streamed bulk download with stall/total timeouts
+│       ├── bulk-stream.ts           # Streaming parser for Scryfall bulk files (JSONL or legacy JSON array, .gz)
+│       ├── seed.ts                  # npm run import-cards
+│       ├── import-new-cards.ts      # npm run import-new-cards
+│       ├── backfill-prices.ts       # npm run backfill-prices
+│       ├── import-availability.ts   # npm run import-availability
+│       ├── card-availability.ts     # paperAvailability(), is_paper writer, SCANNABLE_CARD filter
+│       ├── price-updater.ts         # Daily bulk price update, change-only snapshots, run lock, retries, watchdog checks
+│       ├── foreign-prices.ts        # Prices of non-English printings into card_prices_lang
+│       ├── exchange-rate.ts         # USD→EUR rate (Frankfurter, 6 h cache, validated, fallback 0.92)
+│       ├── price-data.ts            # getPriceData(): stats, top cards, value/profit history (DB injected, + test)
+│       ├── home-data.ts             # Homepage reads: price-mover rows, recently added, wishlist count, printing prices (+ test)
+│       ├── admin-stats.ts           # Recent snapshots, history range, snapshot index DDL
+│       ├── card-search.ts           # Scanner name search (exact, FTS, LIKE, OCR-tolerant, fuzzy), lookups, printings, near numbers
+│       ├── card-slugs.ts            # In-memory slug index for card pages and the sitemap (+ test)
+│       ├── sitemap.ts               # Sitemap index and parts (+ test)
+│       ├── collection-actions.ts    # Locations, bulk edit, partial moves (DB injected)
+│       ├── collection-import.ts     # Import matching, preview digest, skip/append/replace commit (DB injected)
+│       ├── cardtrader-xls.ts        # Cardtrader order export (.xls/.xlsx) -> purchase-price rows (+ test)
+│       ├── art-hash.ts / art-image.ts / art-index.ts / hash-art.ts   # Art-hash job, image hashing, in-memory index, CLI
+│       ├── printed-names.ts / printed-name-index.ts / import-names.ts # Printed names job, DB-free index, CLI
+│       ├── scan-logs.ts             # data/scan-logs/<day>/*.log, 30-day retention, list/read for /admin
+│       └── images.ts                # Optional local card-image download (static/card-images/, gitignored)
+└── routes/                          # Pages and endpoints (§4.7)
+```
+
+`src/lib/index.ts` is the empty `$lib` placeholder. Root files: `DESIGN.md` (design system), `Dockerfile` (two-stage Node 22 Alpine image, not used in production), `.env.example`, `datenschutz-vorlage.txt` (source text of the privacy policy). `lighthouse.json`, `lighthouse_desktop.pdf` and `orders_export.zip` are committed reference artefacts (a Lighthouse report and a sample Cardtrader export), not read by the code.
+
+### 4.7 Routes
+
+**Pages**
+
+| Route | Access | Purpose |
+|---|---|---|
+| `/` | public | Visitors: hero, three entry paths (portfolio tracker, card database with real Lightning Bolt printing prices, scanner), latest price moves. Signed in: dashboard (value and today's change, profit/loss, cards, wishlist, 90-day chart, collection moves, recently added) |
+| `/cards` | public | Catalogue: FTS search, colour (include/exact mode), type, set, rarity, mana value range, legality, sort (name, price, power, toughness, …), direction, unique toggle, page size; crawlable pagination |
+| `/cards/[slug]` | public | Card page, one per card (oracle id): rules, every printing with prices, printed names; canonical URL, the only card URLs in the sitemap |
+| `/cards/[id=printing]` | public | Printing page at its Scryfall id: reprints, price history chart, collection/wishlist status and actions; canonical points to the card page |
+| `/scan` | public | Card scanner (upload single/multiple, live camera); adding to the collection requires sign-in |
+| `/portfolio-tracker` | public | Landing page for the portfolio features (example dashboard, imports, price sources, FAQ text) |
+| `/collection` | user | Collection: search, sort (added, name, price, profit %, profit total, quantity, set), tag/location/proxy filters, edit dialog, bulk edit, partial moves, import dialog, export, purchase-price import, "set missing purchase prices", per-card price chart |
+| `/wishlist` | user | Wishlist: priority, notes, sort, collect into the collection |
+| `/prices` | user | Value over time, profit/loss chart, top cards, per-card history popup (data loaded async) |
+| `/settings` | user | Account information, collection statistics, account deletion |
+| `/admin` | admin | Users, scan logs, actions (price update, session cleanup), contact messages, DB overview and table sizes, recent price snapshots, top sets |
+| `/login` | public | Sign-in page with the data note |
+| `/contact` | public | Contact form (German/English tabs; honeypot, 2-second time trap, 3 per IP per hour, optional Turnstile) |
+| `/impressum`, `/datenschutz` | public | Legal notice and privacy policy (German binding, English tab) |
+| `/collection/scan` | — | Retired; redirects to `/scan` |
+
+**Endpoints**
+
+| Endpoint | Access | Purpose |
+|---|---|---|
+| `POST/PUT/DELETE/PATCH /collection` | user | Add (validates card id, quantity, price), edit (keeps location/proxy when absent), delete, fill missing purchase prices (non-proxy) |
+| `POST /collection/bulk` | user | `{ action: 'edit' }` bulk metadata (1–500 rows, ownership checked first) or `{ action: 'move' }` partial move |
+| `POST /collection/import` | user | Multipart: preview (no write) or `action=commit` with the preview digest |
+| `GET /collection/export` | user | `?format=collector` (all metadata), Moxfield CSV, or Moxfield text |
+| `POST /collection/prices` | user | Purchase-price import: `format=text` (`1 Name (SET) 123 4.50E` / `D` for USD), `cardmarket` (CSV, `idProduct`/`price`, ≤ 5 MB), `cardtrader` (XLS/XLSX, ≤ 10 MB); fill or overwrite mode; proxies untouched |
+| `POST/PUT/DELETE /tags` | user | Create tags, add/remove on a lot (ownership of both checked), delete |
+| `POST/PUT/DELETE /wishlist` | user | Wishlist CRUD |
+| `POST /scan` | public | Scanner batch API: `{ queries }` names, `{ lookups }` set+number, `{ near }` near numbers, `{ artHashes }` art search (and `identityProbe`), `{ printings }` all printings of names; batch caps 50/100 |
+| `GET /api/prices/data` | user | Stats, top cards, profit history, rate (10/min per user, `no-store`) |
+| `GET /api/prices/card` | user | One printing's price history per language (collection and prices charts) |
+| `GET/POST /api/prices` | GET user, POST admin | Price-update status; trigger a background run |
+| `POST /api/collection/restore-history` | user | One-time repair: backdate `added_at` to the first snapshot (only earlier, idempotent) |
+| `DELETE /api/account` | user | Delete the account |
+| `POST /api/scan-log`, `GET /api/scan-log` | POST public (30/min per address, ≤ 512 KB), GET admin | Store a scan's debug log; list (`?limit=`) / read (`?name=`) |
+| `POST /api/import` | admin | Re-run `initDb()` |
+| `POST /admin/api` | admin | `cleanup_sessions`, `mark_message_handled`, `delete_message` |
+| `GET /api/health` | public | Health check (Docker `HEALTHCHECK`, deploy check) |
+| `GET /sitemap.xml`, `/sitemap-pages.xml`, `/sitemap-cards-N.xml` | public | Sitemap index and parts |
+| `/auth/login/google`, `/auth/callback/google`, `/auth/logout` | public | OAuth flow |
+
+---
+
+## 5. Features in detail
+
+### 5.1 Card catalogue, card pages and search engine indexing
+
+- **Catalogue `/cards`** (`src/routes/cards/+page.server.ts`): free text goes through `ftsPrefixQuery()` (`fts.ts`: quoted prefix terms split at apostrophes like the unicode61 tokenizer, so "Teferi's Protection" is found and FTS5 operators stay plain text). Filters: colours (`color`, repeatable, with `colorMode`), `type`, `set`, `rarity`, `cmcMin`/`cmcMax`, `legality`; sort by name, price (`COALESCE(price_eur, price_eur_foil)`), power, toughness and more (`NULLS LAST`, printing id as tie-break); `unique=1` shows one tile per card that opens the card page; page size configurable (default 40). Tiles render `PriceTag.svelte` and mark owned cards.
+- **Card page** `/cards/[slug]` and **printing page** `/cards/[id=printing]`: see below. The printing page shows the card faces, rules, legalities, every reprint, the price history chart (loaded with the page), the "Check this price" divergence note, and, for signed-in users, add to collection (incl. proxy) and wishlist with the current holdings.
+
+- `/sitemap.xml` is a public sitemap index. `/sitemap-pages.xml` lists public landing pages; `/sitemap-cards-N.xml` lists up to 10,000 **card pages** per part (one per oracle id, ordered by oracle id), never printing URLs: with all ~115k printings in the sitemap Google left 108,508 of them "discovered – currently not indexed" and indexed 7,422 (Search Console, 2026-10-15). These root-level routes bypass the login guard. Invalid or absent parts return 404. No guessed `lastmod` dates are emitted.
+- The default `/cards` catalogue and each paginated page have their own canonical URL and ordinary previous/next links that work without JavaScript. Search, filters, alternate sorting and page sizes use `noindex, follow` with their own canonical; tracking parameters are omitted. Invalid and out-of-range page numbers return 404. Equal sort values use the printing ID as a stable tie-breaker.
+- **One page per card** at `/cards/<slug>` (`src/routes/cards/[slug]`): rules text from a representative printing (`pickMainPrinting()`: image and a non-foil price, newest first), every printing with its EUR/USD and foil prices, printed names in other languages from `card_names`. **Snippet** (`cardPageMeta()` in `src/lib/card-page.ts`): the title leads with the facts a searcher wants and fits 60 characters by dropping details (`<Name>: MTG price from €0.94, 73 printings` → without the count → `price from` → the name alone) and carries no `| MTG Collector` suffix, because Google shows the site name above the result. A card without any price never gets a price promise: digital-only cards (every printing `is_paper = 0`, Alchemy/MTGO) read `<Name>: digital MTG card[, <Set>]`, paper cards without a price `<Name>: MTG card[, <Set>]`. Owner rule for visitor-facing copy: no dashes, so the separator is a colon, type lines get commas (`Creature, Human`) and ability words a colon (`Landfall: Whenever`). The description (at most 155 characters) states type, printings and the lowest price (marked foil when only a foil price exists), the digital set ("digital card from <Set>"), or "no price yet", then the start of the rules text cut at a word with an ellipsis (double-faced cards: the first face). Search Console 2026-10-19 had the Alchemy card Killian, Spotlight Chaser on position 8.2 with 0 clicks under the old title "… – Price, Printings & Rules | MTG Collector" (68 characters, cut off, promising a price that does not exist). Slugs come from `src/lib/card-slug.ts` (pure): the ASCII-folded name; when several cards share a name (mostly tokens) the one real card keeps the plain slug and the others get the first block of their oracle id. `src/lib/server/card-slugs.ts` holds the index in memory (~37k cards, ~0.5 s to build) and rebuilds it when `MAX(rowid)` of `cards` changes. Art-series records and printings without an oracle id (reversible cards) have no card page.
+- Printing pages stay at `/cards/<Scryfall id>` (`src/routes/cards/[id=printing]`, matcher `src/params/printing.ts`: lower-case UUIDs only) and keep their collection/wishlist actions and price history; their canonical is the card page, their breadcrumb links it, and their JSON-LD describes the printing URL itself. "Unique only" catalogue tiles open the card page.
+- Printing pages identify the set and collector number in their titles. JSON-LD describes the page and visible breadcrumbs, not a shop offer: Scryfall reference prices do not establish stock or an actual selling price. `jsonLd()` escapes `<` before embedding imported text in a script element.
+- `npm test` covers sitemap limits with 50,001 synthetic slugs, the slug rules, the card-page helpers and canonical/JSON-LD regressions without opening the application DB. After `npm run build`, run `node scripts/seo-check.mjs` for anonymous production HTTP and browser checks against an isolated synthetic database, including pagination without JavaScript, card-page canonicals, the apostrophe search and mobile screenshots. Its fixture printing ids must be UUID-shaped. Set `PLAYWRIGHT_CHROMIUM_PATH` for an installed Chromium browser.
+- **Landing page** `/portfolio-tracker` (`src/routes/portfolio-tracker/+page.svelte`) answers the product queries that ranked on page 3 ("mtg portfolio tracker", "mtg card collection manager"): what the tracker does today, an example dashboard built from HTML and SVG and labelled as example data (no card images or WotC symbols), where the prices come from, and visible questions without FAQPage markup (Google restricts FAQ results to government and health sites). It must stay in `publicRoutes` in `src/hooks.server.ts`: routes are protected by default, and without the entry visitors and Googlebot are redirected to `/login`. Visitor-facing copy on it, as on the card snippets, follows the owner's rule: no dashes, no marketing phrases.
+- **Sign in page** (`/login`): a short note says the app is free, shows no ads, never sells data and never shares a collection, and that Google passes name, email address and profile picture. Deliberately not "no data goes to third parties": Google (sign in), Cloudflare (in front of the site) and Scryfall (card images load from `cards.scryfall.io`) still see technical data such as the IP address.
+- After deployment, submit `/sitemap.xml` in Google Search Console and inspect sample home, scanner and card URLs. Local tests establish crawlability and markup correctness; they do not establish indexing or ranking. German landing pages and language routing are separate content work; the app's main pages remain English.
+
+### 5.2 Collection
+
+All `collection_cards` and `wishlist_cards` queries filter by `user_id`; each user has an isolated collection and wishlist. One row is one **lot**: lots with the same printing are never merged automatically, because purchase prices and dates differ.
 
 - **Locations and bulk edits:** migration `0024_collection_location` adds `collection_cards.location` (empty means unassigned) and the `(user_id, location)` index. Select entries on the current collection page to change location, condition, language or finish. Only explicitly changed fields are updated; purchase lots never merge. Moving part of an entry clones its cost, acquisition date, notes and tag assignments, then reduces the original quantity in one transaction. `/collection/bulk` validates ownership of every selected row before writing. Unique-printing counts use distinct card IDs so moving copies cannot inflate them.
-- **Scanner settings:** `ScanSessionSettings.svelte` persists the chosen set, DE/EN language, finish, condition and location in account-scoped browser storage. Each capture snapshots these preferences; later changes affect future captures only. `scanner/session.ts` applies an explicitly selected set only after identity resolution. Same-set variants stay open; a contrary established printing or known footer set requires review. These settings cannot promote an uncertain identity. Saving uses the capture's condition and location; receipts refer to capture IDs so separate copies of the same printing can be saved. Failed requests remain retryable and concurrent Add requests are blocked.
 - **CSV preview:** `collection-import.ts` parses quoted multiline CSV, comma/semicolon/tab delimiters and common competitor headers, with editable column mapping for custom exports (including Delver). The DB-injected server matcher accepts a consistent Scryfall ID or an exact, unambiguous set/number/name match. It never falls back to the newest printing of the same name. Language-specific names use `card_names`; unsupported finishes, currencies, dates and ambiguous printings are visible issues. Missing metadata defaults are shown in the dialog; costs are per-copy EUR, with zero distinct from missing. Other currencies must be converted by the user or explicitly ignored.
 - **Import modes:** skip existing entries (same printing, condition, finish, language, location and cost), append every matched entry, or replace the entire collection. Preview does not write. Confirmation is bound to the parsed file, options, resolved matches, existing holdings and tags; concurrent edits require a new preview. Replacement requires explicit confirmation and zero unresolved rows. Append/skip modes may import the resolved subset shown in the preview. CSV limits are 20,000 entries and 10 MB; production must export `BODY_SIZE_LIMIT=12M` and allow that request size at its reverse proxy. Docker sets the adapter limit. A service-based deployment must set it in the service environment; `.env.example` documents it.
 - **Export:** `/collection/export?format=collector` preserves IDs, quantities, condition, finish, language, EUR costs, locations, notes, tag names and acquisition dates for re-import. Tag names use a JSON column so commas/semicolons round-trip. Existing tag colors remain in the account; a new account creates imported tags with the default color. Moxfield CSV and text remain available.
 - **Proxies:** migration `0026_collection_proxy` adds `collection_cards.proxy` (0/1, default 0). Like the finish, it belongs to an entry, so one printing can be held as real copies and as proxies side by side. Proxies count toward unique printings and total cards, never toward value, purchase totals, profit/loss, the profit chart, top cards or the missing-price warnings: `getPriceData()` filters them once and reports `proxyCopies`; `/collection` and the homepage sum real copies only. "Set missing purchase prices", the Cardmarket/Cardtrader price import and the wishlist's "owned" marker ignore proxies; the `/cards` owned marker counts any entry. Entries are marked in the edit dialog, in bulk edit ("Proxy status") or when added from a printing page; `PUT /collection` keeps the flag when the field is absent, and partial moves copy it. Imports read a `Proxy` column (Moxfield's collection CSV has one; true/false, yes/no, 1/0, empty means real). "Import every card as a proxy" overrides that column for CSV and text lists. The option travels in the parse result, so the confirmation digest covers it, and it limits Replace to the existing proxies: real cards and their tags are never touched. The duplicate check includes the flag. Moxfield CSV exports write its `Proxy` column and a `Tradelist Count` of 0 for proxies; the collector CSV has a `Proxy` column; the Moxfield text list has no proxy marker, so proxies are plain lines there. The collection list shows a PROXY chip and the original price muted, without a change percentage, and filters with `?proxy=only|none`. Sorts put entries without a value last in both directions (`NULLS LAST`, `cc.id` as tie-break).
 - **Verification:** `collection-workflows.test.ts` uses injected in-memory SQLite fixtures. After a production build, `node scripts/collector-workflows-check.mjs` creates a fresh database and exercises mobile migration, bulk edits, partial moves, import preview, replacement, native export/re-import, proxy marking and filtering, proxies left out of every value, the Moxfield proxy export, a proxies-only replacement and preference persistence. `node scripts/scanner-harness/collector-session-check.mjs <catalogue.db> <synthetic-fixture-directory>` copies only catalogue tables from a read-only source into a new database and exercises the actual scanner, printing selection, captured preferences, retries and repeat copies. Set `PLAYWRIGHT_CHROMIUM_PATH` for an installed Chromium browser. Competitor parsing is checked with representative fixtures and configurable mapping; real owner export files and another physical-phone scan remain to be checked.
+- **Purchase prices:** per copy, in EUR. "Set missing purchase prices" (`PATCH /collection`) fills empty prices with the effective current price the UI shows (language overlay, then English, then USD×rate) and skips proxies. `POST /collection/prices` imports prices from a text list, a Cardmarket CSV (by `cardmarket_id`) or a Cardtrader order export (§11 on `xlsx`), in fill or overwrite mode.
+- **Restore history:** a "sync" import used to re-insert every row with `added_at = now`, which collapsed the value chart; `POST /api/collection/restore-history` backdates each lot to its first price snapshot (only ever earlier).
+- **Tags:** per user (`UNIQUE(user_id, name)`, colour); assigning checks that the user owns both the lot and the tag.
 
-### Price System
+### 5.3 Wishlist
 
-- **EUR primary, USD fallback**: Prices display in EUR when available, otherwise USD with `$` prefix
-- **USD→EUR conversion**: For profit/loss calculations, USD prices are converted using a live exchange rate from `frankfurter.dev` (cached 6 hours, fallback 0.92). See `src/lib/server/exchange-rate.ts`
-- **Price history**: At most one entry per card per calendar day (enforced by `UNIQUE(card_id, snapshot_date)` on a dedicated `snapshot_date` column, independent of server timezone). A new row is only written when at least one of the four prices differs from the card's previous snapshot, so static prices don't produce daily duplicates.
-- **Price snapshots**: Include both EUR and USD prices (`price_eur`, `price_eur_foil`, `price_usd`, `price_usd_foil`)
-- **Foil-only printings**: some printings exist only in foil (The Hobbit extras, many promos) and have no `price_eur`/`price_usd`. List and tile contexts (`/cards`, card detail reprints, wishlist, scan results) render prices through `PriceTag.svelte` → `displayPrice()`, which falls back to the foil price and marks it with a small "Foil" chip. The `/cards` price sort uses `COALESCE(price_eur, price_eur_foil)`. Collection rows use the owned copy's own foil flag as before.
-- **Cardmarket trend anomalies**: Scryfall's `eur`/`eur_foil` is Cardmarket's *trend* price, which occasionally collapses for thinly traded printings (known case: Smaug the Magnificent, HOB #249 foil — trend €300 while the cheapest offer is ~€25k and the 30-day average ~€10k; the USD side stayed sane). The app never alters the value; `priceDivergence()` compares EUR with USD×rate and the card detail page shows a "Check this price" note when they differ by more than 5× (`PRICE_DIVERGENCE_LIMIT`). Collection/prices totals still use the EUR value as delivered — see Roadmap.
+Priority (sortable), notes and added date per wanted printing; duplicates are refused. "Collect" moves an entry into the collection with a purchase-price prompt. The wishlist's "owned" marker ignores proxies.
 
-### Price Updates
+### 5.4 Price system
 
-Background job checks Scryfall `bulk-data` API for new data, downloads only when newer data exists. Runs 5s after server start (deferred to avoid SSR fetch warning). Snapshots prices for **all cards that have at least one Scryfall price** (so the history is available for every card, not just collection cards). The snapshot INSERT is change-aware: it compares the new price with the card's latest `price_history` row and skips cards whose four prices are identical. Manual trigger: `npm run import-cards` or POST to `/api/prices` (admin only).
+- **EUR primary, USD fallback**: prices display in EUR when available, otherwise USD with `$` prefix.
+- **USD→EUR conversion**: for value and profit/loss, USD prices are converted with a live rate from `frankfurter.dev` (cached 6 hours, validated, fallback 0.92). See `src/lib/server/exchange-rate.ts`.
+- **Non-English copies**: a lot in another language is priced from `card_prices_lang` (filled when the lot is added, refreshed by every price update), falling back to the English printing ("EUR-first English-reference fallback", labelled in the UI).
+- **Price history**: at most one row per card, day and language (`UNIQUE(card_id, snapshot_date, language)` on a dedicated UTC `snapshot_date`). A new row is only written when at least one of the four prices differs from the card's previous snapshot, so the history is sparse and change-only; readers carry the last price forward.
+- **Foil-only printings**: some printings exist only in foil (The Hobbit extras, many promos) and have no `price_eur`/`price_usd`. List and tile contexts (`/cards`, card pages, wishlist, scan results) render prices through `PriceTag.svelte` → `displayPrice()`, which falls back to the foil price and marks it with a small "Foil" chip. The `/cards` price sort uses `COALESCE(price_eur, price_eur_foil)`. Collection rows use the owned copy's own foil flag.
+- **Cardmarket trend anomalies**: Scryfall's `eur`/`eur_foil` is Cardmarket's *trend* price, which occasionally collapses for thinly traded printings (known case: Smaug the Magnificent, HOB #249 foil — trend €300 while the cheapest offer is ~€25k and the 30-day average ~€10k; the USD side stayed sane). The app never alters the value; `priceDivergence()` compares EUR with USD×rate and the printing page shows a "Check this price" note when they differ by more than 5× (`PRICE_DIVERGENCE_LIMIT`). Totals still use the EUR value as delivered (standing decision in §14.3). The homepage mover list drops pairs more than 2× off USD×rate.
+- **Price change indicator**: collection and prices pages show purchase price vs current price with a colour-coded percentage (green up, red down); a USD-only current price is converted for the comparison. Proxies show their original price muted without a percentage.
 
-## Directory Structure
+**Price updates** (`src/lib/server/price-updater.ts`):
 
-```
-src/
-├── app.css                          # Dark theme, Tailwind imports
-├── app.d.ts                         # App.Locals type (user, isAdmin)
-├── hooks.server.ts                  # Auth middleware, DB init, price check, admin guard
-├── lib/
-│   ├── components/
-│   │   ├── CardPreview.svelte       # Hover zoom (portal to document.body)
-│   │   ├── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, best-frame capture, blur/glare hints, capture cues, pause/review mode)
-│   │   └── PriceTag.svelte          # List price with foil-only fallback + "Foil" chip (displayPrice)
-│   ├── scanner/                     # Browser-side scanner library; pure modules are unit-tested (vitest)
-│   │   ├── detect.ts                # createQuickDetector(): live detector — Web Worker with its own OpenCV copy, main-thread fallback
-│   │   ├── quick-rects.ts           # Live rectangle scan on an RGBA buffer: fine + coarse Canny pass, card-quad and content checks, containment rules; frame quality (shared by main thread and worker)
-│   │   ├── quad.ts                  # Card-quad sanity (convex, angles, side ratios, rotation-invariant aspect) and luminance sampling inside a quad (pure)
-│   │   ├── detect-worker.ts         # Detection Web Worker; bundled by scripts/build-detect-worker.mjs to static/scanner/ (gitignored)
-│   │   ├── quality.ts               # Laplacian sharpness, glare fraction, BestFrameSelector (live best-frame capture)
-│   │   ├── grid.ts                  # Spread geometry: oriented dimension filter, lattice indexing, affine/homography grid hypothesis
-│   │   ├── stability.ts             # SceneStabilizer + sceneSignature(): time-based "scene holds still" logic
-│   │   ├── geometry.ts              # orderCornersForCard(), fitContain(), touchesFrameEdge(), loadImage()
-│   │   ├── opencv.ts                # Lazy OpenCV.js CDN loader
-│   │   ├── tesseract.ts             # Tesseract.js worker pool (recognizeBatch, recognizeDetailed)
-│   │   ├── parse.ts                 # parseCollectorInfo(): set code / collector number / foil hint
-│   │   ├── similarity.ts            # Name similarity, OCR-junk heuristic, prefix-aware bestNameMatch()
-│   │   ├── foil.ts                  # Pixel-based foil detection from the separator glyph
-│   │   ├── pipeline.ts              # disambiguateReprints(), normalizeCollectorNumber()
-│   │   ├── paddle.ts                # PaddleOCR PP-OCRv4 recognition via onnxruntime-web (lazy, second name engine)
-│   │   ├── ctc.ts                   # ctcDecode(): greedy CTC decoding of the recognition output (pure)
-│   │   ├── timeout.ts               # withTimeout(): deadline for the lazily loaded OCR engines (a stalled CDN must not hang a scan)
-│   │   ├── feedback.ts              # Live-scan cues: WebAudio tones + navigator.vibrate patterns (capture / identified / unresolved), preferences in localStorage
-│   │   ├── phash.ts                 # 64-bit DCT perceptual hash of the art box, Hamming distance, gray/resize helpers (shared by server job and scanner)
-│   │   ├── art-search.ts            # searchHashes(): Hamming search over hash entries (pure part of the server's art index)
-│   │   └── resolve.ts               # resolveCard(): evidence fusion -> identity / printing / finish decisions with states; nameIdentifies()
-│   ├── server/
-│   │   ├── auth.ts                  # OAuth, sessions, user CRUD
-│   │   ├── db.ts                    # SQLite setup, initDb(), migrations
-│   │   ├── exchange-rate.ts         # USD→EUR rate (frankfurter.dev, 6h cache)
-│   │   ├── images.ts                # Card image downloader
-│   │   ├── price-updater.ts         # Scryfall bulk price updates
-│   │   ├── art-hash.ts              # Art-hash job: walks the catalogue, stores hashes into cards.art_hash / card_faces.art_hash, export/import
-│   │   ├── art-image.ts             # Fetch a Scryfall image and hash its art box (sharp; DB-free, unit-tested)
-│   │   ├── art-index.ts             # In-memory art-hash index for the scanner's visual channel (searchArt; the pure search is scanner/art-search.ts)
-│   │   ├── hash-art.ts              # CLI for the art-hash job (npm run hash-art)
-│   │   ├── printed-names.ts         # Printed names of non-English printings: all-cards bulk download -> card_names, export/import
-│   │   ├── printed-name-index.ts    # Printed names without the DB: rows from a Scryfall card object, in-memory index with exact / edit-distance match (unit-tested)
-│   │   ├── import-names.ts          # CLI for the printed names (npm run import-names)
-│   │   ├── scan-logs.ts             # Server-side scan logs: data/scan-logs/<day>/*.log, 30-day retention, list/read for /admin
-│   │   ├── cardtrader-xls.ts        # Cardtrader order export (.xls/.xlsx) -> purchase-price rows; the only place that parses an uploaded workbook (DB-free, unit-tested)
-│   │   ├── home-data.ts             # Homepage reads: price-mover rows, recently added, wishlist count, a card's printing prices (DB injected, unit-tested)
-│   │   ├── schema.ts               # Drizzle ORM table definitions
-│   │   └── seed.ts                  # Scryfall import script
-│   ├── home.ts                      # Homepage logic: pickMovers, collectionMoves, dashboardSummary, chartPaths, movesHeading (pure, + home.test.ts)
-│   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
-│   └── utils.ts                     # formatPrice, displayPrice, priceDivergence, formatManaCost, conditionLabel, getRarityColor, priceDate (+ utils.test.ts)
-└── routes/
-    ├── +layout.svelte               # Nav bar, footer (Impressum/Datenschutz)
-    ├── +layout.server.ts            # Passes user to all pages via layout data
-    ├── +page.svelte                 # Homepage: entry paths and price moves for visitors, collection dashboard when signed in
-    ├── admin/                       # Admin dashboard (users, DB stats, scan logs) — admin only
-    ├── api/
-    │   ├── import/+server.ts        # Admin DB-init trigger
-    │   ├── scan-log/+server.ts      # POST: /scan uploads its debug log (public, rate-limited); GET: admin list / read
-    │   └── prices/
-    │       ├── +server.ts           # Price update trigger
-    │       ├── card/+server.ts      # Single card price history API
-    │       └── data/+server.ts      # Bulk prices data API (stats, topCards, profitHistory)
-    ├── auth/                        # Google OAuth flow
-    ├── cards/                       # Public card browser + detail pages
-    ├── collection/                  # Collection CRUD, import, export (the old /collection/scan redirects to /scan)
-    ├── scan/                        # Card scanner (public, no auth required)
-    ├── wishlist/                    # Wishlist CRUD with priority
-    ├── prices/                      # Price charts, top cards, profit/loss
-    ├── tags/+server.ts              # Tag CRUD
-    ├── login/                       # Login page
-    ├── impressum/                   # Legal: Impressum
-    └── datenschutz/                 # Legal: Datenschutzerklärung
-```
+- **Triggers:** the daily 18:00 slot, the hourly watchdog (slot passed, no snapshot today, no young run active), the boot catch-up (30 s after start, only when yesterday has no snapshot, so a morning restart never pre-empts the evening run), the admin trigger `POST /api/prices`. `npm run import-cards` imports everything from scratch.
+- **Run:** fetch Scryfall's `default_cards` metadata (60 s timeout), stream-download the gzipped JSONL into `data/` (2 min stall timeout, 45 min cap), stream-parse it, update the four prices and `cardmarket_id` of existing cards, insert new cards and faces, refresh `is_paper`, refresh `card_prices_lang` rows from the foreign printings, then write the change-only snapshot for every card with a price (English and every tracked language) with an upsert. Afterwards `last-bulk-update.txt` is written and the art index, name index, price-data, homepage and sets caches are invalidated. Every run downloads the current bulk file; the "last update" status comes from `last-bulk-update.txt` and the newest `recorded_at`.
+- **Robustness:** one run at a time (a lock older than 2 h is taken over), at most one retry chain (15 min, 1 h, 3 h), temp files swept. These guards exist because in-process timers and locks had produced multi-week gaps in `price_history` (2026-08); `npm run backfill-prices` refills such gaps from Scryfall's dated bulk files.
+- **Not updated:** the `name` (and other identity fields) of an existing card; corrections after the first import stay (§14.4).
 
-## Key Routes
+**Portfolio data** (`src/lib/server/price-data.ts`, `/api/prices/data`):
 
-| Route | Purpose |
-|-------|---------|
-| `/` | Homepage. Visitors: three entry paths (portfolio tracker, card database, scanner) and the latest price moves. Signed in: dashboard with value, profit/loss, cards, wishlist, a 90-day chart, the biggest moves of the own copies and the newest entries |
-| `/cards` | Browse/search all cards (FTS, color/type/rarity/set filters, sorting, pagination, unique toggle, configurable page size) |
-| `/cards/[id]` | Card detail (reprints, price history chart, collection/wishlist status) |
-| `/scan` | Card scanner — public, no auth required. Adding to collection requires login |
-| `/portfolio-tracker` | Public landing page for the portfolio features (value over time, profit and loss, purchase price and collection imports), linked from the homepage, the footer and the visitors' menu ("Portfolio", hidden for signed-in users) and listed in the sitemap |
-| `/collection` | User's collection (search, sort by name/date/price/profit/set, tags, edit modal, purchase price tracking) |
-| `/collection/import` | CSV / Moxfield text preview and confirmed import (skip existing, append or replace; optionally every card as a proxy) |
-| `/collection/export` | Collector CSV with metadata, Moxfield CSV or text |
-| `/collection/bulk` | Owner-scoped bulk metadata edits and partial moves between locations |
-| `/wishlist` | Wishlist with priority, collect-to-collection with purchase price prompt |
-| `/prices` | Collection value over time (Chart.js), profit/loss chart, top cards with per-card price history popup. Data loaded async via `/api/prices/data` with skeleton loading state |
-| `/admin` | Admin dashboard — user management, DB statistics, scan logs (admin only) |
-| `/collection/scan` | Retired in Phase 4 — redirects to `/scan` (hooks.server.ts) |
-| `/api/prices/data` | Bulk prices data (stats, topCards, profitHistory, usdToEur) — used by `/prices` for async loading |
-| `/api/scan-log` | POST (public, 30/min per address, ≤ 512 KB): the scan page stores its debug log server-side; GET (admin): `?limit=` list, `?name=` one log |
-| `/api/import` | Admin-only DB init trigger |
+Prices page shows profit/loss with three datasets: profit/loss, purchase cost and market value. `src/lib/server/price-data.ts` reads the user's price series once and walks their sparse, change-only snapshots; it accepts an injected SQLite connection so its tests never open the application database. Current collection value includes every available price, and known cost basis includes every recorded purchase cost. Profit and return compare only copies with **both** prices, with the compared value, cost and copy count explicitly displayed. Missing-cost and missing-market warnings count copies, including when the chart is empty. Distinct counts refer to printing IDs, not collection rows.
 
-## Important Patterns
+The history reconstructs the **current holdings** from their recorded added dates, not historical transactions: quantities or removals cannot be reconstructed without an ownership ledger. It carries past prices forward, includes acquisition dates and today's current quotes, and never fills earlier dates with future prices. Missing market prices exclude both value and cost for those copies; completely unpriced points are gaps, not zero-valued losses. Foreign-language quotes use the same EUR-first English-reference fallback as current collection values, labelled in the page and card chart. USD history uses the current conversion rate. All charts use `snapshot_date` (UTC), including morning updates. The prices API uses `private, no-store`; its invalidated server cache still handles repeat calculations.
 
-### CardPreview (Portal Pattern)
+Admin snapshots use migration `0023_price_history_snapshot_card` (`snapshot_date DESC, card_id`) to read the latest ten date groups without sorting the complete history. These are **new/changed prices**, counted once per printing across languages, not update coverage. Admin counts each table once, omits FTS shadow tables, obtains the history endpoints through separate index lookups, and includes the actual database file plus WAL in its size. Session expiry comparisons use ISO timestamps consistently.
 
-`CardPreview.svelte` renders a hover preview by creating a `<div>` directly in `document.body`. This avoids CSS `transform` creating a containing block that clips `position: fixed` elements.
+Verification: `npm test` includes isolated in-memory SQL fixtures for language/currency/finish fallback, missing and zero prices, user isolation, sparse dates and snapshot counts. After `npm run build`, `node scripts/prices-admin-ux-check.mjs` starts a production server against synthetic data and checks mobile `/prices` and `/admin`, including retry, empty/error states and collection-change invalidation. Set `PLAYWRIGHT_CHROMIUM_PATH` when using an installed Chromium browser. `node scripts/prices-admin-benchmark.mjs --db data/mtg.db` is read-only, so it needs a database the app has already migrated (`0026` adds `collection_cards.proxy`); optional `--baseline <old-cache.ts>` measures the previous query, and `--index-db <new-scratch.db>` builds a separate two-column history copy to measure the admin index (requires extra disk space). Measured 2026-10-04: host old history alone 4.70 s, new entire prices payload 0.43 s; local 3.54M-row history copy, admin snapshots 881 ms -> 43 ms with identical results. The new index takes extra storage and is built once at migration time.
 
-### Card Scanner Flow
+**Async loading:** `/prices` renders its skeleton immediately (the server load returns only auth and price-update status) and fetches stats, top cards and the history from `/api/prices/data`, with skeleton placeholders while loading. The profit chart has three datasets (profit/loss, purchase cost, market value) and a warning banner when copies lack a purchase or market price.
+
+### 5.5 Homepage and portfolio landing page
+
+- **Visitors** see three entry paths (portfolio tracker, card database with the real printing prices of Lightning Bolt, scanner) and the price moves of the latest snapshot day. `priceMoverRows()` pairs every English snapshot of that day (from €2) with the printing's previous snapshot; `pickMovers()` drops pairs whose EUR price is more than 2× off USD×rate before or after (Cardmarket trend anomalies, special printings such as 30th Anniversary rose by over 1000% unfiltered) and lists every card once, by its largest move, five up and five down. When the update before was more than two days earlier (server down, a stale copy), the heading names the span ("Price moves from June 21 to September 16"). Everything sits in `homeCatalogueCache` (one hour, invalidated by the price updater); the query takes ~130 ms over 3.5M history rows.
+- **Signed-in users** get a dashboard from the same `getPriceData()` result as `/prices` (`priceDataCache`): value with today's change (current price against the last snapshot before today, so "No change today" until the day's update ran), profit/loss over the copies with a purchase price, cards incl. proxies, wishlist entries, an inline SVG of value and purchase cost over 90 days (`chartPaths()`, no Chart.js; the last point before the window is carried to its edge), the biggest moves of their own copies from €1 (proxies excluded) and the five newest entries with location and price (proxies "not valued").
+- Visitor copy follows the owner's rule (no dashes, no marketing phrases); `seo-check.mjs` fails on a dash in the homepage's main text, title or description. Title: "MTG Collector: Free Card Scanner and Collection Tracker".
+- `/portfolio-tracker`: see §5.1. Visitors reach it from the homepage, the footer and the "Portfolio" menu item (hidden for signed-in users, who have "Prices" there).
+
+### 5.6 Admin dashboard
+
+`/admin` (admin only): user list, the last 50 scan logs with one-click viewing, actions (trigger a price update, clean up expired sessions), contact messages (mark handled, delete), database overview (each table counted once, FTS shadow tables omitted, database file plus WAL size), recent price snapshots (latest ten days, **new or changed prices** counted once per printing across languages, not update coverage; served by the `0023` index), history range, top sets by printing count, price-update status.
+
+### 5.7 Contact, settings and legal pages
+
+- `/contact` stores messages in `contact_messages` (IP only as an HMAC with `data/secret-key.hex`), with a honeypot field, a 2-second time trap, 3 submissions per IP per hour and optional Cloudflare Turnstile. Bots get a silent success.
+- `/settings`: account information, counts (collection, wishlist, tags), "Delete account" with a confirmation dialog.
+- `/impressum`, `/datenschutz`: German binding text with an English tab; contact data rendered through `ProtectedText.svelte`. The privacy policy names every third party the browser contacts (Cloudflare, Scryfall images, jsDelivr and OpenCV for the scanner libraries, Google sign-in and profile picture, the contact form, IONOS as email provider, STRATO as server provider whose VPS run in the IONOS network) and what the scanner sends (recognised text, the illustration fingerprint, the 30-day text-only scan log). `seo-check.mjs` fails when the browser contacts a host the policy does not name.
+
+### 5.8 Design system
+
+`DESIGN.md` is the reference: tokens in `src/app.css` (background ladder, borders, text, primary blue, accent amber, semantic colours, `--pip-*` colour identity, `--rarity-*`), numeric classes (`tabular`, `numeric`, `price`, `kpi-value`) so columns do not drift, component classes (`panel`, `kpi-card`, `toolbar`, `btn`, `control`, `chip`, `set-code`, `foil-chip`, `card-shell`), `ManaCost.svelte` / `ColorPips.svelte` letter pips, accessibility (visible focus, AA contrast, keyboard-accessible menus and modals, reserved image ratios, reduced motion) and the fan-content rules (§1).
+
+### 5.9 Analytics and privacy
+
+Plausible Community Edition, self-hosted at `analytics.mtg-collector.com`, embedded in `src/routes/+layout.svelte`: cookieless, aggregated pageviews, referrer, browser, OS, device type and country. Scanner photos never leave the browser; only recognised text, art hashes and the text-only debug log reach the server.
+
+---
+
+## 6. Card scanner
+
+The scanner runs **in the browser** (OpenCV.js, Tesseract.js, PaddleOCR via onnxruntime-web); the server only answers batched lookups (`POST /scan`: names, set+number, near numbers, art hashes, all printings) and stores the debug log. The page logic lives in `src/routes/scan/+page.svelte` (~2.4k lines: detection, warp, OCR passes, evidence collection, UI); the pure decision logic lives in `src/lib/scanner/` and is unit-tested. Extracting the orchestration from the page is WP5.1 (§14.5).
+
+### 6.1 Upload pipeline (`/scan`, single and multiple mode)
 
 1. User uploads photo → the image is downscaled to at most 1600 px on the long edge (`DETECT_MAX_EDGE`) for detection only — the six strategies on a 12-megapixel phone photo took several seconds, and card edges don't need that resolution. Candidates are mapped back to full resolution before the warp, so OCR still samples the original pixels. OpenCV detects card rectangles via **6 detection strategies**:
    - Canny edge detection with multiple thresholds (3 parameter sets)
@@ -232,18 +500,14 @@ src/
 6. **Name OCR (evidence only)**: Tesseract.js (PSM 7) on the name band, upscaled to 1.5× the base warp (`NAME_OCR_SCALE`) so the letters land in Tesseract's ~30–50 px sweet spot — the old 6× crops produced ~140 px letters and made the line finder return nothing for perfectly legible names → batched API search by name. `searchByName()` first looks the text up among the **names printed on non-English printings** (`card_names`, `npm run import-names`: "Kriegshorn" is War Horn, "Endlose Ausloschung" — the OCR drops the umlaut — Infinite Obliteration): a name equal once normalised answers the search, a close one (edit distance, ≥ 0.6) joins the result only when it explains the text better than the English answer does — adding every close German name put "Aura Mutation" (German "Aura-Mutation") next to a correct 0.79 read of Retro-Mutation; every row the scanner API returns carries its printed names (`printed`), and the page scores the OCR text against them like against a face. Then it tries exact (canonical name, `Front // Back` records whose front is the query, and `card_faces` names — the scanner reads the face printed on the card, the database stores the canonical string) → FTS prefix on all words → LIKE → **OCR-tolerant fallbacks restricted to the name column**: any word (OR), word stems (first 4 letters of 5+-letter words), then the word core with the first one or two and the last character dropped (`CTenderize`, `Jrenderize` → Tenderize), and as a last resort an edit-distance scan over every distinct name and face (`fuzzyNames()`, bigram prefilter, similarity ≥ 0.5; `wmotorion` → Immolation, `Fost wranger` → Skaab Wrangler). `bestNameMatch()` scores every alias of a name (canonical string and each face, `nameAliases()`) and returns the canonical name; it also scores the matching word-prefix when only trailing junk drags the score down (`looksLikeOcrJunk` guard, so "Fire Ball" never collapses to "Fire"). Against the full catalogue two more things matter (Round 10): the OCR-tolerant paths pool their rows and the server ranks the distinct names by that same similarity before cutting the list (`rankNameMatches()`, 20 names, 10 printings each), because the first path to answer used to return 20 *rows* that could all be printings of the wrong names ("Escave Tunnel" → Ice Tunnel, Escape Tunnel beyond the cut); and Scryfall's *art-series* records (`layout = 'art_series'`, named "X // X") are excluded from every scanner query — they matched a scanned name as often as the card itself. A pass accepts a name only when `nameIdentifies()` holds (score ≥ 0.6, an exact read for a name or face shorter than six characters, and below 0.8 at least one real word in the text), so "Boa" no longer stops the later passes as the token Boar; the best three names of every pass are recorded as candidates. Cards still unresolved get further passes (**Phase 2a**), each reading a different subset of name bars: PSM 7 on an Otsu-binarised copy of the band (dark text on white, a light-on-dark bar is inverted first), PSM 13 (raw line) on a binarised 2× crop (`NAME_OCR_SCALE_ALT`), PSM 13 on the gray 2× crop (binarisation erases light text on busy showcase art), and last **PaddleOCR PP-OCRv4 recognition** (`src/lib/scanner/paddle.ts`, onnxruntime-web WASM, ~25 MB loaded lazily on first use, so only stubborn cards pay for it). Measured on 75 real-photo cards (`ocr-scale-experiment.mjs`, `ocr-preprocess-experiment.mjs`, `ocr-engine-experiment.mjs`): gray PSM 7 at 1.5× reads 49, binarised 57, the union of the Tesseract passes 68; PaddleOCR alone 64 where all Tesseract passes together read 65, and the union of both engines 72. **Every candidate of every pass is recorded** in `card.nameCandidates` with its score and pass; a score ≥ 0.6 marks the card as name-resolved for the later passes, but the decision is made by the fusion in step 8.
 7. **Upside-down retry (Phase 2b)**: `orderCornersForCard()` cannot tell a card's top from its bottom when the card lies sideways or upside down (both short edges are geometrically identical): for a spread rotated one way *every* card leaves the warp rotated 180°. Every card the name search didn't resolve is re-cropped from the 180°-rotated warp (`extractOcrCrops`, the same helper the main loop uses), OCR'd (single-line, then raw-line pass) and searched again; on success the rotated crops replace the originals. Cards still unresolved keep the rotated crops as `altNameUrl/altBottomUrl/altCroppedUrl` (+ `*2` variants) for the next phase.
 8. **Bottom OCR and evidence fusion (Phase 3)**: Tesseract.js (PSM 6) reads every card's collector strip at 4× the base warp (`BOTTOM_OCR_SCALE`; 18 of 75 strips read at the old 6×, 24 at 4×, 27 with a second 2× pass); cards without a unique name hit also get the 2× strip (`BOTTOM_OCR_SCALE_ALT`) and both rotated strips. **Every strip becomes a reading** (`parseCollectorInfo()`: set code, collector number with its `numberSource` — fraction / number-total pair / rarity-prefixed, incl. a letter glued to the digits like `C0047` / padded, a standalone zero-padded four-digit token like `0085` / weak —, the rarity letter, the language code and a foil hint; a mixed token whose letters are all digit lookalikes (`O08S`) is never taken as a set code) in `card.readings`; the strip that parses best only decides which orientation the UI *shows*. `src/lib/scanner/resolve.ts` (`resolveCard()`, pure and unit-tested) then fuses name candidates and readings per card, with every printing of every candidate name (`{ printings }` batch, no date cut-off) and every set+number lookup (`{ lookups }` batch incl. `setKnown`) prefetched in two round trips: **identity** and **printing** each get a state — `confirmed`, `likely` (one tap), `unknown` (a suggestion may be attached) or `conflict`. Rules: a name that `nameIdentifies()` accepts identifies the card and the footer picks the printing via `disambiguateReprints()` (exact set + full number with suffix first, then a unique set — one glyph off counts when unique —, then a unique *structural* number; never arbitrary digit sequences or copyright years). Below `NAME_CERTAIN` (0.8) the name is *uncertain* and, in this order: an exact structural number corroborates it; a structural reading that points exactly at another card whose name also fits the text beats it (`confirmed` when the set code is real, `likely` via the majority set — "pean Zia Cavalry" + `C 0156 TMT EN` is Mechanized Ninja Cavalry, not Llanowar Cavalry); the looser footer matches corroborate it; a real set code the name was never printed in, or a structural number none of its printings match, demotes it to `likely` unless a lesser candidate joins with that footer; a runner-up within `NAME_MARGIN` (0.1) on the whole text makes it a one-tap choice. A name ≥ 0.4 joined with a number that is compatible (exact, one substituted or one dropped digit) in the read or majority set and points at exactly one printing is `likely`, or `confirmed` when the number is exact and the set was read (or the card exists in one set only); a footer reading alone confirms only when it is *strong* (structural number + known set, or two variants agreeing) and plausible (rarity letter agrees — a letter any strip variant read next to the same number counts —, no name candidate ≥ 0.45 for a different card while the hit scores < 0.3, a weak number needs name agreement), and only when no other strong reading and no artwork up to 12 bits (that the scan does not also resemble the hit's own art) names a different card — then it is a one-tap offer with both (phone, 2026-09-18: German cards had one strip read ORI #194 and the other #104, or a single strip misread 137 as 132); a strong consensus reading that names a different card than a confident name is a `conflict`. Nothing resolved leaves the card `unknown` with up to three **suggestions** for one tap: a structural number-only hit (or a weak one with faint name agreement), the rarity-consistent printings one OCR error away from a structural number (`{ near }` batch, `nearBySetNumber()`), or the printings of an uncorroborated partial name (≥ 0.4). A second pass feeds the **majority set** of confirmed cards to the unsettled ones. Finish is `unknown` unless the single-card pixel check ran — no OCR engine in use tells the ★ from the • separator, so text-based foil hints are never trusted; language comes from the reading. Measured on the eight photos: 0 wrong identities and printings against the distractor DB (103 of 104) and against the full catalogue (95 identities, 70 printings, 9 one-tap offers; the open printings are same-set variants and same-number reprints with an unreadable footer). **Visual channel (Phase 3, WP3.2):** every warped card is hashed exactly like the reference images (`hashArtPixels()`: luminance, box-filter resize, 32×32 DCT, 64 bits) over the reference box moved 2 % inwards (`artBoxOnWarp()` — the warp keeps ~3.5 % of background around the detected quad, and with the reference box as-is the same artwork measured 12.3 bits away on average, with the shift 9.2; `art-box-experiment.mjs`), upright and rotated 180°; the `{ artHashes }` batch returns the printings within `ART_LIKELY` (12) bits from the server's in-memory index (`src/lib/server/art-index.ts`, a Hamming scan over ~115k entries takes about a millisecond; the phone never downloads the table), and the page then fetches every printing of the matched names. In the fusion an unambiguous match (no second artwork within 4 bits) identifies the card on its own only at ≤ 6 bits (`ART_CONFIRM_ALONE`); up to 10 bits (`ART_CONFIRM`) it needs support — a name candidate ≥ 0.4 for the same card, a footer reading that fits one of its printings (exact structural number, or a real set code the name was printed in), or, in a spread, a printing in the majority set. A *certain* name that reads differently makes it a `conflict`; a structural footer number that fits none of the name's printings (not even one digit off) drops the match altogether when the number is reliable — a strong reading, or the same number read by two strip variants (a single misread, "RRR M220 ORD" for the 243/272 of a German War Horn, dropped the right 8-bit artwork and left Briarhorn as the one-tap offer) —; an unsupported 7–10-bit match never confirms — against an uncertain name that reads differently it becomes a one-tap offer (artwork first), otherwise it is offered at the very end. The reason is a wrong identity on the phone (2026-09-17): a Rabid Attack (SOS #96) with an unreadable name bar was *confirmed* as "Caduceus, Staff of Hermes" by a 10-bit match of the rotated hash, although the footer had read 0096 and Caduceus is #2 / #173 — with 114k references and two hashes per card a chance match at 10 bits is not rare enough to stand alone. A match ≤ 12 bits plus a name candidate ≥ 0.4 for the same card confirms as before, so does a match ≤ 12 bits plus a structural footer number read exactly as one of its printings (in the set the strip names, or with the printed rarity letter), and the artwork alone does nothing beyond 10 bits — against 8.5k hashes the nearest artwork at 12–14 bits named a different card in 7 of 15 cases. Cost of the stricter rule: the development set is unchanged (103 / 83; one card is carried by the majority set), on the hold-out set the flavor-name Counterspell (8 bits, no name, mixed pile) is now a one-tap offer (identity 19 → 18 of 26). The artwork never picks a *printing*: same-artwork reprints and variants sit 0–8 bits apart (MID vs Double Feature, regular vs extended frame), so the printings of an identified name are only narrowed to those whose reference art lies within 16 bits of the nearest one (`artPool()`, `ART_SAME_GAP`; different artwork measured 20–36 bits behind; printings without a hash always stay), and the footer decides among what is left. A first version confirmed the single printing the search radius returned and thereby turned Lantern Flare VOW #23 into the extended-art #351 — the radius is not the set of printings with that artwork. With the full table (112 772 printings + 1 594 back faces, 2026-09-17): full catalogue identity 95 → **103**, printing 70 → **83** of 104, 0 wrong; the seeded DB with the same hashes imported **104 / 104**. Every nearest artwork at ≤ 10 bits was the right card (91 of 91 over the development and hold-out photos), at 12 bits only 10 of 16 — hence the agreeing name a 12-bit match needs. **Cards printed in another language** (phone, 2026-09-18: German Magic Origins and Battle for Zendikar cards): the catalogue holds English names only, so a German name bar matches English names by coincidence ("Kriegshorn" → Briarhorn 0.60, "Chandras Entflammen" → Chandra's Outrage 0.65, "Krleghon" → Legion 0.63) and the junk read of a name bar vetoed a correct footer (Kothophed, ORI #104: "SNF Ee TC" → Sunfire Torch 0.54). Every name candidate carries the language of the name it matched (`lang`: 'en' for the catalogue's name, 'de' for a printed German name). When a footer reading names a real set and a language, a candidate below `NAME_CERTAIN` counts only when it matched a name in that language — neither evidence for a card nor against a footer reading or an artwork otherwise; a certain read counts in any language ("Pia und Kiran Nalaar" 0.95). The card's language is the footer's, or the language of the printed name the identity was read as; the scan page adds cards to the collection with it (German cards are priced from the German printing via `card_prices_lang`). A join no longer uses a stray digit when a structural reading of the same card fits none of the candidate's printings (a "5" from the rotated strip joined Endless Atlas C18 #55 although the upright strip read "103/272 R"). Measured on 28 synthetic scenes of the seven German cards on the dark mat (`make-mat-scenes.mjs --cards`, live pipeline, full catalogue): confirmed right 17 → 18, wrong one-tap offers 3 → 2, **wrong confirmations 0 → 0** — without the footer checks above the language rule had produced 4; development and hold-out sets without a wrong identity or printing.
-9. **Foil detection**: text-based detection from the separator char between set code and language on the bottom line (`*` = foil, `.` = non-foil), parsed from the Tesseract bottom OCR.
+9. **Foil detection**: the separator between set code and language on the bottom line is a bullet `•` (non-foil) or a star `★` (foil). Tesseract reads both as `*`, so the text-based hint is recorded but never trusted; `detectFoilFromSeparator()` (`foil.ts`) samples the pixels between the word boxes instead (a star covers ~15–30% of the separator region with bright pixels, a bullet ~5–12%) and runs in single-card mode only. Without it the finish stays `unknown`.
 10. **Result states in the UI**: `found` cards carry a green "Confirmed" chip (plus "Printing?" while several printings are listed — picking one confirms it); `likely` and `conflict` cards list their candidates with an "Accept" button and a "Not this card" link; `not_found` cards show the suggestion ("Could be …", Accept) and the manual search prefilled with the best name candidate. The finish toggle cycles unknown → foil → non-foil. Card blocks expose `data-state`, `data-printing-state` and `data-finish` for the harness.
 11. Manual search fallback for unidentified cards
 12. Select all / import all buttons for bulk adding (auth required) — only *importable* cards: identity confirmed and exactly one printing established (`isImportable()`); nothing is imported via the first list position. A card is added in the language the scan established (footer code with a real set, or the printed name it was read as), English otherwise.
 13. **Copy for Moxfield**: generates text in `1 Name (SET) number` format for importable cards, appends `*F*` only for a confirmed foil finish
 14. **Debug log**: Collapsible "Debugger" section shows timestamped log of every scan step (detection strategies, OCR text, similarity scores, set/number parsing, reprint disambiguation). Includes "Copy Log" button for sharing. **Every scan also uploads its log to the server** (`POST /api/scan-log`, text only, never a photo; fire-and-forget at the end of `processImage`, plus a `sendBeacon` when a live session is left without a capture so its `[live]` lines survive): `src/lib/server/scan-logs.ts` stores it as `data/scan-logs/<UTC day>/<HHMMSS>-<id>.log` — one JSON header line (mode, source, summary, counts, wall time, user agent, user id when signed in, app version, detector, worker build, the last "Scan complete" tail, best-frame count) followed by the text — keeps 30 days, and `/admin` lists the last 50 with one-click viewing. The files are readable over SSH without opening the database, which is the point: a phone scan can be analysed without copying the log by hand.
 
-### Live Scanner (camera mode, `/scan` → "Live camera")
-
-**Physical scanner catalogue:** migration `0025_cards_paper_availability` adds nullable `cards.is_paper`, populated from Scryfall `games`. Known non-paper printings are excluded from all scanner name/footer/near-number/printing/ID searches and the artwork index, including back faces. Unknown availability stays eligible until backfilled. Catalogue browsing and existing collections retain every row. Regular price updates and both card importers maintain availability; `npm run import-availability -- [bulk-file]` backfills only this metadata (no argument downloads current default_cards). Restart after a standalone import to refresh indexes; the scheduled updater invalidates them itself. Deploy with the migration, run the availability import as the application owner, then restart.
-
-**Reference-assisted rearm:** while one complete, steady card is held after a confirmed identity, `live-identity.ts` hashes its artwork in both orientations every 1.5 s (one request in flight, 4 s deadline). Two observations of the same different identity, at least 700 ms apart, unlock a new capture only at ≤6 bits with a ≥4-bit margin over competing names. Reprints are grouped by identity; the probe searches beyond the normal top-12 printing limit so many reprints cannot hide a runner-up. No pixels are uploaded. The probe never chooses a printing or adds a card. Pausing, a new capture, bad frame quality or a scene change cancels pending evidence; stale responses cannot rearm. New captures still run normal OCR/fusion. Unknown previous identities, weak/ambiguous artwork and identical copies still require the other rearm paths or manual capture.
+### 6.2 Live scanner (camera mode, `/scan` → "Live camera")
 
 `src/lib/components/LiveScanner.svelte` streams the device camera and auto-captures when the scene holds still. Only `/scan` has this mode (the old `/collection/scan` redirects here).
 
@@ -261,97 +525,94 @@ src/
 - **Telemetry:** every 3 s, and right before a capture, one `[live]` line reports the frames analysed, in how many a card was found and by which pass, the mean detection time and what kept auto-capture waiting (`no card found`, `not steady yet`, `card cut off at the edge`, `waiting for a card change`, `processing the previous capture`). The same interval records the current capture ID, maximum content-fingerprint distance, usable fingerprint count, comparison eligibility and pending change samples/duration. It ends up in the uploaded scan log; these values describe frame differences, not card identity.
 - **Re-arm:** after a capture, `CaptureRearm` (`rearm.ts`, pure and unit-tested) waits for a persistent layout change (cards leave, move by half their short edge, or the count changes) or a persistent content change within the same card coordinates. Content is observed even while OCR is busy; invalid detections and brief occlusions do not count as removal. Identical copies and insufficiently different content still require removal or manual capture. The coarse layout comparison avoids jitter-based repeat captures, while the per-card fingerprint notices replacements without choosing an identity or printing. A replacement resets stability and the best frame; frames collected while processing never supply the next capture, and a cached best frame must still match current content. The badge and telemetry expose the waiting reason. A card that stays in place does not re-arm either: while waiting, `capturedStillInPlace()` correlates the gray samples at the captured corners with the ones stored at capture (≥ 0.8); while they match, a detection that loses or re-outlines the captured card is not a change (a webcam session on 2026-10-12/13 captured one flickering static object 285 times). A card put down elsewhere, or a second copy after the first was taken away, still re-arms.
 
-### Price Change Indicator
+**Physical scanner catalogue:** migration `0025_cards_paper_availability` adds nullable `cards.is_paper`, populated from Scryfall `games`. Known non-paper printings are excluded from all scanner name/footer/near-number/printing/ID searches and the artwork index, including back faces. Unknown availability stays eligible until backfilled. Catalogue browsing and existing collections retain every row. Regular price updates and both card importers maintain availability; `npm run import-availability -- [bulk-file]` backfills only this metadata (no argument downloads current default_cards). Restart after a standalone import to refresh indexes; the scheduled updater invalidates them itself. Deploy with the migration, run the availability import as the application owner, then restart.
 
-Collection and prices pages show purchase price vs current price with color-coded percentage (green = up, red = down). When only USD price exists and purchase price is EUR, USD is converted to EUR for the calculation.
+**Reference-assisted rearm:** while one complete, steady card is held after a confirmed identity, `live-identity.ts` hashes its artwork in both orientations every 1.5 s (one request in flight, 4 s deadline). Two observations of the same different identity, at least 700 ms apart, unlock a new capture only at ≤6 bits with a ≥4-bit margin over competing names. Reprints are grouped by identity; the probe searches beyond the normal top-12 printing limit so many reprints cannot hide a runner-up. No pixels are uploaded. The probe never chooses a printing or adds a card. Pausing, a new capture, bad frame quality or a scene change cancels pending evidence; stale responses cannot rearm. New captures still run normal OCR/fusion. Unknown previous identities, weak/ambiguous artwork and identical copies still require the other rearm paths or manual capture.
 
-### Homepage
+### 6.3 Scan sessions and adding to the collection
 
-- **Visitors** see three entry paths (portfolio tracker, card database with the real printing prices of Lightning Bolt, scanner) and the price moves of the latest snapshot day. `priceMoverRows()` pairs every English snapshot of that day (from €2) with the printing's previous snapshot; `pickMovers()` drops pairs whose EUR price is more than 2× off USD×rate before or after (Cardmarket trend anomalies, special printings such as 30th Anniversary rose by over 1000% unfiltered) and lists every card once, by its largest move, five up and five down. When the update before was more than two days earlier (server down, a stale copy), the heading names the span ("Price moves from June 21 to September 16"). Everything sits in `homeCatalogueCache` (one hour, invalidated by the price updater); the query takes ~130 ms over 3.5M history rows.
-- **Signed-in users** get a dashboard from the same `getPriceData()` result as `/prices` (`priceDataCache`): value with today's change (current price against the last snapshot before today, so "No change today" until the day's update ran), profit/loss over the copies with a purchase price, cards incl. proxies, wishlist entries, an inline SVG of value and purchase cost over 90 days (`chartPaths()`, no Chart.js; the last point before the window is carried to its edge), the biggest moves of their own copies from €1 (proxies excluded) and the five newest entries with location and price (proxies "not valued").
-- Visitor copy follows the owner's rule (no dashes, no marketing phrases); `seo-check.mjs` fails on a dash in the homepage's main text, title or description.
+- `ScanSessionSettings.svelte` keeps the chosen set, language, finish, condition and location (account-scoped browser storage). Each capture snapshots them; later changes affect future captures only. A chosen set is applied only after identity resolution (`session.ts`) and never promotes an uncertain identity; a contrary established printing or a known footer set requires review.
+- Results that are not importable (`isImportable()`: identity `found` and printing `confirmed`) have no preselected row and no Add action; "Select printing" establishes the printing explicitly. Saves use the capture's condition and location, receipts refer to capture ids so separate copies of the same printing can be saved, failed requests stay retryable, and concurrent Add requests are blocked.
 
-### Async Page Loading (Prices)
+---
 
-The `/prices` page loads its skeleton immediately (server only returns auth + price status), then fetches heavy data (stats, topCards, profitHistory) client-side via `/api/prices/data`. Animated skeleton placeholders are shown during loading.
+## 7. Important patterns
 
-### Profit/Loss Chart
+### CardPreview (portal pattern)
 
-Prices page shows profit/loss with three datasets: profit/loss, purchase cost and market value. `src/lib/server/price-data.ts` reads the user's price series once and walks their sparse, change-only snapshots; it accepts an injected SQLite connection so its tests never open the application database. Current collection value includes every available price, and known cost basis includes every recorded purchase cost. Profit and return compare only copies with **both** prices, with the compared value, cost and copy count explicitly displayed. Missing-cost and missing-market warnings count copies, including when the chart is empty. Distinct counts refer to printing IDs, not collection rows.
+`CardPreview.svelte` renders the enlarged card in **one shared `<div>` portal on `document.body`**, so CSS `transform` on an ancestor cannot create a containing block that clips `position: fixed`. Desktop: hover. Touch: a tap opens a centred preview, fitted to the visual viewport, that stays open until the close button, the backdrop or Escape.
 
-The history reconstructs the **current holdings** from their recorded added dates, not historical transactions: quantities or removals cannot be reconstructed without an ownership ledger. It carries past prices forward, includes acquisition dates and today's current quotes, and never fills earlier dates with future prices. Missing market prices exclude both value and cost for those copies; completely unpriced points are gaps, not zero-valued losses. Foreign-language quotes use the same EUR-first English-reference fallback as current collection values, labelled in the page and card chart. USD history uses the current conversion rate. All charts use `snapshot_date` (UTC), including morning updates. The prices API uses `private, no-store`; its invalidated server cache still handles repeat calculations.
+### Data flow
 
-Admin snapshots use migration `0023_price_history_snapshot_card` (`snapshot_date DESC, card_id`) to read the latest ten date groups without sorting the complete history. These are **new/changed prices**, counted once per printing across languages, not update coverage. Admin counts each table once, omits FTS shadow tables, obtains the history endpoints through separate index lookups, and includes the actual database file plus WAL in its size. Session expiry comparisons use ISO timestamps consistently.
+- No stores: data comes from `+page.server.ts` load functions or client `fetch()` calls with JSON bodies; `invalidateAll()` after mutations.
+- Filters and pagination live in URL parameters (shareable, bookmarkable, crawlable).
+- Heavy per-user aggregations go through a cache (§4.5) and an API endpoint loaded after the skeleton.
+- Imports are two-phase: preview (no write) and a commit bound to a digest of the parsed file, options, matches, holdings and tags.
 
-Verification: `npm test` includes isolated in-memory SQL fixtures for language/currency/finish fallback, missing and zero prices, user isolation, sparse dates and snapshot counts. After `npm run build`, `node scripts/prices-admin-ux-check.mjs` starts a production server against synthetic data and checks mobile `/prices` and `/admin`, including retry, empty/error states and collection-change invalidation. Set `PLAYWRIGHT_CHROMIUM_PATH` when using an installed Chromium browser. `node scripts/prices-admin-benchmark.mjs --db data/mtg.db` is read-only, so it needs a database the app has already migrated (`0026` adds `collection_cards.proxy`); optional `--baseline <old-cache.ts>` measures the previous query, and `--index-db <new-scratch.db>` builds a separate two-column history copy to measure the admin index (requires extra disk space). Measured 2026-10-04: host old history alone 4.70 s, new entire prices payload 0.43 s; local 3.54M-row history copy, admin snapshots 881 ms -> 43 ms with identical results. The new index takes extra storage and is built once at migration time.
+### Pure modules for testability
 
-## Search engine indexing
+Logic that touches OpenCV, Tesseract, the DOM or SQLite is kept behind thin wrappers; the decisions are pure functions (`resolve.ts`, `grid.ts`, `rearm.ts`, `home.ts`, `card-page.ts`, `collection-import.ts`, …) or take an injected `Database`.
 
-- `/sitemap.xml` is a public sitemap index. `/sitemap-pages.xml` lists public landing pages; `/sitemap-cards-N.xml` lists up to 10,000 **card pages** per part (one per oracle id, ordered by oracle id), never printing URLs: with all ~115k printings in the sitemap Google left 108,508 of them "discovered – currently not indexed" and indexed 7,422 (Search Console, 2026-10-15). These root-level routes bypass the login guard. Invalid or absent parts return 404. No guessed `lastmod` dates are emitted.
-- The default `/cards` catalogue and each paginated page have their own canonical URL and ordinary previous/next links that work without JavaScript. Search, filters, alternate sorting and page sizes use `noindex, follow` with their own canonical; tracking parameters are omitted. Invalid and out-of-range page numbers return 404. Equal sort values use the printing ID as a stable tie-breaker.
-- **One page per card** at `/cards/<slug>` (`src/routes/cards/[slug]`): rules text from a representative printing (`pickMainPrinting()`: image and a non-foil price, newest first), every printing with its EUR/USD and foil prices, printed names in other languages from `card_names`. **Snippet** (`cardPageMeta()` in `src/lib/card-page.ts`): the title leads with the facts a searcher wants and fits 60 characters by dropping details (`<Name>: MTG price from €0.94, 73 printings` → without the count → `price from` → the name alone) and carries no `| MTG Collector` suffix, because Google shows the site name above the result. A card without any price never gets a price promise: digital-only cards (every printing `is_paper = 0`, Alchemy/MTGO) read `<Name>: digital MTG card[, <Set>]`, paper cards without a price `<Name>: MTG card[, <Set>]`. Owner rule for visitor-facing copy: no dashes, so the separator is a colon, type lines get commas (`Creature, Human`) and ability words a colon (`Landfall: Whenever`). The description (at most 155 characters) states type, printings and the lowest price (marked foil when only a foil price exists), the digital set ("digital card from <Set>"), or "no price yet", then the start of the rules text cut at a word with an ellipsis (double-faced cards: the first face). Search Console 2026-10-19 had the Alchemy card Killian, Spotlight Chaser on position 8.2 with 0 clicks under the old title "… – Price, Printings & Rules | MTG Collector" (68 characters, cut off, promising a price that does not exist). Slugs come from `src/lib/card-slug.ts` (pure): the ASCII-folded name; when several cards share a name (mostly tokens) the one real card keeps the plain slug and the others get the first block of their oracle id. `src/lib/server/card-slugs.ts` holds the index in memory (~37k cards, ~0.5 s to build) and rebuilds it when `MAX(rowid)` of `cards` changes. Art-series records and printings without an oracle id (reversible cards) have no card page.
-- Printing pages stay at `/cards/<Scryfall id>` (`src/routes/cards/[id=printing]`, matcher `src/params/printing.ts`: lower-case UUIDs only) and keep their collection/wishlist actions and price history; their canonical is the card page, their breadcrumb links it, and their JSON-LD describes the printing URL itself. "Unique only" catalogue tiles open the card page.
-- Printing pages identify the set and collector number in their titles. JSON-LD describes the page and visible breadcrumbs, not a shop offer: Scryfall reference prices do not establish stock or an actual selling price. `jsonLd()` escapes `<` before embedding imported text in a script element.
-- `npm test` covers sitemap limits with 50,001 synthetic slugs, the slug rules, the card-page helpers and canonical/JSON-LD regressions without opening the application DB. After `npm run build`, run `node scripts/seo-check.mjs` for anonymous production HTTP and browser checks against an isolated synthetic database, including pagination without JavaScript, card-page canonicals, the apostrophe search and mobile screenshots. Its fixture printing ids must be UUID-shaped. Set `PLAYWRIGHT_CHROMIUM_PATH` for an installed Chromium browser.
-- **Landing page** `/portfolio-tracker` (`src/routes/portfolio-tracker/+page.svelte`) answers the product queries that ranked on page 3 ("mtg portfolio tracker", "mtg card collection manager"): what the tracker does today, an example dashboard built from HTML and SVG and labelled as example data (no card images or WotC symbols), where the prices come from, and visible questions without FAQPage markup (Google restricts FAQ results to government and health sites). It must stay in `publicRoutes` in `src/hooks.server.ts`: routes are protected by default, and without the entry visitors and Googlebot are redirected to `/login`. Visitor-facing copy on it, as on the card snippets, follows the owner's rule: no dashes, no marketing phrases.
-- **Sign in page** (`/login`): a short note says the app is free, shows no ads, never sells data and never shares a collection, and that Google passes name, email address and profile picture. Deliberately not "no data goes to third parties": Google (sign in), Cloudflare (in front of the site) and Scryfall (card images load from `cards.scryfall.io`) still see technical data such as the IP address.
-- After deployment, submit `/sitemap.xml` in Google Search Console and inspect sample home, scanner and card URLs. Local tests establish crawlability and markup correctness; they do not establish indexing or ranking. German landing pages and language routing are separate content work; the app's main pages remain English.
+---
 
-## Testing
+## 8. Testing and verification
 
-- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, evidence fusion, spread geometry (oriented dimensions, lattice indexing, affine/homography grid hypothesis, empty cells), frame quality and best-frame selection, scene stability, overlay geometry, price display/divergence helpers, the Cardtrader workbook parser (which also pins the patched `xlsx` build). Anything touching OpenCV/Tesseract/DOM or SQLite is deliberately kept out of these modules or behind thin wrappers so the pure logic stays testable. A test must never import a module that imports `src/lib/server/db.ts`: the database opens at import time, and two vitest workers creating a fresh `data/mtg.db` on CI locked each other out (`SQLITE_BUSY`) — hence `art-image.ts` / `art-search.ts` next to the DB-bound `art-hash.ts` / `art-index.ts`.
-- `npm run check` — svelte-check (TypeScript + Svelte). CI runs `check`, `test` and `build` on every PR (`.github/workflows/ci.yml`).
+### 8.1 Unit tests and type checks
+
+- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline; 38 files, 417 tests on 2026-10-22): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, evidence fusion, the review regressions, the full-pool name ranking, spread geometry, crops, frame quality and best-frame selection, scene stability, rearm and identity rearm, scan sessions and results, overlay geometry, art hashing and search, feedback cues, timeouts, price display/divergence helpers, price data and homepage data on in-memory SQLite, collection workflows, card slugs and card pages, sitemaps, SEO helpers, FTS queries, printed names, scan logs, paper availability and the Cardtrader workbook parser (which also pins the patched `xlsx` build).
+- **A test must never import a module that imports `src/lib/server/db.ts`**: the database opens at import time, and two vitest workers creating a fresh `data/mtg.db` on CI locked each other out (`SQLITE_BUSY`) — hence `art-image.ts` / `art-search.ts` next to the DB-bound `art-hash.ts` / `art-index.ts`, and the injected connections.
+- `npm run check` — svelte-check (TypeScript + Svelte).
+- **CI** (`.github/workflows/ci.yml`): `npm ci`, `check`, `test`, `build` on Node 22 for every push to `master` and every PR. There is no deploy step and no browser check in CI.
+
+### 8.2 Browser checks
+
+See the table in §2. They start the production build against a fresh synthetic database and never touch `data/mtg.db`.
+
+### 8.3 Scanner harness and measurements
+
 - **Scanner harness** (`scripts/scanner-harness/`, see its README): drives the real `/scan` pipeline headlessly with Playwright — upload path (`harness.mjs --mode single|multiple photos/*.jpg`, optional `--expect` name lists per file, `--out` JSON with OCR texts and the full debug log) and live path (`live-harness.mjs` plays a Y4M clip as the fake camera; its log shows which detector ran — `detector: Web Worker` — and the best-frame line). `make-synthetic.mjs` renders synthetic MTG-like cards (single, 2×2 grid, sideways) so the whole chain (detection → warp → crops → OCR → matching → reprint disambiguation) runs offline with the self-hosted libraries and a DB seeded by `seed-test-db.mjs`. Reference results on the sandbox: single 1/1 in ~3 s, grid 4/4 in ~4.4 s, sideways 1/1 in ~4 s (Phase 2b), live 2/2 about a second after the scene settles. Chromium's fake camera crops portrait clips when the app asks for 1920×1080, so render live scenes in landscape.
 - **Real photos**: eight phone/camera spreads (2x2 … 3x5, upright and sideways, touching cards, foils, EXIF-rotated) are the development set, measured against **two databases** (see the harness README for the two-server setup with `MTG_DB_PATH` / `DISABLE_PRICE_UPDATES`): the seeded DB with distractor printings at every plausible digit misread and the same number in every other set (`seed-test-db.mjs --distractors`; identity and printing 103 of 104, the last one offered as `likely`, 0 wrong; `baseline.json`) and the **full Scryfall catalogue** (115k printings, what production sees; with the art-hash table identity 103, printing 83 of 104, 20 printings left open for the user, 1 `likely`, **0 wrong** — 95 / 70 with 9 `likely` before Phase 3; `baseline-fulldb.json`; the local database needs the hash table for these numbers, `npm run hash-art` or `--import`). The full-catalogue number is the primary one: before Round 10 the same code produced 23 wrong identities there while scoring 103/104 on the seed. The harness scores printings, not just names (`expectations-real-photos.json` lists set + number per instance, every entry verified against the catalogue — eleven were wrong until Round 10), `--baseline` fails a run that regresses, and `rescore.mjs` re-scores a saved run after a ground-truth correction. Results per photo and the remaining failure classes are in `scripts/scanner-harness/README.md`. The photos are not in the repository (2–6 MB each); `expectations-real-photos.json` and `seed-cards.json` (exported from the catalogue by `export-seed.mjs`) let them be re-run from a local folder. `dump-debug.mjs` writes the detection overlay and every card's crops as a montage — the fastest way to see *why* a card failed. `art-box-experiment.mjs` saves every warped card of a photo and measures its art hash against the reference hashes for several box placements, and with `--printings` against every printing of the identified name (how the Phase 3 constants were chosen). **Live detector, offline:** `live-detect-experiment.mjs` runs `detectOnPixels()` — the code the phone runs per frame — in Node on still images (OpenCV.js from the npm package via `OPENCV_JS`), draws the result and, with `--truth`, scores it against known corners (`--old` scores another revision of the module on the same frames); `make-mat-scenes.mjs` builds those labelled frames from Scryfall card PNGs on a play-mat texture cut from a photo (`--cards set/number/lang,…` renders chosen printings in any language Scryfall has, four poses each — the German cards of the 2026-09-18 phone session); `make-still-y4m.mjs` turns any still into a camera clip for `live-harness.mjs` (a third argument saves the page's full debug log), which is how the dark-mat cases are checked end to end (capture within a second, identified). `live-ux-check.mjs` plays such a clip and asserts the live UX: capture cue then result cue (recorded `navigator.vibrate` patterns and oscillator frequencies), pause (camera track stopped, viewfinder collapsed, cards still listed), resume without a second capture of the same card, and the stored sound preference.
 
-## Coding Conventions
+---
 
-- **No stores** — data flows from `+page.server.ts` load functions or client-side API fetches
-- **URL params** for filters/pagination (shareable, bookmarkable)
-- **`invalidateAll()`** after mutations to refresh data
-- **`fetch()`** with JSON body for client→server API calls
-- **Parameterized SQL** — never string concatenation for queries
-- **camelCase** for variables/functions, **PascalCase** for components
-- **German UI** elements where noted (Impressum, Datenschutz)
-- **No `<slot>`** — use `{@render children()}` (Svelte 5)
-- **`onMount`** for one-time init (avoids `$effect` reactivity loops)
+## 9. Deployment and operations
 
-## External Services
+Production facts below are summarised from the vault (`share-public` → `docs/MTG-Collector/operations/07-deployment.md`, volatile state in `09-status.md`). Re-read those before touching the host; this section is not proof of the current host state.
 
-- **Scryfall API** (`api.scryfall.com`) — Card data, bulk downloads (default cards for the catalogue and prices; all cards, every language, once for the printed names), price data. Rate limit: 200ms between image downloads (the art-hash job's default; its `--delay` must stay above 100 ms, Scryfall's ceiling is 10 requests per second).
-- **Google OAuth** — User authentication (PKCE flow via `arctic`)
-- **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`) by default, card rectangle detection + foil detection (HSV analysis)
-- **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`) by default, OCR for names and collector numbers
-- **PaddleOCR PP-OCRv4 recognition via onnxruntime-web** — CDN loaded (`cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0`, model from `@gutenye/ocr-models@1.4.2`) by default, lazily on the first card no Tesseract pass could read (~14 MB runtime + ~11 MB model, cached by the browser); second engine for name bars only. The CSP's `connect-src` includes `cdn.jsdelivr.net` for the WASM/model fetches.
-- **Self-hosting all of them** (`PUBLIC_SCANNER_ASSETS_URL`, see `src/lib/scanner/assets.ts`): `node scripts/scanner-harness/vendor-assets.mjs` fetches the same versions from npm (`@techstark/opencv-js@4.9.0-release.3`, `tesseract.js@5`, `@tesseract.js-data/eng`, `onnxruntime-web@1.30.0`, `@gutenye/ocr-models@1.4.2`) into the gitignored `static/vendor/` (`opencv.js`, `tesseract/`, `ort/`, `paddle/`); set the variable to `/vendor`. Needed for offline development and sandboxed CI, optional for production (no CDN calls, ~75 MB of static files). The CSP allows `connect-src data:` because OpenCV.js fetches its embedded WASM from a data: URL.
-- **Frankfurter API** (`api.frankfurter.dev/v1/latest`) — USD/EUR exchange rate, cached 6 hours
-- **Plausible Analytics** (`analytics.mtg-collector.com`) — Self-hosted, cookieless reach measurement (Plausible Community Edition). Snippet embedded in `src/routes/+layout.svelte` inside `<svelte:head>`. Tracks pageviews, referrer, browser, OS, device type, and country — only aggregated stats, no personally identifiable raw data, no cookies. Domain is hardcoded in the served JS file, so no env vars are required.
+### 9.1 Where it runs
 
-## Dependencies and Security Updates
+| Field | Value |
+|---|---|
+| Host | Ubuntu 24.04 LTS, the same machine as the Forgotten Land WoW realm (STRATO VPS in the IONOS network), behind Cloudflare |
+| App root | `/var/www/mtg-collector` (a git checkout of `master`) |
+| Process | systemd unit `mtg-collector.service` as the unprivileged user `mtg`, `HOST=127.0.0.1 PORT=3000`, `EnvironmentFile=.env` (`root:mtg 640`), hardened (`NoNewPrivileges`, `ProtectSystem=full`, `ReadWritePaths=data`) — since 2026-10-03 (PM2 as root before) |
+| Ingress | nginx vhost `mtg-collector` (`mtg-collector.com`, `www` 301 → apex), Let's Encrypt; Plausible on its own vhost |
+| Node / npm | 22.x / 10.9.x on the host |
+| Who deploys | The owner as root. The agent account `ssh flhost` (`fldeploy`) can read and diagnose but cannot deploy or restart |
 
-- **`npm audit` is clean (0 findings, 2026-10-22: Vite 7.3.7 and vitest 4.1.12 fixed three advisories in the dev server, launch-editor and the vitest mocker) and should stay that way.** Fix findings on a development machine with targeted updates where possible, and ship the changed `package-lock.json` through a PR. Run `check`, `test`, `build` and the scanner harness afterwards: broad audit fixes can also move SvelteKit, Svelte and Vite.
-- **Never run `npm audit fix` or `npm install` on the host.** The host installs with `npm ci` from the committed lock file; a changed lock file there dirties the checkout and blocks the next `git pull`. An earlier attempt with npm 10.9.7 on Node 22 aborted `audit fix` with `Cannot read properties of null (reading 'edgesOut')` — an arborist bug with `overrides`; npm 11 resolves the same tree. The current lock file was installed cleanly with npm 11 and also passed `npx npm@10.9.9 ci --dry-run --ignore-scripts`, matching the host's npm version.
-- **`xlsx` comes from SheetJS's own CDN, not from the npm registry** (`"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"`, pinned by the integrity hash in the lock file; no install scripts, no dependencies, Apache-2.0). SheetJS left the registry, whose copy is frozen at 0.18.5 with a prototype-pollution (< 0.19.3) and a ReDoS advisory (< 0.20.2), and npm reports "No fix available" for it. The library parses an *uploaded* file on the server (Cardtrader order export, `/collection/prices` → `src/lib/server/cardtrader-xls.ts`), so this was the one finding with a real attack path; nothing else reads the legacy binary `.xls` Cardtrader exports. A plain `npm install xlsx` brings 0.18.5 back — a unit test fails on any version below 0.20.2. To upgrade, install the new tarball URL from <https://cdn.sheetjs.com/>. `npm ci` needs that CDN once per machine; afterwards the npm cache serves the tarball by its hash.
-- **Dependency cleanup (2026-10-08):** `better-sqlite3` 13.0.3 ships N-API binaries without the deprecated `prebuild-install`. The unused `drizzle-kit` and its config were removed, eliminating `@esbuild-kit/esm-loader` and `@esbuild-kit/core-utils`; the app retains `drizzle-orm` and its existing custom migrations. Import/hash commands use a directly declared, lockfile-pinned `tsx` dependency instead of relying on a transitive dependency or `npx` downloading it. Security patches also update `sharp` to 0.35.5, `devalue` to 5.9.4 and `source-map-js` to 1.2.2.
-- **`overrides` in `package.json`:** `cookie` 0.7.2 (SvelteKit still asks for `^0.6.0`, which has an advisory). Re-check when SvelteKit moves. The former `@esbuild-kit/core-utils` override is no longer needed after removing `drizzle-kit`.
+The `Dockerfile` builds a working image (Node 22 Alpine, non-root user, `/app/data` volume, `BODY_SIZE_LIMIT=12M`, health check on `/api/health`) but **production does not use Docker**; do not write deploy instructions around it.
 
-## Database Migrations
+### 9.2 Deploy
 
-New columns/tables are added via `addColumnIfMissing` in `src/lib/server/db.ts:initDb()` (PRAGMA-checked so real ALTER errors propagate):
-
-```typescript
-addColumnIfMissing('collection_cards', 'user_id', 'TEXT REFERENCES users(id) ON DELETE CASCADE');
+```bash
+cd /var/www/mtg-collector && mkdir -p backups && sqlite3 data/mtg.db ".backup 'backups/mtg-$(date +%Y%m%d-%H%M%S).db'" && ls -1t backups/mtg-*.db | tail -n +3 | xargs -r rm -- && git pull && npm ci && npm run build && systemctl restart mtg-collector && journalctl -u mtg-collector -n 50 --no-pager
 ```
 
-Structural migrations beyond column adds (e.g. the FTS5 external-content rebuild and the `price_history` same-day dedup + UNIQUE index) are done in dedicated helpers that are idempotent and run on every boot.
+- A restart is not instant: `initDb()` runs before the server listens, and a migration that indexes `price_history` takes minutes.
+- Healthy start: `[price-updater] Next price update scheduled at …`; `curl -fsS http://127.0.0.1:3000/api/health` answers.
+- After a deploy that changes the scanner worker, reload the scanner page on the phone: static files are cached by the CDN for four hours, the worker URL carries the app version, and the scan-log header shows `version` and `workerBuild`.
+- Some changes need a data job on the host afterwards: `npm run import-availability` (after `0025`), `npm run hash-art` (new cards), `npm run import-names` (after a set release). The running app picks up printed names on the next scan; the availability import needs a restart.
+- Rollback: `git reset --hard <sha> && npm ci && npm run build && systemctl restart mtg-collector`. Migrations are additive and are not undone; restore the pre-deploy `.backup` if a migration is the problem.
+- Submit `/sitemap.xml` in Google Search Console after SEO changes.
 
-## Backups
+### 9.3 Backups
 
-The app's state is two files under `data/`:
+The app's state lives under `data/`:
 
-- `data/mtg.db` — primary SQLite database (+ the transient `-wal`/`-shm` companions when the DB is open).
+- `data/mtg.db` — primary SQLite database (+ the transient `-wal`/`-shm` companions when the DB is open). The WAL is only truncated by the shutdown handler; a long-running process carries a large WAL until the next restart.
 - `data/secret-key.hex` — server-side secret for the keyed hashes that pseudonymise identifiers (contact form). It used to encrypt per-user Google Vision API keys as well; that feature is gone. Losing the file only rotates the hashes.
 - `data/scan-logs/` — uploaded scanner debug logs, transient (30 days), not worth backing up.
+- `data/last-bulk-update.txt` (Scryfall timestamp of the last fully successful price run), `data/exchange-rate.json`, bulk downloads — re-creatable.
 
 Recommended backup flow (safe while the app is running, because SQLite is in WAL mode):
 
@@ -365,15 +626,145 @@ ls -1t backups/mtg-*.db | tail -n +3 | xargs -r rm --
 cp data/secret-key.hex backups/secret-key-$(date +%Y%m%d-%H%M%S).hex
 ```
 
-A pre-deploy snapshot is a safety net for the deploy itself (a migration gone wrong), not the backup: the user data leaves the host every night in its own dump (see the vault's deployment notes), and the catalogue can be re-imported from Scryfall. That is why two snapshots are plenty.
+A pre-deploy snapshot is a safety net for the deploy itself (a migration gone wrong), not the backup. **The user data leaves the host every night** in its own dump: `share-public/python_scripts/mtg_userdata_dump.sh` (cron 03:30, `sqlite3 .dump` of `users`, `sessions`, `collection_cards`, `wishlist_cards`, `tags`, `collection_card_tags`, `price_history`, `card_prices_lang`, `api_usage`, `contact_messages` plus the secret key), pulled with the WoW host backup at 04:00. The catalogue is re-imported from Scryfall (`npm run import-cards`); a restore was proven on 2026-09-16. Because the dump uses positional INSERTs, **new columns must be appended at the end of a table** (§4.3). Use `.backup`, never `cp mtg.db` on a live database (torn pages). For Docker, mount `/app/data` as a volume.
 
-For Docker deployments, mount `/app/data` as a volume and include it in your host's backup job. `.backup` creates a consistent copy even while writers are active — prefer it over `cp mtg.db`, which can capture a torn page mid-write.
+---
 
-## Roadmap & Open Points
+## 10. External services
 
-Keep this section current when you change the scanner. It has three parts: the improvement programme (the plan), the history of what is done, and known limitations.
+- **Scryfall API** (`api.scryfall.com`) — Card data, bulk downloads (default cards for the catalogue and prices; all cards, every language, once for the printed names), price data. Rate limit: 200ms between image downloads (the art-hash job's default; its `--delay` must stay above 100 ms, Scryfall's ceiling is 10 requests per second).
+- **Google OAuth** — User authentication (PKCE flow via `arctic`)
+- **OpenCV.js** — CDN loaded (`docs.opencv.org/4.9.0/opencv.js`) by default, card rectangle detection (upload strategies, live worker) and the warp
+- **Tesseract.js** — CDN loaded (`cdn.jsdelivr.net`) by default, OCR for names and collector numbers
+- **PaddleOCR PP-OCRv4 recognition via onnxruntime-web** — CDN loaded (`cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0`, model from `@gutenye/ocr-models@1.4.2`) by default, lazily on the first card no Tesseract pass could read (~14 MB runtime + ~11 MB model, cached by the browser); second engine for name bars only. The CSP's `connect-src` includes `cdn.jsdelivr.net` for the WASM/model fetches.
+- **Self-hosting all of them** (`PUBLIC_SCANNER_ASSETS_URL`, see `src/lib/scanner/assets.ts`): `node scripts/scanner-harness/vendor-assets.mjs` fetches the same versions from npm (`@techstark/opencv-js@4.9.0-release.3`, `tesseract.js@5`, `@tesseract.js-data/eng`, `onnxruntime-web@1.30.0`, `@gutenye/ocr-models@1.4.2`) into the gitignored `static/vendor/` (`opencv.js`, `tesseract/`, `ort/`, `paddle/`); set the variable to `/vendor`. Needed for offline development and sandboxed CI, optional for production (no CDN calls, ~75 MB of static files). The CSP allows `connect-src data:` because OpenCV.js fetches its embedded WASM from a data: URL.
+- **Frankfurter API** (`api.frankfurter.dev/v1/latest`) — USD/EUR exchange rate, cached 6 hours
+- **Plausible Analytics** (`analytics.mtg-collector.com`) — Self-hosted, cookieless reach measurement (Plausible Community Edition). Snippet embedded in `src/routes/+layout.svelte` inside `<svelte:head>`. Tracks pageviews, referrer, browser, OS, device type, and country — only aggregated stats, no personally identifiable raw data, no cookies. Domain is hardcoded in the served JS file, so no env vars are required.
+- **Cloudflare** — in front of the site (CDN, TLS); static files are cached for four hours (`max-age=14400`). Optional Turnstile on `/contact`.
+- **Google** — sign-in and the profile picture (`lh3.googleusercontent.com`).
 
-### Scanner improvement programme (planned 2026-09-16)
+---
+
+## 11. Dependencies and security updates
+
+- **`npm audit` is clean (0 findings, 2026-10-22: Vite 7.3.7 and vitest 4.1.12 fixed three advisories in the dev server, launch-editor and the vitest mocker) and should stay that way.** Fix findings on a development machine with targeted updates where possible, and ship the changed `package-lock.json` through a PR. Run `check`, `test`, `build` and the scanner harness afterwards: broad audit fixes can also move SvelteKit, Svelte and Vite.
+- **Never run `npm audit fix` or `npm install` on the host.** The host installs with `npm ci` from the committed lock file; a changed lock file there dirties the checkout and blocks the next `git pull`. An earlier attempt with npm 10.9.7 on Node 22 aborted `audit fix` with `Cannot read properties of null (reading 'edgesOut')` — an arborist bug with `overrides`; npm 11 resolves the same tree. The current lock file was installed cleanly with npm 11 and also passed `npx npm@10.9.9 ci --dry-run --ignore-scripts`, matching the host's npm version.
+- **`xlsx` comes from SheetJS's own CDN, not from the npm registry** (`"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"`, pinned by the integrity hash in the lock file; no install scripts, no dependencies, Apache-2.0). SheetJS left the registry, whose copy is frozen at 0.18.5 with a prototype-pollution (< 0.19.3) and a ReDoS advisory (< 0.20.2), and npm reports "No fix available" for it. The library parses an *uploaded* file on the server (Cardtrader order export, `/collection/prices` → `src/lib/server/cardtrader-xls.ts`), so this was the one finding with a real attack path; nothing else reads the legacy binary `.xls` Cardtrader exports. A plain `npm install xlsx` brings 0.18.5 back — a unit test fails on any version below 0.20.2. To upgrade, install the new tarball URL from <https://cdn.sheetjs.com/>. `npm ci` needs that CDN once per machine; afterwards the npm cache serves the tarball by its hash.
+- **Dependency cleanup (2026-10-08):** `better-sqlite3` 13.0.3 ships N-API binaries without the deprecated `prebuild-install`. The unused `drizzle-kit` and its config were removed, eliminating `@esbuild-kit/esm-loader` and `@esbuild-kit/core-utils`; the app retains `drizzle-orm` and its existing custom migrations. Import/hash commands use a directly declared, lockfile-pinned `tsx` dependency instead of relying on a transitive dependency or `npx` downloading it. Security patches also update `sharp` to 0.35.5, `devalue` to 5.9.4 and `source-map-js` to 1.2.2.
+- **`overrides` in `package.json`:** `cookie` 0.7.2 (SvelteKit still asks for `^0.6.0`, which has an advisory). Re-check when SvelteKit moves. The former `@esbuild-kit/core-utils` override is no longer needed after removing `drizzle-kit`.
+
+---
+
+## 12. Coding conventions and agent workflow
+
+### 12.1 Conventions
+
+- **English** for code, comments, commits and documentation; Conventional Commits (`feat(scanner): …`, `fix(prices): …`, `docs: …`).
+- **Svelte 5 runes only**, no stores, no `<slot>` (§4.2).
+- **URL params** for filters/pagination (shareable, bookmarkable).
+- **`invalidateAll()`** after mutations to refresh data.
+- **`fetch()`** with JSON body for client→server API calls.
+- **Parameterized SQL** — never string concatenation for values. Dynamic `ORDER BY` columns come only from whitelists (`validSorts`).
+- **Validate user input** that feeds money or foreign keys (card ids, quantities, prices, locations ≤ 120 characters, 1–500 bulk ids) and check ownership before every write.
+- **camelCase** for variables/functions, **PascalCase** for components.
+- **German UI** only where the law asks for it (Impressum, Datenschutz, contact form); everything else English.
+- New public route → `publicRoutes`; new external host → CSP; new column → migration appended at the end; new heavy query → index plus cache; new pure logic → unit test without `db.ts`.
+- Branch per task, never commit to `master` directly; changes reach `master` through PRs with green CI.
+- **Honesty rule:** never claim that `check`, `test`, `build` or a harness run passed unless that exact command ran on the machine you are on; report measured numbers with their conditions.
+
+### 12.2 Agent workflow (Claude Code)
+
+**Use Plan Mode before new features, significant design tradeoffs, and bugs that survive the first attempted fix.**
+
+Opus plans, Sonnet implements, Haiku handles focused supporting tasks.
+
+- **Models:** `.claude/settings.json` sets `"model": "opusplan"` and `"effortLevel": "high"`.
+  - Opus runs while the session is in Plan Mode; Sonnet runs once the plan is approved.
+  - Enter Plan Mode with `Shift+Tab`, `/plan` or `claude --permission-mode plan`.
+- **Subagents** (`.claude/agents/`, all on `haiku`):
+  - `search` maps the repository. It is read-only: `Read`, `Grep`, `Glob`.
+  - `tests` runs only the approved checks (`npm test`, `npm test -- <path>`, `npm run check`, `npm run build`) and reports failures. It never edits files or installs packages.
+  - `docs` looks up library and API documentation (installed version first). It never edits files.
+- **Permission rules:** the allow rules in `.claude/settings.json` cover those test commands and the documentation sites `docs` reads.
+  - They only skip prompts; they do not restrict anything.
+  - `tests` keeps `Bash`, so only its instructions hold it to the approved commands.
+- **Where the details are:** limits and the cross-project rules are in the vault: `share-public` → `docs/General/ai-workflow/02-operator-collaboration.md` §4 and `04-claude-code-setup.md`.
+
+---
+
+## 13. Documentation rules
+
+- **This file is the canonical project description.** Update it in the same PR as the change: architecture, routes, commands, migrations, measurements, the status in §14. A change that makes a sentence here false is not finished until the sentence is fixed.
+- **`AGENTS.md` is the Codex twin.** It carries the same content; only its title line differs. Edit both in the same commit (they drifted apart between 2026-10-04 and 2026-10-22 because sessions updated only one of them).
+- **The vault** (`share-public` → `docs/MTG-Collector/`) holds the host facts (deployment, backups, status of the production host) and the cross-project change log `docs/General/changelog/claude_log.md`, where every non-trivial change is logged at the end.
+- `scripts/scanner-harness/README.md` holds the harness setup, per-photo results and failure classes; `DESIGN.md` the design system.
+- Keep measurements with their conditions (commit, database, photo set, date). Never write secrets; write where they live.
+
+---
+
+## 14. Status, plan and open points
+
+### 14.1 Current state (2026-10-22)
+
+| Fact | Value |
+|---|---|
+| `master` | `17a9820` (PR #96, 2026-10-22). Recent: #87 agent workflow, #88 live rearm while the card stays in place, #89 card pages, #90 proxies, #91 card snippets, #92/#93 portfolio landing page, visitor menu item and sign-in note, #94 privacy processors, #95 homepage redesign, #96 Vite/vitest audit fixes |
+| Migrations | `0001`–`0026` |
+| Unit tests | 417 in 38 files (2026-10-22) |
+| `npm audit` | 0 findings (2026-10-22) |
+| Scanner, development set (8 photos, 104 cards, full catalogue with art hashes) | identity 103, printing 83, 0 wrong |
+| Scanner, hold-out set (6 photos, 26 cards, never tuned on) | identity 19, printing 9, 0 wrong |
+| Scanner, German dark-mat scenes (28, live pipeline) | 27 of 27 captured confirmed right, printings 24, 0 wrong |
+| Synthetic upload fixtures (full catalogue) | 6/6 identities, 4/6 printings, 0 wrong |
+| Production host | Last deploy recorded in the vault: 2026-10-03 (#79). Which later PRs are live is **not recorded** (vault `09-status.md`); the 2026-10-22 audit fix mentions findings "seen during a deploy" |
+
+### 14.2 Next steps (plan, in order)
+
+1. **Bring the host up to date and record it.** Read the deployed commit (`git -C /var/www/mtg-collector log --oneline -1`), deploy `master` with `BODY_SIZE_LIMIT=12M` in the service environment and nginx `client_max_body_size` ≥ 12 MB, run `npm run import-availability` (migration `0025`) and restart, run `npm run import-names` if it never ran, then record the state in the vault's `09-status.md`. Submit `/sitemap.xml` in Search Console and inspect card, home and scanner URLs.
+2. **Real-device verification of the scanner (owner, WP4.4 + the October changes).** The changes since 2026-10-04 (receipts, rearm channels, session presets, printing selection, early rotated name pass) were verified on synthetic input only; the real-photo development and hold-out baselines have not been replayed since, and a new phone session is owed. Then tune from the uploaded scan logs.
+3. **Schedule the catalogue data jobs** (`hash-art` for new cards, `import-names` after set releases), e.g. a cron next to the nightly user-data dump, so new sets are scannable without manual runs.
+4. **Phase 5 of the scanner programme** (§14.5): WP5.1 orchestrator extraction from `scan/+page.svelte`; WP5.2 harness in CI with fixtures; WP5.3 frozen references; WP5.4 a `finish` column (`nonfoil`/`foil`/`etched`/`unknown`) next to the boolean `foil` (`language` exists since `0016`).
+5. **Scanner known-limitation work** (§14.4) by measured value: Universes Beyond flavor names (import Scryfall's `flavor_name` as an alias), showcase footers with the number on the line above, inferring the card from an inner block on dark mats, several cards on a dark mat, ordering the rotated pass earlier for upside-down spreads.
+6. **Search and growth** after indexing data comes in: German landing pages and language routing are separate content work; watch CTR of the new snippets.
+7. **Owner decisions** in §14.3, then implement the chosen options.
+
+### 14.3 Open points and owner decisions
+
+| Point | State |
+|---|---|
+| **Price data quality** when `priceDivergence()` flags an EUR value: (a) keep and only flag; (b) fall back to USD×rate for flagged printings in `/collection`, `/prices` and the homepage; (c) a manual price per printing. (b) changes reported totals based on a heuristic | Owner decision owed |
+| **Self-hosting the scanner libraries in production** (`PUBLIC_SCANNER_ASSETS_URL=/vendor`, ~75 MB static files, no CDN calls, Apache-2.0 licences with attribution; removes jsDelivr/OpenCV from the privacy policy) | Owner decision owed; mechanism exists |
+| **`Dockerfile`**: wire it up or delete it (unused in production) | Owner decision owed (vault) |
+| **Catalogue names frozen at import**: add a "refresh names" step to the updater? | Not urgent; no known case |
+| Six expected printings of the hold-out set await the owner's confirmation | See `scripts/scanner-harness/README.md` |
+| Competitor CSV parsing was checked with representative fixtures only; real owner export files are owed | Owner |
+| Remove a dead `GOOGLE_VISION_API_KEY` from the host `.env`; the owner's review of the privacy policy's OCR section | Host housekeeping (vault) |
+| Host npm 10.9.x; never mixed into an incident deploy | Not urgent |
+
+### 14.4 Known limitations
+
+- **Live replacements with similar content:** the content fingerprint detects a persistent, sufficiently different card at unchanged corners; identical copies and cards with similar image structure can still need a brief removal or "Capture now". Reference-image experiment on the 15 logged identities (13 exact logged printings, 2 catalogue references for open printings): simulated corner errors of the same card reached 24 bits, so the initial 18-bit threshold was rejected and the conservative threshold is 26. It separates 91/105 clean different-card pairs and none of the tested same-card perturbation pairs; this is reference-image evidence, not a real-camera recall/duplicate rate. The reference-assisted channel can unlock clear different artwork below 26 bits. It cannot help without a confirmed previous identity or a strong reference match (the synthetic WOT Omniscience warp needed text support at 12 bits). The geometry/empty-scene path remains available. Fingerprints never choose a printing.
+- **Live detection on dark, textured backgrounds (after the 2026-09-17 fix):** 4 of 76 synthetic mat frames still fail — dark lands and very dark cards whose outline and boxes all vanish against the mat — and 3 frames return a false rectangle. When only an inner block of a black card is visible to both passes (the "name bar + art" block, 0.83), it is still tracked as the card; inferring the card from such a block is not built. On the phone (2026-09-18) black-framed M15 cards (Painful Truths, Kothophed) were captured as such a block in 4 of 15 captures (quad aspect 0.78–0.85 instead of ~0.72: no name bar, no usable artwork, only the footer can save the capture) or not found for up to a minute; a white sheet under the card gives every black border an outline. Several cards on a dark mat are untested: the coarse pass merges touching cards into blobs, and the blob rule only fires when the fine pass also saw the members.
+- **Cards printed in another language.** Their names come from `card_names`, filled by `npm run import-names` (Scryfall's all-cards bulk, ~400 MB gzipped, ~2 min; German only unless `--langs` says otherwise: 31,007 German aliases of 30,273 identities on the host after the 2026-10-04 import). A database without the table's rows — for example a fresh checkout — recognises German cards by footer and artwork only, as before; a new set's printed names arrive only with the next run (nothing schedules it). Scryfall's German images of seven ORI / BFZ cards hash 2–6 bits away from the English reference, so German phone captures land at 8–14 bits where English ones land at 0–10. English OCR junk can resemble one of the ~30k German names: close German matches join a search only when they beat the English answer, and on a card whose footer says EN an uncertain German match is ignored.
+- **Art-hash coverage.** A printing is recognised (or excluded) by its artwork only when its hash exists. The table is complete on the dev PC (2026-09-17; 54 images Scryfall does not serve stay marked `'-'`), a database without it — the host until `npm run hash-art -- --import` ran, a fresh checkout — simply has no visual channel and behaves like Round 10. Cards added by later price updates have no hash until `npm run hash-art` runs again (seconds to minutes; nothing schedules it yet).
+- **Same-artwork variants stay a footer problem.** MID vs Double Feature, regular vs extended/showcase frames of the same picture hash 0–8 bits apart; the artwork narrows a printing list only against clearly different pictures (16-bit gap). Small cards in phone spreads can hash more than 12 bits away from every reference (one Dawnhart Rejuvenator stays a `likely` of Dawnhart Geist), and foil glare shifts hashes too.
+- **Open printings against the full catalogue** (25 of 104 on the eight photos): a confirmed identity whose footer is unreadable stays with a "Printing?" chip when the name has several printings — same-set variants (TMT #126 / #240, showcase frames), Innistrad: Double Feature reprints that carry the *same* collector number as MID / VOW (`010/277 C` matches both `mid#10` and `dbl#10`), The List, promos, basic lands. Only a legible set code (or the user) settles them; the majority set is deliberately not used to guess a printing.
+- **Name-OCR ambiguity against the full catalogue** (9 `likely`, 9 misses on the eight photos): partial reads such as "Dawnhart r", "Escave" or "Moist wranger" have several plausible names; the fusion offers them for one tap instead of guessing. Phase 3 (art hash) is the planned answer, not more name rules.
+- **Hold-out classes (2026-09-16, not tuned on):** Universes Beyond *flavor names* ("The Monstrous Serpent" for Koma, Cosmos Serpent; "Wild Rose Rebellion" for Counterspell) are unknown to the catalogue — the import needs Scryfall's `flavor_name` and the search a further alias; showcase footers (SOA, TLE) carry the collector number on the line *above* "SET • EN", outside the strip crop, so those printings stay open; a black-bordered card filling the frame on a dark cloth made every detection strategy return the image frame (fixed 2026-09-17 by the coarse fallback, see "Card Scanner Flow" step 2); old frames (Alliances, a numberless Tropical Island) defeat the name passes and have no collector line.
+- **Server batch caps:** `/scan` answers at most 50 names per `printings` request and 100 per `lookups` / `near` request; the page chunks accordingly. A busy spread with three candidates per pass exceeded 50 and every name beyond the cut came back without printings ("confirmed", nothing to pick) until the chunking was added.
+- **The catalogue's names are frozen at import.** `price-updater.ts` updates prices and inserts new cards but never rewrites `name` of an existing row (availability and prices are refreshed); a Scryfall correction after the first import (a spoiler-season typo) stays in the database, and the scanner matches the stored spelling.
+- Upside-down cards get a gray rotated name pass after exact-only first-name lookup and before fuzzy/word searches or expensive upright preprocessing/PaddleOCR passes. Only a certain name (score >= 0.8) short-circuits them; weak rotated reads retain the conservative later retry. Old open browser tabs can still run the previous order: the 2026-10-07 multi-card log used version 1791118748151 and waited 32.7 seconds before rotation, while the subsequent live session used the current build. Reload the scanner after deployment before comparing phone runs.
+- PaddleOCR reads the two-line collector strip as nothing (the recognition model expects one line); a row-projection line split was tried in the experiment and did not work, so the footer stays Tesseract-only.
+- `cropWindowsFromProfiles()` only finds a black border that starts at the warp edge; on a bright background the border begins after the expansion margin and the fixed windows are used instead (they fit the 5% expansion, so nothing is lost yet, but tight quads on bright tables would benefit from scanning for the first dark run).
+- Filming a monitor instead of a physical card produces moiré and glare that degrade OCR; not a code issue.
+- A card lying on its side comes out upside-down in the warp whenever its top points right (the short-edge rule in `orderCornersForCard()` breaks the 180° tie by proximity to the image origin); Phase 2b and the rotated collector-line pass recover most of them at the cost of a second OCR pass.
+- Tesseract can't reliably distinguish the foil `★` from the bullet `•`, and nothing else reads it since the Google Vision retry was removed: text-based foil hints are never trusted, pixel-based detection runs in single-card mode only.
+- Grid inference needs at least three detected cards on two rows and two columns; a single row or column gets no synthetic cells. Only missing cells inside the observed extent are offered. A completely undetected outer row is no longer extrapolated from texture alone; this avoids textured-background proposals but may leave real edge cards undetected. Interior texture and contour false positives remain possible.
+- The detection worker loads its own OpenCV.js copy (from the browser cache after the page's own load); on a first visit that is a second ~10 MB parse, about a second on a laptop, during which the preview runs without outlines.
+
+### 14.5 Scanner improvement programme (planned 2026-09-16)
+
+Keep this section current when you change the scanner. Status per phase: 0 ✅, 1 ✅, 2 ✅, 3 ✅ (WP3.3 optional, not needed for identity), 4 ✅ except the owner's WP4.4 device check, 5 ⏳.
 
 **Basis.** Eight real photos run through the harness: 87 of 104 names identified, 0 wrong, measured against the distractor DB — but *in-sample* (OCR scales and plausibility rules were tuned on these photos) and *name-level only*. An external code review of commit 9cfe928 (16 Sept 2026, not in the repository) reproduced four defects with the real modules and set an acceptance definition; its six regression tests fail 5/6 on the current code. Both sources are merged into the programme below.
 
@@ -482,33 +873,19 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 | **Phase 3, full catalogue (measured, full art-hash table)** | **103** | **83** (20 open, footer still needed for same-art reprints) | **0** |
 | Phase 5 | unchanged on stills; CI, schema | | |
 
-**Decisions needed from the owner:** hold-out photos (WP0.4); the visual index data volume (once ~100k Scryfall images, several GB and hours on the server); and the two standing decisions below (price data quality, self-hosting the scanner libraries — now ~75 MB with the second OCR engine).
-
-**Standing decisions (unchanged):**
-
-- **Price data quality**: when `priceDivergence()` flags an EUR value, collection value and profit/loss still use it. Options: (a) keep as is and only flag; (b) fall back to USD×rate for flagged printings in `/collection`, `/prices` and the homepage KPI; (c) let the user pin a manual price per printing. (b) changes reported totals based on a heuristic, so it should be an explicit product decision.
-- **Self-hosting the scanner libraries in production** (`PUBLIC_SCANNER_ASSETS_URL=/vendor`, ~50 MB static files, no CDN calls, Apache-2.0 licences with attribution). The mechanism exists; this is a deployment/privacy decision.
-
-### Done
+### 14.6 Done (newest first)
 
 - `npm audit` back to 0 (2026-10-22, three findings seen during a deploy): Vite 7.3.6 → 7.3.7 (high; dev server and launch-editor advisories) and vitest / `@vitest/mocker` 4.1.11 → 4.1.12 (moderate). Both are build and test tools that the production server never loads; only the lock file and the two ranges in `package.json` moved (vitest also brings chai 6.3.0 and tinyrainbow 3.2.0), SvelteKit and Svelte are unchanged. Checked with `npm run check`, 417 tests, the build, `seo-check.mjs` 81 / 81, `collector-workflows-check.mjs` 44 / 44, the synthetic scanner harness (6 / 6 identities, 4 / 6 printings, 0 wrong, as before), `live-ux-check.mjs` 21 / 21 and `npx npm@10.9.9 ci --dry-run`.
-
 - Homepage redesign (2026-10-22, the owner's drafts F and D): visitors get a hero with one sign-in button, three entry cards (portfolio tracker, card database, scanner) and real price moves with links to the card pages; signed-in users get a dashboard (value and today's change, profit/loss, cards, wishlist, 90-day chart, collection moves, recently added) from the cached price data. The beta notice, the static KPIs and the quick actions are gone. Title "MTG Collector: Free Card Scanner and Collection Tracker". Unit tests in `home.test.ts` / `home-data.test.ts`; `seo-check.mjs` 78 / 78, `collector-workflows-check.mjs` 44 / 44.
-
 - Privacy policy matches what the browser loads (2026-10-22): Cloudflare in front of the site, card images from Scryfall (`cards.scryfall.io`), the scanner libraries from jsDelivr and OpenCV, the Google profile picture, the contact form and IONOS as the email provider for info@mtg-collector.com, in German and English. The server provider stays STRATO: STRATO's VPS run in the IONOS network, so the origin's IP range is registered to IONOS SE. `seo-check.mjs` records every external host the browser contacts on the public pages and in live scan mode and fails until the policy names it. Self-hosting the scanner libraries (`PUBLIC_SCANNER_ASSETS_URL=/vendor`) or serving card images ourselves would remove those providers from the policy.
-
 - Portfolio tracker landing page (2026-10-21, Search Console had "mtg portfolio tracker" at position 26.5 and "mtg card collection manager" at 25.4): public `/portfolio-tracker` with title "Free MTG Portfolio Tracker: Collection Value and Profit", an example dashboard in HTML and SVG (labelled as example data, no card images), the tracking, import and organizing features, sourcing of the prices and plain FAQ text (no FAQPage markup). In `publicRoutes` (routes are protected by default), the sitemap, the homepage ("3. Track" tile, "Track prices" for visitors), the footer and the menu for visitors ("Portfolio", desktop and mobile; signed-in users have "Prices" there). Copy follows the owner's rule: no dashes, no marketing phrases. `seo-check.mjs` 66 / 66, `collector-workflows-check.mjs` 39 / 39.
-
 - Card-page search snippets (2026-10-21, Search Console CTR 0.2 % at position 23.4): titles lead with the lowest price and the printing count within 60 characters, never promise a price for digital-only or unpriced cards, and drop the site suffix; descriptions state facts first, then the rules text. No price markup: Google's product-snippet documentation rules out `AggregateOffer` for product variants, and reference prices are not offers. The favicon link declares the 48 px image the `.ico` already contains. Unit tests in `card-page.test.ts`; `seo-check.mjs` 52 / 52 with a digital-only fixture card.
-
 - Proxy copies (owner request 2026-10-18): collection entries can be marked as proxies (edit dialog, bulk edit, printing page, a `Proxy` import column, "Import every card as a proxy" with a proxies-only Replace). Proxies count as cards, never as value or profit/loss; the Moxfield CSV export writes its Proxy flag. New unit tests in `collection-workflows.test.ts` and `price-data.test.ts`; `collector-workflows-check.mjs` gained 17 proxy checks (38 / 38).
-
+- Search engine indexing (2026-10-15): one page per card at `/cards/<slug>` with every printing and its prices; printing pages point their canonical there and the sitemap lists the ~37k cards instead of ~115k printings (Search Console had 108,508 printing URLs "discovered – currently not indexed"). The catalogue search finds names with apostrophes ("Teferi's Protection" returned 0 cards). See §5.1.
+- Live auto-capture no longer repeats a card that stays in place while the detector flickers (`capturedStillInPlace()`): a Windows webcam session (2026-10-12/13) had captured one static object 285 times. Unit tests in `rearm.test.ts`, a flicker / second-copy scenario in `session-ux-check.mjs`; `live-ux-check.mjs` unchanged (21 / 21).
 - Scanner recognition follow-up (2026-10-08): reference-assisted live rearming for similar coarse fingerprints; exact-only first name lookup followed by the rotated gray check before fuzzy/word fallbacks; full four-digit collector numbers survive a trailing OCR separator (`R 7009 4 SLD EN`), and unanchored C1993-style copyright reads stay weak. Digital-only editions are excluded after paper-availability backfill. The logged Smothering Tithe evidence now resolves to SLD #7009 instead of suggesting Blood Tithe. Tests retain 6/6 synthetic identities and 4/6 printings (2 open, zero wrong); component checks cover colliding fingerprints, failures and stale responses. The real worker/OCR/reference camera check captures Hope of Ghirapur, Doomsday, Supreme Verdict and Omniscience once each under mild exposure/corner changes. Hope → Doomsday stays at 22/26 coarse bits and is released by two reference observations. Reference images are synthetic camera input; the owner's missing phone photos and real-photo baselines have not been replayed.
-
 - Phone-log follow-up (2026-10-08): multi-card grid fill now stays inside the observed rows/columns. A regression using the fourteen logged quads preserves the interior gap and excludes the two outer proposals; the source photo was not retained, so this is a geometry check, not a replay of its OCR. Live captures have numbered receipts with confirmed card names, printing/review/failure state and an explicit synchronous pipeline handoff; declined handoffs neither lock nor beep. Clearing results also clears the receipt and is disabled while processing. Audio resumes are bounded before scheduling cues, stale pending cues expire, and an Enable/Test sound button lets the user retry in a gesture. Logs include audio state/scheduling and per-capture rearm distance/eligibility/pending duration; they cannot prove audibility. The 26-bit content threshold and identity/printing rules are unchanged. The frozen-catalogue synthetic upload check remains 6/6 identities, 4/6 established printings, two open, zero wrong/extra; live component and actual-pipeline browser checks cover receipts, audio, retries and pause/resume. Real-photo baselines and new physical-phone verification remain pending. The slow multi-card session used an old app version; the current early rotated-name pass is verified on the sideways synthetic fixture.
-
 - Collector workflows (2026-10-07): persistent capture settings and explicit set restrictions with conflict review, clearer printing labels, per-capture save receipts with retry and double-click protection; collection locations, atomic bulk edits and quantity-preserving partial moves; mapped CSV previews for ManaBox/Dragon Shield/Delver/Moxfield and a metadata-preserving Collector CSV export. The actual pipeline against a scratch copy of the full catalogue retains 6/6 synthetic identities and 4/6 established printings, two open, zero wrong. Mobile browser checks cover captured settings, a failed save and retry, repeated copies, contradictory set restrictions and printing selection. This establishes workflow behavior, not improved physical-card accuracy; new phone scans and the real-photo baselines remain pending.
-
 - Scanner session fixes (2026-10-04, owner phone logs): the live detector keeps observing while OCR runs and uses persistent per-card content fingerprints to notice a replacement at unchanged corners. Detection errors and brief missed frames do not rearm; the badge reports the reason auto-capture is waiting. Best-frame storage starts again after processing, and cached frames must agree with current card content, including manual captures. Unresolved printings have no preselected row or Add action; an explicit, keyboard-accessible "Select printing" action establishes the printing, and scan summaries/result cues distinguish identity from established printings. A certain rotated gray name is tried before the expensive upright fallback passes; weaker reads retain the prior order, with cached rotated crops/text and opposite collector strips retained when the printing needs more evidence. Touch previews are centered, fitted proportionally to the visual viewport and stay open until the close button (or Escape); desktop hover remains supported. Verification: offline tests, Svelte check and production build; 14 live-component, 52 preview and 20 real scan-page printing UI assertions; the same synthetic fixtures against the full local catalogue before/after identify 6/6 with 4/6 established printings, 2 open and 0 wrong. The real-photo development/hold-out baselines and a new phone run have not been repeated for this change. The owner imported German names on the host: 31,007 aliases for 30,273 identities from the 2026-10-03 Scryfall bulk snapshot, independently checked after the import.
 - German cards by name (owner request 2026-09-23): `npm run import-names` imports the names printed on German printings (Scryfall's all-cards bulk) into `card_names`, the name search looks them up (equal once normalised, or close when better than the English answer), every scanner row carries its printed names, name candidates carry their language and count on a card whose footer names another language only at ≥ 0.8, and the scan page adds cards in the scanned language. German dark-mat scenes (28, live pipeline, full catalogue): confirmed right 18 → 27 of 27 captured, printings 15 → 24, 0 wrong; development set 103 / 83 of 104, hold-out 19 / 9 of 26, 0 wrong.
 - Phone session 2026-09-18 (German Magic Origins / Battle for Zendikar cards on the dark mat, 15 captures, 7 confirmed): cards printed in another language no longer take uncertain English name matches as evidence, footer-only confirmations are checked against the rarity letter of every strip, disagreeing strips and a contradicting artwork, an artwork up to 12 bits plus an exactly read footer number confirms, a single misread number no longer drops an artwork, and joins ignore stray digits against a structural reading. The footer window bridges the collector text in the bottom border (the number line of M15-frame cards fell out), and a frame whose card touches the edge never becomes the best frame. Development set unchanged (103 / 83, 0 wrong), hold-out 19 / 9 of 26 (was 18 / 7), German scenes: 0 wrong confirmations, wrong one-tap offers 3 → 2.
@@ -545,25 +922,3 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 - Time-based, card-size-relative scene stability (`SceneStabilizer`) replaces the frame-count/absolute-pixel version that never turned green on hand-held phones.
 - Live captures skip the six-strategy detection and warp the tracked rectangles directly; Tesseract pool is pre-warmed in live mode.
 - Stricter live detector filters (min area 3%, aspect 0.55–0.88, relative-area 25%) plus edge-cut and too-many-rects guards — keyboard keys are no longer captured as cards.
-- Corner expansion is no longer clamped to the frame; name/collector crop windows widened so cards that fill the frame still OCR (fixed "0 of 1 identified" with the bottom crop showing flavour text).
-
-### Known limitations
-
-- **Live replacements with similar content:** the content fingerprint detects a persistent, sufficiently different card at unchanged corners; identical copies and cards with similar image structure can still need a brief removal or "Capture now". Reference-image experiment on the 15 logged identities (13 exact logged printings, 2 catalogue references for open printings): simulated corner errors of the same card reached 24 bits, so the initial 18-bit threshold was rejected and the conservative threshold is 26. It separates 91/105 clean different-card pairs and none of the tested same-card perturbation pairs; this is reference-image evidence, not a real-camera recall/duplicate rate. The reference-assisted channel can unlock clear different artwork below 26 bits. It cannot help without a confirmed previous identity or a strong reference match (the synthetic WOT Omniscience warp needed text support at 12 bits). The geometry/empty-scene path remains available. Fingerprints never choose a printing.
-- **Live detection on dark, textured backgrounds (after the 2026-09-17 fix):** 4 of 76 synthetic mat frames still fail — dark lands and very dark cards whose outline and boxes all vanish against the mat — and 3 frames return a false rectangle. When only an inner block of a black card is visible to both passes (the "name bar + art" block, 0.83), it is still tracked as the card; inferring the card from such a block is not built. On the phone (2026-09-18) black-framed M15 cards (Painful Truths, Kothophed) were captured as such a block in 4 of 15 captures (quad aspect 0.78–0.85 instead of ~0.72: no name bar, no usable artwork, only the footer can save the capture) or not found for up to a minute; a white sheet under the card gives every black border an outline. Several cards on a dark mat are untested: the coarse pass merges touching cards into blobs, and the blob rule only fires when the fine pass also saw the members.
-- **Cards printed in another language.** Their names come from `card_names`, filled by `npm run import-names` (Scryfall's all-cards bulk, ~400 MB gzipped, ~2 min; German only unless `--langs` says otherwise: 31,007 German aliases of 30,273 identities on the host after the 2026-10-04 import). A database without the table's rows — for example a fresh checkout — recognises German cards by footer and artwork only, as before; a new set's printed names arrive only with the next run (nothing schedules it). Scryfall's German images of seven ORI / BFZ cards hash 2–6 bits away from the English reference, so German phone captures land at 8–14 bits where English ones land at 0–10. English OCR junk can resemble one of the ~30k German names: close German matches join a search only when they beat the English answer, and on a card whose footer says EN an uncertain German match is ignored.
-- **Art-hash coverage.** A printing is recognised (or excluded) by its artwork only when its hash exists. The table is complete on the dev PC (2026-09-17; 54 images Scryfall does not serve stay marked `'-'`), a database without it — the host until `npm run hash-art -- --import` ran, a fresh checkout — simply has no visual channel and behaves like Round 10. Cards added by later price updates have no hash until `npm run hash-art` runs again (seconds to minutes; nothing schedules it yet).
-- **Same-artwork variants stay a footer problem.** MID vs Double Feature, regular vs extended/showcase frames of the same picture hash 0–8 bits apart; the artwork narrows a printing list only against clearly different pictures (16-bit gap). Small cards in phone spreads can hash more than 12 bits away from every reference (one Dawnhart Rejuvenator stays a `likely` of Dawnhart Geist), and foil glare shifts hashes too.
-- **Open printings against the full catalogue** (25 of 104 on the eight photos): a confirmed identity whose footer is unreadable stays with a "Printing?" chip when the name has several printings — same-set variants (TMT #126 / #240, showcase frames), Innistrad: Double Feature reprints that carry the *same* collector number as MID / VOW (`010/277 C` matches both `mid#10` and `dbl#10`), The List, promos, basic lands. Only a legible set code (or the user) settles them; the majority set is deliberately not used to guess a printing.
-- **Name-OCR ambiguity against the full catalogue** (9 `likely`, 9 misses on the eight photos): partial reads such as "Dawnhart r", "Escave" or "Moist wranger" have several plausible names; the fusion offers them for one tap instead of guessing. Phase 3 (art hash) is the planned answer, not more name rules.
-- **Hold-out classes (2026-09-16, not tuned on):** Universes Beyond *flavor names* ("The Monstrous Serpent" for Koma, Cosmos Serpent; "Wild Rose Rebellion" for Counterspell) are unknown to the catalogue — the import needs Scryfall's `flavor_name` and the search a further alias; showcase footers (SOA, TLE) carry the collector number on the line *above* "SET • EN", outside the strip crop, so those printings stay open; a black-bordered card filling the frame on a dark cloth made every detection strategy return the image frame (fixed 2026-09-17 by the coarse fallback, see "Card Scanner Flow" step 2); old frames (Alliances, a numberless Tropical Island) defeat the name passes and have no collector line.
-- **Server batch caps:** `/scan` answers at most 50 names per `printings` request and 100 per `lookups` / `near` request; the page chunks accordingly. A busy spread with three candidates per pass exceeded 50 and every name beyond the cut came back without printings ("confirmed", nothing to pick) until the chunking was added.
-- **The catalogue's names are frozen at import.** `price-updater.ts` updates prices and inserts new cards but never rewrites `name` of an existing row (availability and prices are refreshed); a Scryfall correction after the first import (a spoiler-season typo) stays in the database, and the scanner matches the stored spelling.
-- Upside-down cards get a gray rotated name pass after exact-only first-name lookup and before fuzzy/word searches or expensive upright preprocessing/PaddleOCR passes. Only a certain name (score >= 0.8) short-circuits them; weak rotated reads retain the conservative later retry. Old open browser tabs can still run the previous order: the 2026-10-07 multi-card log used version 1791118748151 and waited 32.7 seconds before rotation, while the subsequent live session used the current build. Reload the scanner after deployment before comparing phone runs.
-- PaddleOCR reads the two-line collector strip as nothing (the recognition model expects one line); a row-projection line split was tried in the experiment and did not work, so the footer stays Tesseract-only.
-- `cropWindowsFromProfiles()` only finds a black border that starts at the warp edge; on a bright background the border begins after the expansion margin and the fixed windows are used instead (they fit the 5% expansion, so nothing is lost yet, but tight quads on bright tables would benefit from scanning for the first dark run).
-- Filming a monitor instead of a physical card produces moiré and glare that degrade OCR; not a code issue.
-- A card lying on its side comes out upside-down in the warp whenever its top points right (the short-edge rule in `orderCornersForCard()` breaks the 180° tie by proximity to the image origin); Phase 2b and the rotated collector-line pass recover most of them at the cost of a second OCR pass.
-- Tesseract can't reliably distinguish the foil `★` from the bullet `•`, and nothing else reads it since the Google Vision retry was removed: text-based foil hints are never trusted, pixel-based detection runs in single-card mode only.
-- Grid inference needs at least three detected cards on two rows and two columns; a single row or column gets no synthetic cells. Only missing cells inside the observed extent are offered. A completely undetected outer row is no longer extrapolated from texture alone; this avoids textured-background proposals but may leave real edge cards undetected. Interior texture and contour false positives remain possible.
-- The detection worker loads its own OpenCV.js copy (from the browser cache after the page's own load); on a first visit that is a second ~10 MB parse, about a second on a laptop, during which the preview runs without outlines.
