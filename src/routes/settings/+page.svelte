@@ -67,7 +67,7 @@
 	<!-- Collection Stats -->
 	<div class="panel p-6">
 		<h2 class="text-lg font-semibold mb-4">Collection Statistics</h2>
-		<div class="grid grid-cols-3 gap-3 sm:gap-4">
+		<div class="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
 			<div class="text-center min-w-0">
 				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.collectionCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Cards in Collection</p>
@@ -75,6 +75,10 @@
 			<div class="text-center min-w-0">
 				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.wishlistCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Wishlist</p>
+			</div>
+			<div class="text-center min-w-0">
+				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.deckCount}</p>
+				<p class="text-xs text-[var(--color-text-muted)]">Decks</p>
 			</div>
 			<div class="text-center min-w-0">
 				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.tagCount}</p>
@@ -88,7 +92,7 @@
 		<h2 class="text-lg font-semibold text-red-400 mb-2">Delete Account</h2>
 		<p class="text-sm text-[var(--color-text-muted)] mb-4">
 			If you delete your account, all your data will be permanently removed:
-			collection, wishlist, tags, and settings. This action cannot be undone.
+			collection, wishlist, decks, tags, and settings. This action cannot be undone.
 		</p>
 		<button
 			onclick={() => { showDeleteDialog = true; deleteConfirmText = ''; deleteError = ''; }}
@@ -111,6 +115,7 @@
 			<ul class="text-sm text-[var(--color-text-muted)] mb-4 list-disc list-inside space-y-1">
 				<li>{data.collectionCount} cards in your collection</li>
 				<li>{data.wishlistCount} entries on your wishlist</li>
+				<li>{data.deckCount} {data.deckCount === 1 ? 'deck' : 'decks'}</li>
 				<li>{data.tagCount} tags</li>
 				<li>All session data</li>
 			</ul>

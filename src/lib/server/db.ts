@@ -5,6 +5,7 @@ import { SCHEMA_SQL } from './schema-sql.js';
 import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
+import { DECKS_SQL } from './decks.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -351,6 +352,13 @@ const MIGRATIONS: Migration[] = [
 		// migrated databases share the column order of the positional user-data dump.
 		id: '0026_collection_proxy',
 		run: (db) => addColumnIfMissing(db, 'collection_cards', 'proxy', 'INTEGER NOT NULL DEFAULT 0')
+	},
+	{
+		// Decks (/decks): one row per deck with a random id that doubles as its share
+		// link, and its entries per board (src/lib/server/decks.ts). User data: the
+		// nightly user-data dump must list both tables.
+		id: '0027_decks',
+		run: (db) => db.exec(DECKS_SQL)
 	}
 ];
 

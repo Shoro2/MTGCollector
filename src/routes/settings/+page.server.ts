@@ -22,8 +22,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 		 WHERE cc.user_id = ?`
 	).get(locals.user.id) as { count: number };
 
+	const deckCount = sqlite.prepare(
+		'SELECT COUNT(*) as count FROM decks WHERE user_id = ?'
+	).get(locals.user.id) as { count: number };
+
 	return {
 		collectionCount: collectionCount.count,
+		deckCount: deckCount.count,
 		wishlistCount: wishlistCount.count,
 		tagCount: tagCount.count
 	};

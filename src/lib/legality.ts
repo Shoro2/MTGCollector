@@ -55,6 +55,11 @@ function fallbackLabel(key: string): string {
 	return key.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Readable name of a Scryfall format key ("paupercommander" -> "Pauper Commander"). */
+export function formatLabel(key: string): string {
+	return KNOWN.get(key)?.label ?? fallbackLabel(key);
+}
+
 /** Parses `cards.legalities` (JSON text or an object) into an ordered list; invalid input gives []. */
 export function formatLegalities(raw: string | Record<string, unknown> | null | undefined): FormatLegality[] {
 	let data: unknown = raw;
