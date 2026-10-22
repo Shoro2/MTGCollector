@@ -27,11 +27,12 @@
 
 ## 1. Product: what MTG Collector is for
 
-MTG Collector (<https://mtg-collector.com>, repository `Shoro2/MTGCollector`, default branch `master`) is a free web app for **Magic: The Gathering collectors**. It answers three questions:
+MTG Collector (<https://mtg-collector.com>, repository `Shoro2/MTGCollector`, default branch `master`) is a free web app for **Magic: The Gathering collectors**. It answers four questions:
 
 1. **What is a card worth?** A public catalogue of every Scryfall printing (~115k printings of ~37k cards) with EUR/USD prices, foil prices, price history and one search-engine-friendly page per card.
 2. **What do I own, and what is it worth now compared with what I paid?** A private, per-user collection with condition, finish, language, location, tags, proxies and purchase prices, and a portfolio view: collection value over time, profit/loss, top cards and daily price moves.
 3. **How do I get my cards into the app without typing?** A browser-side card scanner (photo upload or live camera) that identifies cards by name OCR, collector-line OCR and artwork hash, and adds them with an established printing; plus previewed CSV imports from Moxfield, ManaBox, Dragon Shield and Delver Lens.
+4. **Which decks do I build, and what do they still cost me?** Deck lists like Moxfield's: per format, grouped by card type, checked against the format's rules, priced, compared with the viewer's own collection and shared by link (§5.10).
 
 ### Intended overall functionality
 
@@ -40,6 +41,7 @@ MTG Collector (<https://mtg-collector.com>, repository `Shoro2/MTGCollector`, de
 | Card catalogue | Browse and search the full catalogue (full-text search, colour/type/rarity/set/mana value/legality filters, sorting, pagination, unique-card toggle); every card has a page with all printings, prices and a format legality grid; every printing has its own page with price history | ✅ live |
 | Collection | Isolated per-user collection; every entry is one "lot" (printing, quantity, condition, finish, language, location, purchase price, notes, acquisition date, tags, proxy flag); bulk edits, partial moves between locations, search/sort/filter | ✅ live |
 | Wishlist | Prioritised wants; "collect" moves an entry into the collection with a purchase-price prompt | ✅ live |
+| Decks | `/decks`: create (name, format, commander, visibility, optional pasted or uploaded list), view grouped by type or mana value with commander, sideboard and maybeboard, ownership against the viewer's collection (owned / proxy / missing), value and "still to buy", mana curve, format check (size, copies, Scryfall bans, command zone, colour identity), edit, import and export text lists (Moxfield, MTG Arena, MTGO, Archidekt), share by link (private / unlisted / public), copy | 🚧 MVP built (2026-10-22), not yet merged or deployed (§5.10) |
 | Portfolio and prices | Value over time, purchase cost, profit/loss over copies with both prices, top cards, per-card history, daily price snapshots, homepage dashboard | ✅ live |
 | Imports and exports | Previewed, mapped CSV import (skip existing / append / replace), Moxfield text lists, a collector CSV that round-trips every field, Moxfield CSV/text export; purchase prices from text lists, Cardmarket CSV and Cardtrader XLS/XLSX | ✅ live |
 | Scanner | Public `/scan`: single-card or spread photos, live camera with auto-capture; never adds a card whose identity and printing are not established; German cards by their printed names | ✅ live, continuously tuned (§6, §14) |
@@ -49,7 +51,7 @@ MTG Collector (<https://mtg-collector.com>, repository `Shoro2/MTGCollector`, de
 
 ### Product principles (the owner's rules)
 
-- **Free, no ads, no data sales, collections are never shared.** The sign-in page says so; the privacy policy names every third party the browser contacts (§5.9).
+- **Free, no ads, no data sales, collections are never shared.** The sign-in page says so; the privacy policy names every third party the browser contacts (§5.9). A deck shared by link shows its list only, never the owner's name, email address or collection.
 - **Honest numbers.** Proxies never count as value; profit/loss compares only copies that have both a purchase and a market price; missing prices are gaps, not zeros; a suspicious Cardmarket trend price is flagged, never silently altered.
 - **The scanner never guesses.** Wrong automatic identifications are the primary metric (target 0). An uncertain card becomes a one-tap offer or stays open; bulk import takes only confirmed identities with an established printing.
 - **Unofficial fan content.** No Wizards logos, official mana/set symbols or Magic fonts in the app chrome; original letter pips and text set codes; the footer disclaimer stays visible (`DESIGN.md`).
@@ -60,7 +62,7 @@ MTG Collector (<https://mtg-collector.com>, repository `Shoro2/MTGCollector`, de
 
 | Visitor (not signed in) | Signed-in user | Admin (`ADMIN_EMAIL`) |
 |---|---|---|
-| Homepage with entry paths and price moves, `/cards`, card and printing pages, `/scan` (identification only), `/portfolio-tracker`, `/contact`, legal pages | Everything a visitor has, plus `/collection`, `/wishlist`, `/prices`, `/settings`, adding scanned cards, the homepage dashboard | Everything, plus `/admin` (users, DB statistics, price snapshots, scan logs, contact messages) and the manual price-update trigger |
+| Homepage with entry paths and price moves, `/cards`, card and printing pages, `/scan` (identification only), `/portfolio-tracker`, `/contact`, legal pages, unlisted and public decks by their link (read and export only) | Everything a visitor has, plus `/collection`, `/wishlist`, `/decks` (own decks; other people's shared decks compared with their own collection and copied), `/prices`, `/settings`, adding scanned cards, the homepage dashboard | Everything, plus `/admin` (users, DB statistics, price snapshots, scan logs, contact messages) and the manual price-update trigger |
 
 ---
 
@@ -98,6 +100,7 @@ npm run dev                  # Dev server at http://localhost:5173 (bundles the 
 |---|---|
 | `node scripts/seo-check.mjs` | Anonymous HTTP and browser checks on an isolated synthetic DB: sitemaps, canonicals, pagination without JavaScript, card snippets, the apostrophe search, mobile screenshots, dashes in visitor copy, and that the privacy policy names every external host the browser contacts |
 | `node scripts/collector-workflows-check.mjs` | Fresh synthetic DB: mobile migration, bulk edits, partial moves, import preview/replace, collector CSV round trip, proxies (marking, filtering, never valued, Moxfield export, proxies-only replace), preferences |
+| `node scripts/deck-workflows-check.mjs` | Fresh synthetic DB: create a deck with commander and pasted list, type and mana-value groups, totals, format check, ownership marks, edit, add, replacing import, export and clipboard, share link, visitor and other-player views without the owner, copy, private decks 404, delete; phone and desktop screenshots |
 | `node scripts/prices-admin-ux-check.mjs` | Production server on synthetic data: mobile `/prices` and `/admin`, retry, empty/error states, cache invalidation after collection changes |
 | `node scripts/prices-admin-benchmark.mjs --db data/mtg.db` | Read-only timing of the price payload and admin snapshot queries (`--baseline`, `--index-db`) |
 | `scripts/scanner-harness/*` | Scanner pipeline harness, live/UX checks and experiments (§8.3, `scripts/scanner-harness/README.md`) |
@@ -148,7 +151,7 @@ npm run dev                  # Dev server at http://localhost:5173 (bundles the 
 3. **Graceful shutdown:** SIGTERM/SIGINT run `wal_checkpoint(TRUNCATE)` and close the DB.
 4. **Per request:** the `session` cookie is validated (`validateSession()`, 5-minute in-memory cache) into `locals.user` (`{ id, email, name, avatarUrl, isAdmin }`).
 5. **Redirects:** `/collection/scan…` → `/scan` (302).
-6. **Access control:** routes are **protected by default**. Public: `/`, `publicRoutes` (`/login`, `/auth/`, `/cards`, `/scan`, `/portfolio-tracker`, `/impressum`, `/datenschutz`, `/contact`, `/api/health`, `/api/scan-log`) and the sitemaps (`/sitemap.xml`, `/sitemap-*.xml`). Anything else without a user: `/api/*` → 401, pages → 302 `/login`. `/admin*` for non-admins: `/admin/api/*` → 403, pages → 302 `/`. **A new public page must be added to `publicRoutes`**, or visitors and Googlebot are redirected to `/login`.
+6. **Access control:** routes are **protected by default**. Public: `/`, `publicRoutes` (`/login`, `/auth/`, `/cards`, `/decks/` with the trailing slash, so deck pages and their export open by link while the list `/decks` stays signed-in only, `/scan`, `/portfolio-tracker`, `/impressum`, `/datenschutz`, `/contact`, `/api/health`, `/api/scan-log`) and the sitemaps (`/sitemap.xml`, `/sitemap-*.xml`). Anything else without a user: `/api/*` → 401, pages → 302 `/login`. `/admin*` for non-admins: `/admin/api/*` → 403, pages → 302 `/`. **A new public page must be added to `publicRoutes`**, or visitors and Googlebot are redirected to `/login`.
 7. **Security headers** on every response: `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` (camera for self only), HSTS outside dev, and a hard-coded **CSP**. A new external host (script, image, fetch) must be added to the CSP array, or the scanner, images or analytics break silently. `csrf.trustedOrigins` is empty: cross-origin form POSTs are rejected.
 
 ### 4.2 Svelte 5 runes
@@ -184,6 +187,8 @@ This project uses **Svelte 5 runes exclusively** — no legacy `$:` reactivity o
 | `tags`, `collection_card_tags` | Per-user tags (`UNIQUE(user_id, name)`, colour) and their assignment to lots | user data |
 | `wishlist_cards` | Wants with `priority`, notes, `added_at` | user data |
 | `contact_messages` | `/contact` submissions (IP stored only as a keyed hash), `handled` flag | user data |
+| `decks` | Deck lists: random 16-character id (the share link), `user_id` (cascade with the account), `name`, `format`, `description`, `visibility` (`private` / `unlisted` / `public`), `created_at`, `updated_at` | user data |
+| `deck_cards` | Deck entries: `deck_id` (cascade), `card_id` (a printing), `board` (`commander` / `main` / `sideboard` / `maybeboard`), `quantity` 1–999, `foil`; UNIQUE `(deck_id, board, card_id, foil)` | user data |
 | `api_usage` | Legacy Vision usage, unused | legacy |
 | `_schema_migrations` | Applied migration ids | bookkeeping |
 
@@ -208,6 +213,7 @@ This project uses **Svelte 5 runes exclusively** — no legacy `$:` reactivity o
 | `0024_collection_location` | `collection_cards.location` + `(user_id, location)` index |
 | `0025_cards_paper_availability` | `cards.is_paper` |
 | `0026_collection_proxy` | `collection_cards.proxy` |
+| `0027_decks` | `decks`, `deck_cards` and their indexes (`DECKS_SQL` in `src/lib/server/decks.ts`, so the unit tests build the same tables) |
 
 ### 4.4 Authentication and accounts
 
@@ -243,6 +249,7 @@ scripts/
 ├── build-detect-worker.mjs          # esbuild bundle of the detection worker (predev / prebuild)
 ├── seo-check.mjs                    # SEO + privacy-host browser checks on a synthetic DB
 ├── collector-workflows-check.mjs    # Collection workflows end to end on a synthetic DB
+├── deck-workflows-check.mjs         # Decks end to end on a synthetic DB
 ├── prices-admin-ux-check.mjs        # /prices and /admin on a synthetic DB
 ├── prices-admin-benchmark.mjs       # Read-only query timing against a real DB
 └── scanner-harness/                 # Scanner harness, fixtures generators, experiments, baselines (README.md)
@@ -253,14 +260,18 @@ src/
 ├── cdn-modules.d.ts                 # Types for CDN-loaded scanner modules
 ├── hooks.server.ts                  # DB init, price scheduler, shutdown, auth guard, admin guard, CSP + security headers
 ├── params/printing.ts               # Route matcher: lower-case Scryfall UUIDs (printing pages)
+├── params/deck.ts                   # Route matcher: 16-character base64url deck ids
 ├── lib/
 │   ├── card-page.ts                 # Card-page helpers: pickMainPrinting(), cardPageMeta() snippets (+ test)
 │   ├── card-slug.ts                 # Readable card slugs, collision rules, isPrintingId() (+ test)
 │   ├── chart-loader.ts              # Lazy Chart.js import + registration
 │   ├── collection-fields.ts         # Conditions, location/finish/proxy validation, CollectionChanges
 │   ├── collection-import.ts         # CSV/text import parser: delimiters, quoting, header aliases, field mapping, issues (pure)
+│   ├── deck.ts                      # Decks (pure): boards, visibility, type groups, ownership allocation, totals, mana curve, colours, default printing (+ test)
+│   ├── deck-formats.ts              # Deck formats and checkDeck(): size, sideboard, copies, Scryfall legality, command zone, partners, colour identity (+ test)
+│   ├── deck-text.ts                 # parseDeckList() for Moxfield / Arena / MTGO / Archidekt text, deckListText() export (+ test)
 │   ├── fts.ts                       # ftsPrefixQuery(): FTS5 query that splits at apostrophes like the tokenizer (+ test)
-│   ├── legality.ts                  # formatLegalities(): Scryfall legalities -> ordered, labelled formats with status (+ test)
+│   ├── legality.ts                  # formatLegalities(), formatLabel(): Scryfall legalities -> ordered, labelled formats with status (+ test)
 │   ├── home.ts                      # Homepage logic: pickMovers, collectionMoves, dashboardSummary, chartPaths, movesHeading (+ test)
 │   ├── seo.ts                       # SITE_URL, jsonLd() escaping, catalogSeo() canonical/noindex rules (+ test)
 │   ├── types.ts                     # Card, CardFace, CollectionCard, Tag, PriceHistoryEntry, SearchFilters + parseCardFromDb()
@@ -268,8 +279,13 @@ src/
 │   ├── components/
 │   │   ├── CardPreview.svelte       # Hover zoom on desktop, tap preview on touch (one shared portal on document.body)
 │   │   ├── CollectionBulkEdit.svelte    # Bulk edit of location, condition, language, finish, proxy status
+│   │   ├── CardSearchInput.svelte   # Card-name combobox for the deck dialogs (debounced /api/decks/search, keyboard)
 │   │   ├── CollectionImport.svelte      # Import dialog: file/text, column mapping, preview, issues, confirm
 │   │   ├── ColorPips.svelte / ManaCost.svelte   # Original letter pips (no official symbols)
+│   │   ├── DeckCreate.svelte        # "Create new deck" dialog: name, format, commander, visibility, optional list
+│   │   ├── DeckCardEdit.svelte      # One deck entry: quantity, board, printing, foil, remove
+│   │   ├── DeckSettings.svelte      # Deck name, format, visibility, description, delete
+│   │   ├── DeckImport.svelte / DeckExport.svelte / DeckLineIssues.svelte   # Text-list import (add / replace), export (printings / names), line issues
 │   │   ├── FormatLegality.svelte    # Format legality grid on card and printing pages (legal / restricted / banned / not legal)
 │   │   ├── LiveScanner.svelte       # Camera viewfinder for /scan live mode (overlay, stability, best frame, hints, cues, receipts, pause/review, rearm)
 │   │   ├── MoveCollectionCopies.svelte  # Move part of a lot to another location
@@ -308,6 +324,8 @@ src/
 │   │   └── art-search.ts            # searchHashes(): Hamming search over hash entries (pure part of the art index)
 │   └── server/
 │       ├── db.ts                    # SQLite connection, pragmas, migration list, initDb()
+│       ├── decks.ts                 # Deck tables (DECKS_SQL), access rules, list resolution, create/edit/copy/import, reads (DB injected, + test)
+│       ├── deck-http.ts             # JSON responses for the deck endpoints (DeckError -> status)
 │       ├── migrations.ts            # Versioned migration runner (_schema_migrations)
 │       ├── schema-sql.ts            # Base DDL (shared by initDb and seed)
 │       ├── schema.ts                # Drizzle table definitions
@@ -357,6 +375,8 @@ src/
 | `/portfolio-tracker` | public | Landing page for the portfolio features (example dashboard, imports, price sources, FAQ text) |
 | `/collection` | user | Collection: search, sort (added, name, price, profit %, profit total, quantity, set), tag/location/proxy filters, edit dialog, bulk edit, partial moves, import dialog, export, purchase-price import, "set missing purchase prices", per-card price chart |
 | `/wishlist` | user | Wishlist: priority, notes, sort, collect into the collection |
+| `/decks` | user | The user's decks: name with visibility chip and commander, colours, format, cards, value, updated; search and sort in the URL; "New deck" dialog |
+| `/decks/[id=deck]` | owner; anyone with the link unless private | Deck view (§5.10); private decks are 404 for everyone else |
 | `/prices` | user | Value over time, profit/loss chart, top cards, per-card history popup (data loaded async) |
 | `/settings` | user | Account information, collection statistics, account deletion |
 | `/admin` | admin | Users, scan logs, actions (price update, session cleanup), contact messages, DB overview and table sizes, recent price snapshots, top sets |
@@ -376,6 +396,13 @@ src/
 | `POST /collection/prices` | user | Purchase-price import: `format=text` (`1 Name (SET) 123 4.50E` / `D` for USD), `cardmarket` (CSV, `idProduct`/`price`, ≤ 5 MB), `cardtrader` (XLS/XLSX, ≤ 10 MB); fill or overwrite mode; proxies untouched |
 | `POST/PUT/DELETE /tags` | user | Create tags, add/remove on a lot (ownership of both checked), delete |
 | `POST/PUT/DELETE /wishlist` | user | Wishlist CRUD |
+| `POST /api/decks` | user | Create a deck: `{ name, format, visibility, commanderId?, list? }`; returns the id and the list's issues and notes |
+| `PATCH/DELETE /api/decks/[id]` | owner | Name, format, visibility, description; delete |
+| `POST /api/decks/[id]/copy` | user | Private copy of an own deck or of a deck the user can read |
+| `POST/PATCH/DELETE /api/decks/[id]/cards` | owner | Add `{ cardId, board?, quantity?, foil? }`; change `{ rowId, quantity?, board?, cardId?, foil? }` (a printing of the same card, equal entries merge); remove `{ rowId }` |
+| `POST /api/decks/[id]/import` | owner | `{ text, mode: 'add' | 'replace' }` |
+| `GET /api/decks/search`, `GET /api/decks/printings` | user | Card-name suggestions (`q`, `format`, `commander=1`, `legal=1`; 12 cards, no tokens or art series); every printing of a card (`card`) |
+| `GET /decks/[id]/export` | as the deck page | Text list, `style=printings` or `names`, `download=1` as an attachment |
 | `POST /scan` | public | Scanner batch API: `{ queries }` names, `{ lookups }` set+number, `{ near }` near numbers, `{ artHashes }` art search (and `identityProbe`), `{ printings }` all printings of names; batch caps 50/100 |
 | `GET /api/prices/data` | user | Stats, top cards, profit history, rate (10/min per user, `no-store`) |
 | `GET /api/prices/card` | user | One printing's price history per language (collection and prices charts) |
@@ -440,7 +467,7 @@ Priority (sortable), notes and added date per wanted printing; duplicates are re
 **Price updates** (`src/lib/server/price-updater.ts`):
 
 - **Triggers:** the daily 18:00 slot, the hourly watchdog (slot passed, no snapshot today, no young run active), the boot catch-up (30 s after start, only when yesterday has no snapshot, so a morning restart never pre-empts the evening run), the admin trigger `POST /api/prices`. `npm run import-cards` imports everything from scratch.
-- **Run:** fetch Scryfall's `default_cards` metadata (60 s timeout), stream-download the gzipped JSONL into `data/` (2 min stall timeout, 45 min cap), stream-parse it, update the four prices and `cardmarket_id` of existing cards, insert new cards and faces, refresh `is_paper`, refresh `card_prices_lang` rows from the foreign printings, then write the change-only snapshot for every card with a price (English and every tracked language) with an upsert. Afterwards `last-bulk-update.txt` is written and the art index, name index, price-data, homepage and sets caches are invalidated. Every run downloads the current bulk file; the "last update" status comes from `last-bulk-update.txt` and the newest `recorded_at`.
+- **Run:** fetch Scryfall's `default_cards` metadata (60 s timeout), stream-download the gzipped JSONL into `data/` (2 min stall timeout, 45 min cap), stream-parse it, update the four prices, `cardmarket_id` and `legalities` of existing cards (since 2026-10-22; before that a ban after the first import never reached the database), insert new cards and faces, refresh `is_paper`, refresh `card_prices_lang` rows from the foreign printings, then write the change-only snapshot for every card with a price (English and every tracked language) with an upsert. Afterwards `last-bulk-update.txt` is written and the art index, name index, price-data, homepage and sets caches are invalidated. Every run downloads the current bulk file; the "last update" status comes from `last-bulk-update.txt` and the newest `recorded_at`.
 - **Robustness:** one run at a time (a lock older than 2 h is taken over), at most one retry chain (15 min, 1 h, 3 h), temp files swept. These guards exist because in-process timers and locks had produced multi-week gaps in `price_history` (2026-08); `npm run backfill-prices` refills such gaps from Scryfall's dated bulk files.
 - **Not updated:** the `name` (and other identity fields) of an existing card; corrections after the first import stay (§14.4).
 
@@ -480,6 +507,23 @@ Verification: `npm test` includes isolated in-memory SQL fixtures for language/c
 ### 5.9 Analytics and privacy
 
 Plausible Community Edition, self-hosted at `analytics.mtg-collector.com`, embedded in `src/routes/+layout.svelte`: cookieless, aggregated pageviews, referrer, browser, OS, device type and country. Scanner photos never leave the browser; only recognised text, art hashes and the text-only debug log reach the server.
+
+### 5.10 Decks
+
+Owner request 2026-10-22 ("eine deck-list funktion wie auf moxfield. spieler sollen ihr deck verwalten/erstellen/teilen können"); the owner chose the MVP scope below on the same day. Moxfield (`moxfield.com/decks/personal`) is the model for the list, the create dialog and the deck view.
+
+- **Data** (`0027_decks`, §4.3): a deck belongs to one user and is deleted with the account; an entry is a printing on a board with quantity and finish. Limits: 500 decks per user, 600 entries per deck, quantity 1–999, name ≤ 100 and description ≤ 5,000 characters. Every write checks that the deck belongs to the user (`ownDeck()`); `readableDeck()` hides private decks from everybody else; the page, the export and every write on someone else's deck answer 404, never 403, so an id does not confirm that a deck exists.
+- **Ids and sharing:** deck ids are 16 random base64url characters (72 bits), so an unlisted deck cannot be found by guessing. Visibility: `private` (default, only the owner), `unlisted` and `public` (anyone with the link can read and export it). Public decks are not listed anywhere yet; a public deck browser and search-engine indexing need a moderation decision (§14.3). Deck pages carry `noindex, nofollow`. A shared deck shows the list, never the owner's name, email address or collection.
+- **Create** (`DeckCreate.svelte`, `POST /api/decks`): name, format (default Commander), the commander or oathbreaker from a card search (optionally only cards legal in the format, only cards that can lead it), visibility, and optionally a pasted or uploaded list (≤ 200 KB, ≤ 1,000 lines). Lines that do not resolve are listed with their line numbers; the deck is created with the rest.
+- **Text lists** (`deck-text.ts`): `4 Lightning Bolt`, `4x Lightning Bolt`, `1 Sol Ring (C21) 263`, `*F*` for foil (`*E*`, etched, is read and stored as non-foil, because a deck entry only knows foil or not), Moxfield `#tags` stripped, `Fire/Ice` as `Fire // Ice`; sections `Commander` / `Commanders` / `Command zone` / `Oathbreaker`, `Deck` / `Main` / `Main deck` / `Mainboard`, `Sideboard` / `Companion`, `Maybeboard` / `Maybe` / `Considering` (Arena's `About` block is skipped), Archidekt `[Commander{top}]` categories and MTGO `SB:` prefixes; an MTGO list without headers that has exactly two blocks split by a blank line treats the second as the sideboard when it holds at most 15 cards, and in a commander format without a chosen commander such a sideboard of one or two cards that can all lead the deck becomes the command zone. **Resolution** (`cardResolver()` in `decks.ts`): exact name, the front face of a `Front // Back` card, the accent-folded slug ("Jotun Grunt"), a face name, a printed non-English name from `card_names` ("Kriegshorn" is War Horn); set + number pick that printing (a missing one is substituted with a note); without a set the default printing is a real card before a token, a paper printing before a digital one, then the card page's representative printing (`pickDeckPrinting()`).
+- **Deck view** (`/decks/[id]`): header with format, name, visibility (owner only), colours (the commanders' colour identity, else the main deck's), description; KPI cards: cards (commander + main deck; sideboard and maybeboard below), value (commander, main deck and sideboard in EUR, USD×rate where no EUR price exists, foil entries priced as foil; unpriced copies are counted, never valued at zero; the maybeboard is not valued), still to buy (signed-in viewers: the value of copies missing from **their own** collection, missing and proxy counts), and the format check. Groups: commander first, then the main deck by card type (Creature > Planeswalker > Battle > Land > Instant > Sorcery > Artifact > Enchantment, by the front face) or by mana value (lands apart) or ungrouped, then sideboard and maybeboard; sort by name, mana value or price; group and sort live in the URL. A row shows quantity, name (link to the printing page), a red "!" for a card a rule names, foil, mana cost, the ownership mark and the line price; the owner gets an edit button (quantity, board, printing of the same card, foil, remove). Hovering a row shows its image beside the list on wide screens. Mana curve over commander and main deck without lands.
+- **Ownership** (`allocateOwnership()`): any printing and language of the same card (oracle id) counts; the viewer's real copies are handed out before proxies, in board order (commander, main, sideboard, maybeboard), so a card in main deck and sideboard is not counted twice. Marks: ✓ owned, P proxy, `2/4` partly, ○ missing. Visitors get no marks.
+- **Format check** (`checkDeck()` in `deck-formats.ts`): deck size (Commander, Duel Commander, PreDH, Pauper Commander, Brawl and Gladiator exactly 100, the command zone included; Oathbreaker and Standard Brawl exactly 60; constructed formats at least 60 with a sideboard of at most 15), copies (one in singleton formats, four otherwise; basic lands and cards that say "any number" or "up to N" excepted), Scryfall's legality per card (`banned`, `not_legal`; `restricted` allows one copy, and in Pauper Commander it marks the uncommons that may only be the commander), the command zone (a legendary creature or a card that says it can be your commander; in Brawl and Standard Brawl also a legendary planeswalker; in Pauper Commander any creature; in Oathbreaker one planeswalker plus one instant or sorcery as signature spell; two commanders only with Partner, Partner with each other, the same Partner variant, Friends forever, Choose a Background or Doctor's companion; Gladiator and constructed formats have no command zone) and colour identity (the commanders' together). Cards without legality data for the format are listed as unchecked, never as problems. The maybeboard is never checked; in commander formats the sideboard is not either. Casual decks have no rules. The legality data comes from `cards.legalities`, which the daily price update refreshes since this change.
+- **Editing:** a card search above the list adds to the chosen board; the import dialog adds a list or replaces every card (with a confirmation); settings change name, format, visibility and description and delete the deck (with a confirmation; the collection is untouched); "Duplicate" (owner) and "Copy to my decks" (other signed-in viewers) make a private copy.
+- **Export** (`GET /decks/[id]/export`, `DeckExport.svelte`): Arena-style sections `Commander`, `Deck`, `Sideboard`, `Maybeboard`, with printings (`1 Sol Ring (C21) 263 *F*`, imported by Moxfield, Archidekt and MTG Arena) or names only; copy to clipboard or download as `.txt`.
+- **Privacy:** the privacy policy (German binding text and the English tab) says what a deck stores and who can see a shared one (owner review owed, §14.3). The nightly user-data dump must include `decks` and `deck_cards` (§9.3).
+- **Not built yet (phase 2, §14.2):** "add to deck" from card pages and scan results, folders, a public deck browser and indexing, playtesting / sample hands, sending missing cards to the wishlist, importing a deck from a Moxfield or Archidekt URL, deck tags and comments.
+- **Verification:** `deck.test.ts`, `deck-formats.test.ts`, `deck-text.test.ts` and `server/decks.test.ts` (44 tests on in-memory SQLite); `node scripts/deck-workflows-check.mjs` after a build (56 checks on 2026-10-22).
 
 ---
 
@@ -562,7 +606,7 @@ Logic that touches OpenCV, Tesseract, the DOM or SQLite is kept behind thin wrap
 
 ### 8.1 Unit tests and type checks
 
-- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline; 39 files, 421 tests on 2026-10-22): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, evidence fusion, the review regressions, the full-pool name ranking, spread geometry, crops, frame quality and best-frame selection, scene stability, rearm and identity rearm, scan sessions and results, overlay geometry, art hashing and search, feedback cues, timeouts, price display/divergence helpers, price data and homepage data on in-memory SQLite, collection workflows, card slugs and card pages, format legality, sitemaps, SEO helpers, FTS queries, printed names, scan logs, paper availability and the Cardtrader workbook parser (which also pins the patched `xlsx` build).
+- `npm test` — vitest over `src/lib/**/*.test.ts` (Node environment, fully offline; 43 files, 465 tests on 2026-10-22): collector-line parsing, name similarity + OCR-junk/prefix matching, reprint disambiguation, evidence fusion, the review regressions, the full-pool name ranking, spread geometry, crops, frame quality and best-frame selection, scene stability, rearm and identity rearm, scan sessions and results, overlay geometry, art hashing and search, feedback cues, timeouts, price display/divergence helpers, price data and homepage data on in-memory SQLite, collection workflows, card slugs and card pages, format legality, decks (groups, ownership, totals, format rules, list parsing, resolution, access rules), sitemaps, SEO helpers, FTS queries, printed names, scan logs, paper availability and the Cardtrader workbook parser (which also pins the patched `xlsx` build).
 - **A test must never import a module that imports `src/lib/server/db.ts`**: the database opens at import time, and two vitest workers creating a fresh `data/mtg.db` on CI locked each other out (`SQLITE_BUSY`) — hence `art-image.ts` / `art-search.ts` next to the DB-bound `art-hash.ts` / `art-index.ts`, and the injected connections.
 - `npm run check` — svelte-check (TypeScript + Svelte).
 - **CI** (`.github/workflows/ci.yml`): `npm ci`, `check`, `test`, `build` on Node 22 for every push to `master` and every PR. There is no deploy step and no browser check in CI.
@@ -629,7 +673,7 @@ ls -1t backups/mtg-*.db | tail -n +3 | xargs -r rm --
 cp data/secret-key.hex backups/secret-key-$(date +%Y%m%d-%H%M%S).hex
 ```
 
-A pre-deploy snapshot is a safety net for the deploy itself (a migration gone wrong), not the backup. **The user data leaves the host every night** in its own dump: `share-public/python_scripts/mtg_userdata_dump.sh` (cron 03:30, `sqlite3 .dump` of `users`, `sessions`, `collection_cards`, `wishlist_cards`, `tags`, `collection_card_tags`, `price_history`, `card_prices_lang`, `api_usage`, `contact_messages` plus the secret key), pulled with the WoW host backup at 04:00. The catalogue is re-imported from Scryfall (`npm run import-cards`); a restore was proven on 2026-09-16. Because the dump uses positional INSERTs, **new columns must be appended at the end of a table** (§4.3). Use `.backup`, never `cp mtg.db` on a live database (torn pages). For Docker, mount `/app/data` as a volume.
+A pre-deploy snapshot is a safety net for the deploy itself (a migration gone wrong), not the backup. **The user data leaves the host every night** in its own dump: `share-public/python_scripts/mtg_userdata_dump.sh` (cron 03:30, `sqlite3 .dump` of `users`, `sessions`, `collection_cards`, `wishlist_cards`, `tags`, `collection_card_tags`, `price_history`, `card_prices_lang`, `api_usage`, `contact_messages`, `decks`, `deck_cards` plus the secret key; the two deck tables since 2026-10-22, so the host needs the updated script before decks hold data), pulled with the WoW host backup at 04:00. The catalogue is re-imported from Scryfall (`npm run import-cards`); a restore was proven on 2026-09-16. Because the dump uses positional INSERTs, **new columns must be appended at the end of a table** (§4.3). Use `.backup`, never `cp mtg.db` on a live database (torn pages). For Docker, mount `/app/data` as a volume.
 
 ---
 
@@ -711,9 +755,9 @@ Opus plans, Sonnet implements, Haiku handles focused supporting tasks.
 
 | Fact | Value |
 |---|---|
-| `master` | `17a9820` (PR #96, 2026-10-22). Recent: #87 agent workflow, #88 live rearm while the card stays in place, #89 card pages, #90 proxies, #91 card snippets, #92/#93 portfolio landing page, visitor menu item and sign-in note, #94 privacy processors, #95 homepage redesign, #96 Vite/vitest audit fixes |
-| Migrations | `0001`–`0026` |
-| Unit tests | 421 in 39 files (2026-10-22) |
+| `master` | `5ca3ba0` (PR #98, 2026-10-22). Recent: #87 agent workflow, #88 live rearm while the card stays in place, #89 card pages, #90 proxies, #91 card snippets, #92/#93 portfolio landing page, visitor menu item and sign-in note, #94 privacy processors, #95 homepage redesign, #96 Vite/vitest audit fixes, #97 CLAUDE.md, #98 format legality grid. Open: decks (branch `claude/project-thread-yew8mm`, §5.10) |
+| Migrations | `0001`–`0026` on `master`; `0027_decks` on the decks branch |
+| Unit tests | 465 in 43 files with the decks branch (2026-10-22) |
 | `npm audit` | 0 findings (2026-10-22) |
 | Scanner, development set (8 photos, 104 cards, full catalogue with art hashes) | identity 103, printing 83, 0 wrong |
 | Scanner, hold-out set (6 photos, 26 cards, never tuned on) | identity 19, printing 9, 0 wrong |
@@ -730,6 +774,7 @@ Opus plans, Sonnet implements, Haiku handles focused supporting tasks.
 5. **Scanner known-limitation work** (§14.4) by measured value: Universes Beyond flavor names (import Scryfall's `flavor_name` as an alias), showcase footers with the number on the line above, inferring the card from an inner block on dark mats, several cards on a dark mat, ordering the rotated pass earlier for upside-down spreads.
 6. **Search and growth** after indexing data comes in: German landing pages and language routing are separate content work; watch CTR of the new snippets.
 7. **Owner decisions** in §14.3, then implement the chosen options.
+8. **Decks, phase 2** (§5.10), after the MVP is merged, deployed and used: "add to deck" from card pages and scan results, sending missing cards to the wishlist, folders, sample hands, import from a Moxfield / Archidekt URL; a public deck browser only after the moderation decision (§14.3).
 
 ### 14.3 Open points and owner decisions
 
@@ -744,6 +789,9 @@ Opus plans, Sonnet implements, Haiku handles focused supporting tasks.
 | Competitor CSV parsing was checked with representative fixtures only; real owner export files are owed | Owner |
 | Remove a dead `GOOGLE_VISION_API_KEY` from the host `.env`; the owner's review of the privacy policy's OCR section | Host housekeeping (vault) |
 | Host npm 10.9.x; never mixed into an incident deploy | Not urgent |
+| **Public decks:** today "public" behaves like "unlisted" (readable by link, listed nowhere). A public deck browser or indexed deck pages expose user-written names and descriptions: report/hide moderation and wording rules are needed first | Owner decision owed |
+| The privacy policy's new deck paragraph (German binding, English tab) needs the owner's review | Owner |
+| Host steps for decks: deploy runs migration `0027`; install the updated `mtg_userdata_dump.sh` (adds `decks`, `deck_cards`) | Owner, with the deploy |
 
 ### 14.4 Known limitations
 
@@ -879,6 +927,7 @@ Status: WP4.1, WP4.2, WP4.3 and WP4.5 done; WP4.4 is the owner's real-device che
 
 ### 14.6 Done (newest first)
 
+- Decks (owner request 2026-10-22, MVP scope chosen by the owner, modelled on Moxfield; branch `claude/project-thread-yew8mm`, not yet merged): `/decks` list, create dialog with commander search and pasted or uploaded lists, deck view grouped by type or mana value, ownership against the viewer's collection, value and "still to buy", mana curve, format check, editing, import/export of text lists, sharing by link, copies, privacy paragraph; migration `0027_decks`; the price update now refreshes `cards.legalities`. 44 new unit tests (465 in 43 files; the one failure in this cloud session is the `xlsx` version pin, because `cdn.sheetjs.com` is blocked here and the registry copy was installed locally, not a code change), `npm run check` clean, build clean, `deck-workflows-check.mjs` 56 / 56, `collector-workflows-check.mjs` 45 / 45, `seo-check.mjs` 84 / 84. Details in §5.10.
 - Format legality grid on card and printing pages (owner request 2026-10-22, modelled on Moxfield): the plain green/grey chips with raw Scryfall keys (`paupercommander`) became `FormatLegality.svelte`, two groups with readable names and four states (legal, restricted, banned, not legal); no schema change, the data was already in `cards.legalities`. Unit tests in `legality.test.ts`; `seo-check.mjs` 84 / 84 with legality fixtures on Teferi's Protection. Moxfield's custom community formats are not in Scryfall and are an open owner decision (§14.3).
 - `npm audit` back to 0 (2026-10-22, three findings seen during a deploy): Vite 7.3.6 → 7.3.7 (high; dev server and launch-editor advisories) and vitest / `@vitest/mocker` 4.1.11 → 4.1.12 (moderate). Both are build and test tools that the production server never loads; only the lock file and the two ranges in `package.json` moved (vitest also brings chai 6.3.0 and tinyrainbow 3.2.0), SvelteKit and Svelte are unchanged. Checked with `npm run check`, 417 tests, the build, `seo-check.mjs` 81 / 81, `collector-workflows-check.mjs` 44 / 44, the synthetic scanner harness (6 / 6 identities, 4 / 6 printings, 0 wrong, as before), `live-ux-check.mjs` 21 / 21 and `npx npm@10.9.9 ci --dry-run`.
 - Homepage redesign (2026-10-22, the owner's drafts F and D): visitors get a hero with one sign-in button, three entry cards (portfolio tracker, card database, scanner) and real price moves with links to the card pages; signed-in users get a dashboard (value and today's change, profit/loss, cards, wishlist, 90-day chart, collection moves, recently added) from the cached price data. The beta notice, the static KPIs and the quick actions are gone. Title "MTG Collector: Free Card Scanner and Collection Tracker". Unit tests in `home.test.ts` / `home-data.test.ts`; `seo-check.mjs` 78 / 78, `collector-workflows-check.mjs` 44 / 44.

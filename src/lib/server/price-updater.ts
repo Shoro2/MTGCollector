@@ -176,8 +176,10 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		// Stream-parse the gzipped JSONL payload so memory stays flat instead of
 		// spiking on the decompressed document. Price updates are applied in
 		// batched transactions.
+		// Legalities change with every banlist update; the deck check and the legality grid
+		// read them, so they are refreshed with the prices (identity fields stay as imported).
 		const updatePrice = sqlite.prepare(
-			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id) WHERE id = ?'
+			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id), legalities = COALESCE(?, legalities) WHERE id = ?'
 		);
 
 		const cardExists = sqlite.prepare('SELECT 1 FROM cards WHERE id = ?');
@@ -278,7 +280,8 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 
 					if (cardExists.get(card.id)) {
 						writeAvailability(card);
-						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId, card.id);
+						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId,
+							card.legalities ? JSON.stringify(card.legalities) : null, card.id);
 						if (result.changes > 0) updated++;
 						continue;
 					}

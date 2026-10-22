@@ -21,6 +21,7 @@
 		// Visitors learn what the tracker does; signed-in users have Prices instead.
 		{ href: '/portfolio-tracker', label: 'Portfolio', guestOnly: true },
 		{ href: '/collection', label: 'Collection', protected: true },
+		{ href: '/decks', label: 'Decks', protected: true },
 		{ href: '/wishlist', label: 'Wishlist', protected: true },
 		{ href: '/prices', label: 'Prices', protected: true },
 		{ href: '/admin', label: 'Admin', protected: true, admin: true }
