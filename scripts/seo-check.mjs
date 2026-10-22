@@ -23,6 +23,10 @@ db.transaction(() => {
 	for (let i = 1; i <= 81; i++) insert.run(printingId(i), oracleId(Math.ceil(i / 3)), 'Fixture Card', String(i), 1);
 	insert.run(printingId(82), oracleId(99), "Teferi's Protection", '82', 30);
 	insert.run(printingId(83), oracleId(99), "Teferi's Protection", '83', 12.5);
+	// Format legality as Scryfall stores it, with every status the legality grid distinguishes.
+	db.prepare('UPDATE cards SET legalities = ? WHERE oracle_id = ?').run(JSON.stringify({
+		standard: 'not_legal', modern: 'not_legal', legacy: 'legal', vintage: 'restricted', commander: 'legal', duel: 'banned', paupercommander: 'not_legal'
+	}), oracleId(99));
 	// A digital-only (Alchemy) card never has a price; its snippet must not promise one.
 	db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,oracle_text,layout,released_at,is_paper)
 		VALUES (?,?,'Killian, Spotlight Chaser','yrf','Alchemy: Reality Fracture','1','uncommon','Legendary Creature — Human Bard',
@@ -124,6 +128,11 @@ try {
 	check(await page.getByRole('heading', { level: 1 }).innerText() === "Teferi's Protection", 'card page heading is the card name');
 	check(await page.locator(`a[href="/cards/${printingId(82)}"]`).count() === 1 && await page.locator(`a[href="/cards/${printingId(83)}"]`).count() === 1, 'card page links every printing');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'card page fits a mobile viewport');
+	const legality = page.locator('section[aria-label="Format legality"]');
+	check(await legality.locator('li').count() === 7 && (await legality.locator('li').first().innerText()).includes('Standard'), 'card page lists every format in a fixed order');
+	check((await legality.locator('li.status-banned').innerText()).includes('Duel Commander') && (await legality.locator('li.status-banned').innerText()).includes('Banned')
+		&& (await legality.locator('li.status-restricted').innerText()).includes('Restricted'), 'card page tells banned and restricted apart from not legal');
+	await page.screenshot({ path: resolve(dir, 'card-legality-mobile.png'), fullPage: true });
 	await page.goto(origin + '/cards/killian-spotlight-chaser');
 	const digitalTitle = await page.title();
 	check(digitalTitle === 'Killian, Spotlight Chaser: digital MTG card' && digitalTitle.length <= 60, 'a digital-only card title says what it is and fits 60 characters');
@@ -136,6 +145,8 @@ try {
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'printing page points its canonical to the card page');
 	check(await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: "Teferi's Protection" }).count() === 1, 'printing breadcrumb links the card page');
 	check(await page.locator('script[type="application/ld+json"]').textContent().then((t) => JSON.parse(t)['@graph'][0].url === publicOrigin + '/cards/' + printingId(82)), 'printing JSON-LD describes the printing URL itself');
+	check(await page.locator('section[aria-label="Format legality"] li.status-restricted').count() === 1, 'printing page shows the format legality grid');
+	await page.screenshot({ path: resolve(dir, 'printing-legality-mobile.png'), fullPage: true });
 	await page.goto(origin + '/cards/' + printingId(1));
 	check((await page.title()).includes('Test Set #1'), 'printing title identifies its set and collector number');
 	const schema = await page.locator('script[type="application/ld+json"]').textContent();

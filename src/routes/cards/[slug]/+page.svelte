@@ -5,6 +5,7 @@
 	import { cardPageMeta, cheapestPrice } from '$lib/card-page';
 	import ManaCost from '$lib/components/ManaCost.svelte';
 	import ColorPips from '$lib/components/ColorPips.svelte';
+	import FormatLegality from '$lib/components/FormatLegality.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -26,7 +27,6 @@
 	let cheapest = $derived(cheapestPrice(data.printings));
 	let image = $derived((card.local_image_path || card.image_uri || '') as string);
 	let socialImage = $derived(image ? new URL(image, SITE_URL).href : undefined);
-	let legalities: Record<string, string> = $derived(card.legalities ? JSON.parse(card.legalities as string) : {});
 	let colors: string[] = $derived(card.color_identity ? JSON.parse(card.color_identity as string) : []);
 	let sets = $derived(new Set(data.printings.map((p) => p.set_code)).size);
 </script>
@@ -160,18 +160,7 @@
 				</div>
 			{/if}
 
-			{#if Object.keys(legalities).length > 0}
-			<div>
-				<h2 class="text-sm text-[var(--color-text-muted)] mb-2">Legalities</h2>
-				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(legalities) as [format, status]}
-						<span class="px-2 py-0.5 rounded text-xs {status === 'legal' ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'}">
-							{format}
-						</span>
-					{/each}
-				</div>
-			</div>
-			{/if}
+			<FormatLegality legalities={card.legalities as string | null} />
 		</section>
 	</div>
 
