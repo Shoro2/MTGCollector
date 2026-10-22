@@ -9,6 +9,7 @@
 	import { loadChart } from '$lib/chart-loader';
 	import ManaCost from '$lib/components/ManaCost.svelte';
 	import ColorPips from '$lib/components/ColorPips.svelte';
+	import FormatLegality from '$lib/components/FormatLegality.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -35,7 +36,6 @@
 		: isSuspiciousDivergence(foilDivergence) ? { label: 'Price Foil', d: foilDivergence!, eur: card.price_eur_foil as number }
 		: null
 	);
-	let legalities = $derived(card.legalities ? JSON.parse(card.legalities as string) : {});
 	let colors: string[] = $derived(card.colors ? JSON.parse(card.colors as string) : []);
 
 	async function addToCollection() {
@@ -355,16 +355,7 @@
 			{/if}
 
 			<!-- Legalities -->
-			<div>
-				<h3 class="text-sm text-[var(--color-text-muted)] mb-2">Legalities</h3>
-				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(legalities) as [format, status]}
-						<span class="px-2 py-0.5 rounded text-xs {status === 'legal' ? 'bg-green-900 text-green-300' : 'bg-gray-800 text-gray-500'}">
-							{format}
-						</span>
-					{/each}
-				</div>
-			</div>
+			<FormatLegality legalities={card.legalities as string | null} headingLevel={3} />
 
 			<!-- Wishlist Button -->
 			<button
