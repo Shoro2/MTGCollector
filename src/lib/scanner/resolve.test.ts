@@ -206,4 +206,14 @@ describe('resolveCard — partial name suggestion', () => {
 		expect(d.identity.state).toBe('unknown');
 		expect(d.printing.candidates).toEqual([immolation]);
 	});
+	it('offers nothing for a short name read uncertainly (iPhone, 2026-10-23: "El" -> Elf)', () => {
+		const elf = row('Elf', 'thob', '8');
+		const d = resolveCard(base({
+			nameCandidates: [{ name: 'Elf', score: 0.67, pass: 'raw-line' }], nameText: 'El',
+			footer: [reading({ text: 'fms a Rg' })],
+			printingsByName: (n) => (n === 'Elf' ? [elf] : [])
+		}));
+		expect(d.identity.state).toBe('unknown');
+		expect(d.printing.candidates).toEqual([]);
+	});
 });
