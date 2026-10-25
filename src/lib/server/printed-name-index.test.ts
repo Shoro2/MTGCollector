@@ -55,6 +55,18 @@ describe('PrintedNameIndex', () => {
 		expect(index.match('Schmerzliche Wahrhet')[0].name).toBe('Painful Truths');
 	});
 
+	it('matches the French reads of the 2026-10-23 phone session (accents dropped, misread letters)', () => {
+		const fr = new PrintedNameIndex([
+			{ name: "Offspring's Revenge", lang: 'fr', printed: 'Revanche de la progéniture' },
+			{ name: 'Necropanther', lang: 'fr', printed: 'Nécropanthère' }
+		]);
+		expect(fr.match('Revanche de la progeniture')).toEqual([{ name: "Offspring's Revenge", alias: 'Revanche de la progéniture', lang: 'fr', score: 1 }]);
+		expect(fr.match('Revanche de Ia progeniture')[0]).toMatchObject({ name: "Offspring's Revenge", lang: 'fr' });
+		expect(fr.match('fievanche de la progeniture')[0].score).toBeGreaterThan(0.9);
+		expect(fr.match('Necropanthere')[0]).toMatchObject({ name: 'Necropanther', score: 1 });
+		expect(fr.match('Newpanthere')[0]).toMatchObject({ name: 'Necropanther' });
+	});
+
 	it('does not match short texts or unrelated words by edit distance', () => {
 		expect(index.match('Krieg')).toEqual([]);
 		expect(index.match('Lightning Bolt')).toEqual([]);

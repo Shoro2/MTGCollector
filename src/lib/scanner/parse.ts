@@ -26,6 +26,45 @@ export function stripLeadingZeros(s: string): string {
 	return stripped || '0';
 }
 
+type FractionMatch = { text: string; num: string; total: string; index: number; rarity: string };
+
+/**
+ * The collector fraction of a strip ("198/274 R"), when it holds several. The
+ * first one is not always it: an iPhone read "98/27 oo GB 198/274 R VE IKO * FR"
+ * for Offspring's Revenge (IKO #198) and the first fraction named IKO #98
+ * (2026-10-23). A fraction whose numerator and total sit inside a longer one is
+ * a partial re-read of it and dropped; of the rest, one followed by a rarity
+ * letter wins, then the one with more real digits, then the last.
+ * `chars` is the character class of a digit (OCR lookalikes allowed or not).
+ */
+function pickFraction(text: string, chars: string): FractionMatch | null {
+	const all: FractionMatch[] = [];
+	for (const m of text.matchAll(new RegExp(`(${chars}{1,4})\\/(${chars}{1,4})`, 'g'))) {
+		const index = m.index ?? 0;
+		const after = text.slice(index + m[0].length).match(/^\s*([CURMLST])(?![A-Za-z])/i);
+		all.push({ text: m[0], num: m[1], total: m[2], index, rarity: after ? after[1].toLowerCase() : '' });
+	}
+	const digitsOf = (f: FractionMatch) => [fixOcrDigits(f.num), fixOcrDigits(f.total)];
+	const kept = all.filter((f) => {
+		const [n, t] = digitsOf(f);
+		return !all.some((o) => {
+			if (o === f) return false;
+			const [on, ot] = digitsOf(o);
+			return on.length + ot.length > n.length + t.length && on.includes(n) && ot.includes(t);
+		});
+	});
+	let best: FractionMatch | null = null;
+	let bestScore = -1;
+	for (const f of kept) {
+		const score = (f.rarity ? 1000 : 0) + (f.num + f.total).replace(/\D/g, '').length * 10;
+		if (score >= bestScore) {
+			best = f;
+			bestScore = score;
+		}
+	}
+	return best;
+}
+
 export interface CollectorInfo {
 	setCode: string;
 	collectorNumber: string;
@@ -90,7 +129,7 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		dbg?.(`text before anchor: "${before}"`);
 
 		// Handle fraction format first (Era 3): "010/277"
-		const fractionMatch = before.match(/([\dOoIilJjBbSsZz]{1,4})\/([\dOoIilJjBbSsZz]{1,4})/);
+		const fractionMatch = pickFraction(before, '[\\dOoIilJjBbSsZz]');
 		// OCR often drops the slash: "040 277 C". Two numbers followed by a
 		// rarity letter are collector number + set total; the first one counts,
 		// and a "number" larger than the total is an OCR merge ("1820 277 C"
@@ -100,19 +139,18 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 		// not collector zero out of a total of 45.
 		if (pairMatch && /(?:^|\s)[CURML]\s*$/i.test(before.slice(0, pairMatch.index))) pairMatch = null;
 		if (fractionMatch) {
-			result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch[1]));
+			result.collectorNumber = stripLeadingZeros(fixOcrDigits(fractionMatch.num));
 			result.numberSource = 'fraction';
 			// "180/277 C": the rarity letter follows the fraction.
-			const afterFraction = before.slice((fractionMatch.index ?? 0) + fractionMatch[0].length).match(/^\s*([CURMLST])(?![A-Za-z])/i);
-			if (afterFraction) result.rarity = afterFraction[1].toLowerCase();
+			if (fractionMatch.rarity) result.rarity = fractionMatch.rarity;
 			// Printed numerators are zero-padded to the width of the total
 			// ("040/277"); a shorter numerator means the OCR dropped a digit and
 			// "4/277" may be 040 or 240 — a hint only, not an identification.
-			if (fixOcrDigits(fractionMatch[1]).length < fixOcrDigits(fractionMatch[2]).length) {
+			if (fixOcrDigits(fractionMatch.num).length < fixOcrDigits(fractionMatch.total).length) {
 				result.numberSource = 'weak';
-				dbg?.(`numerator shorter than the total ("${fractionMatch[0]}"): digit dropped, number downgraded to weak`);
+				dbg?.(`numerator shorter than the total ("${fractionMatch.text}"): digit dropped, number downgraded to weak`);
 			}
-			dbg?.(`fraction format: "${fractionMatch[0]}" -> num="${result.collectorNumber}"`);
+			dbg?.(`fraction format: "${fractionMatch.text}" -> num="${result.collectorNumber}"`);
 		} else if (pairMatch) {
 			const num = stripLeadingZeros(pairMatch[1]);
 			const total = Number(pairMatch[2]);
@@ -210,15 +248,15 @@ export function parseCollectorInfo(text: string, langs: string, dbg?: (msg: stri
 				break;
 			}
 		}
-		const fractionMatch = text.match(/(\d{1,4})\/(\d{1,4})(?:\s*([CURMLST])(?![A-Za-z]))?/i);
+		const fractionMatch = pickFraction(text, '\\d');
 		// "C 0150" / "Cc 0150" (OCR doubles letters) / "C0047" (space lost):
 		// rarity + number is reliable even when the set code next to it was unreadable.
 		const rarityMatch = !fractionMatch ? text.match(/(?:^|\s)([curml]{1,2})\s*(0*\d{1,4})(?!\d)/i) : null;
 		if (fractionMatch) {
-			result.collectorNumber = stripLeadingZeros(fractionMatch[1]);
+			result.collectorNumber = stripLeadingZeros(fractionMatch.num);
 			// Same padding rule as above: a numerator shorter than the total lost a digit.
-			result.numberSource = fractionMatch[1].length < fractionMatch[2].length ? 'weak' : 'fraction';
-			if (fractionMatch[3]) result.rarity = fractionMatch[3].toLowerCase();
+			result.numberSource = fractionMatch.num.length < fractionMatch.total.length ? 'weak' : 'fraction';
+			if (fractionMatch.rarity) result.rarity = fractionMatch.rarity;
 		} else if (rarityMatch) {
 			result.collectorNumber = stripLeadingZeros(rarityMatch[2]);
 			result.numberSource = rarityMatch[2].length < 3 ? 'weak' : 'rarity';

@@ -655,8 +655,13 @@ export function resolveCard(input: ResolveInput): Decision {
 		}
 	}
 	// 5. A partial name that nothing corroborates is still worth one tap when
-	// it has few printings (or few in the read / majority set).
-	if (best && best.score >= NAME_LIKELY) {
+	// it has few printings (or few in the read / majority set). Not from fewer
+	// than three letters: "El" offered the token Elf for an unreadable photo
+	// (iPhone, 2026-10-23); two letters resemble too many short names ("Boa"
+	// for Boar is still offered).
+	const tooFewLetters = normalizeName(input.nameText).replace(/[^a-z]/g, '').length < 3;
+	if (best && best.score >= NAME_LIKELY && tooFewLetters) reasons.push(`name candidate "${best.name}" ${best.score.toFixed(2)} from "${input.nameText}": too few letters for a suggestion`);
+	if (best && best.score >= NAME_LIKELY && !tooFewLetters) {
 		const printings = printingsOf(best.name);
 		const setHints = new Set<string>();
 		for (const { r } of ranked) if (r.setCode && input.isKnownSet(r.setCode)) setHints.add(r.setCode.toLowerCase());

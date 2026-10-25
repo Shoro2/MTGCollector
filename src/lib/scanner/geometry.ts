@@ -29,7 +29,8 @@ export function loadImage(file: File): Promise<HTMLImageElement> {
  * output the card rotated 90°. This implementation handles arbitrary
  * rotation by:
  *
- * 1. Ensuring a consistent clockwise traversal.
+ * 1. Sorting the corners around their centroid and ensuring a consistent
+ *    clockwise traversal (the input order may be crossed).
  * 2. Treating the pair of edges longer than their neighbours as the
  *    card's long sides, and picking the short edge to serve as the
  *    "top" of the warped output.
@@ -39,9 +40,16 @@ export function loadImage(file: File): Promise<HTMLImageElement> {
 export function orderCornersForCard(pts: Array<[number, number]>): Array<[number, number]> {
 	if (pts.length !== 4) return pts;
 
-	// Step 1: enforce clockwise traversal (image coords: y increases downward,
-	// so positive signed area == clockwise).
-	const ordered = [...pts];
+	// Step 1: put the corners in polygon order around their centroid, then
+	// enforce clockwise traversal (image coords: y increases downward, so
+	// positive signed area == clockwise). The input order is not trusted: the
+	// live detector's plausibility check sorts the corners itself, so a
+	// crossed (bow-tie) order from approxPolyDP passed it, and the warp of
+	// TL(797,861) TR(299,597) BR(832,1419) BL(288,1440) was unreadable
+	// (iPhone scan log, 2026-10-23).
+	const cx = (pts[0][0] + pts[1][0] + pts[2][0] + pts[3][0]) / 4;
+	const cy = (pts[0][1] + pts[1][1] + pts[2][1] + pts[3][1]) / 4;
+	const ordered = [...pts].sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx));
 	let area = 0;
 	for (let i = 0; i < 4; i++) {
 		const j = (i + 1) % 4;
@@ -136,4 +144,16 @@ export function touchesFrameEdge(
 		rect.x + rect.width >= frameW - marginPx ||
 		rect.y + rect.height >= frameH - marginPx
 	);
+}
+
+/**
+ * True when a detected card quad reaches the photo's edge (within `marginFrac`
+ * of the long edge) or lies partly outside it: the card is probably cut off,
+ * and its name bar or collector line with it. Two of the three uploads of an
+ * iPhone session (2026-10-23) were such photos: a corner at x = -118 and one at
+ * y = 4287 in a 3024x4032 picture; neither card was read.
+ */
+export function cardCutOffByFrame(corners: Array<[number, number]>, frameW: number, frameH: number, marginFrac = 0.005): boolean {
+	const m = Math.max(frameW, frameH) * marginFrac;
+	return corners.some(([x, y]) => x <= m || y <= m || x >= frameW - m || y >= frameH - m);
 }

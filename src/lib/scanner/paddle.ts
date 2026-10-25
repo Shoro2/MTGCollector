@@ -34,6 +34,17 @@ export const REC_MAX_WIDTH = 1600;
 
 let loading: Promise<Paddle | null> | null = null;
 let lastFailure = 0;
+let lastError = '';
+
+/**
+ * Why the engine could not load, or why the last batch failed to run; '' when
+ * neither happened. The scan log shows it:
+ * on an iPhone every PaddleOCR pass came back empty (2026-10-23), and the reason
+ * was only in the browser console.
+ */
+export function paddleLoadError(): string {
+	return lastError;
+}
 /** Deadline for runtime + model + dictionary; generous for slow mobile links, finite for a stalled CDN. */
 const LOAD_TIMEOUT_MS = 90_000;
 
@@ -45,7 +56,7 @@ export async function loadPaddle(): Promise<Paddle | null> {
 		try {
 			const assets = paddleAssets();
 			// ~25 MB of runtime and model; a stalled download must not hang the scan.
-			return await withTimeout((async (): Promise<Paddle> => {
+			const paddle = await withTimeout((async (): Promise<Paddle> => {
 				const ort = (await import(/* @vite-ignore */ assets.ortScript)) as OrtModule;
 				ort.env.wasm.wasmPaths = assets.ortWasmDir;
 				ort.env.wasm.numThreads = 1;
@@ -58,8 +69,11 @@ export async function loadPaddle(): Promise<Paddle | null> {
 				if (keys[keys.length - 1] === '') keys.pop();
 				return { ort, session, dict: ['', ...keys, ' '] };
 			})(), LOAD_TIMEOUT_MS, 'PaddleOCR engine load');
+			lastError = '';
+			return paddle;
 		} catch (err) {
 			console.warn('PaddleOCR unavailable:', err);
+			lastError = (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300);
 			lastFailure = Date.now();
 			loading = null;
 			return null;
@@ -97,6 +111,7 @@ export function preprocessLine(img: CanvasImageSource, width: number, height: nu
 export async function recognizeLines(urls: string[]): Promise<string[]> {
 	const paddle = await loadPaddle();
 	if (!paddle) return urls.map(() => '');
+	lastError = '';
 	const out: string[] = [];
 	for (const url of urls) {
 		try {
@@ -109,7 +124,8 @@ export async function recognizeLines(urls: string[]): Promise<string[]> {
 			const tensor = result[paddle.session.outputNames[0]];
 			const [, steps, classes] = tensor.dims;
 			out.push(ctcDecode(tensor.data, steps, classes, paddle.dict).text);
-		} catch {
+		} catch (err) {
+			lastError = `recognition failed: ${(err instanceof Error ? `${err.name}: ${err.message}` : String(err)).slice(0, 300)}`;
 			out.push('');
 		}
 	}

@@ -262,3 +262,26 @@ describe('phone footer regressions (2026-10-08)', () => {
   expect(parse('R 70094 SLD EN').numberSource).not.toBe('rarity');
  });
 });
+
+describe('parseCollectorInfo with several fractions in one strip', () => {
+	it('drops a partial re-read of the collector fraction (iPhone, 2026-10-23)', () => {
+		// Offspring's Revenge, IKO #198 in French: the first fraction is a cut-off copy of the real one.
+		const r = parse('98/27 oo GB 198/274 R VE IKO * FR d DAARKEN');
+		expect(r.setCode).toBe('iko');
+		expect(r.collectorNumber).toBe('198');
+		expect(r.numberSource).toBe('fraction');
+		expect(r.rarity).toBe('r');
+		expect(r.language).toBe('FR');
+	});
+
+	it('prefers the fraction with a rarity letter, also without a set anchor', () => {
+		expect(parse('12/40 noise 150/277 C').collectorNumber).toBe('150');
+		expect(parse('150/277 C noise 12/40').collectorNumber).toBe('150');
+	});
+
+	it('still reads a lone fraction as before', () => {
+		const r = parse('198/274 R IKO * FR');
+		expect(r.collectorNumber).toBe('198');
+		expect(r.rarity).toBe('r');
+	});
+});

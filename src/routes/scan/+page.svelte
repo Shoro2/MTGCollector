@@ -13,9 +13,9 @@
 	import { rankNameMatches, realWordCount, setPrintedAliasSource, type PrintedAlias } from '$lib/scanner/similarity';
 	import { resolveCard, nameIdentifies, isStructural, NAME_CERTAIN, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
 	import { artHashesOfWarp, expandedCardCorners } from '$lib/scanner/warp';
-	import { recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
+	import { paddleLoadError, recognizeLines as paddleRecognizeLines } from '$lib/scanner/paddle';
 	import { version } from '$app/environment';
-	import { loadImage, orderCorners, touchesFrameEdge } from '$lib/scanner/geometry';
+	import { cardCutOffByFrame, loadImage, orderCorners, touchesFrameEdge } from '$lib/scanner/geometry';
 	import { isPlausibleCardQuad, luminanceSpread, sampleQuadLuminance, type Pt } from '$lib/scanner/quad';
 	import { COARSE_LONG_EDGE, COARSE_PASS, findCardQuads, isInnerBoxOf } from '$lib/scanner/quick-rects';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
@@ -49,6 +49,8 @@
 	let nextCaptureId = 0;
 	let addError = $state('');
 	let scanProgress = $state('');
+	/** Set when an uploaded photo cuts a detected card off at its edge (cardCutOffByFrame). */
+	let edgeWarning = $state('');
 	let detectedCards = $state<Array<{
 		index: number;
 		captureId: number;
@@ -355,6 +357,7 @@
 		scanning = true;
 		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
+		edgeWarning = '';
 		log(`Scan started: app version ${version}, mode=${scanMode}`);
 
 		try {
@@ -936,6 +939,16 @@
 			}
 
 			log(`Detection complete: ${cardContours.length} card(s) found`);
+			// Uploads only: the live preview already refuses a card at the frame edge.
+			if (presetRects.length === 0) {
+				const cut = cardContours.filter((c) => !c.synthetic && cardCutOffByFrame([0, 1, 2, 3].map((k) => [c.corners.data32S[k * 2], c.corners.data32S[k * 2 + 1]] as [number, number]), img.width, img.height)).length;
+				if (cut > 0) {
+					log(`${cut} card(s) reach the edge of the photo: probably cut off`);
+					edgeWarning = cut === 1 && cardContours.length === 1
+						? 'The card reaches the edge of the photo. If it is not identified, take the photo again with some space around the card.'
+						: `${cut} cards reach the edge of the photo. If they are not identified, take the photo again with some space around each card.`;
+				}
+			}
 			scanProgress = `Found ${cardContours.length} card(s). Reading...`;
 
 			// Name band + collector strip crops from a warped card Mat, upscaled
@@ -1228,7 +1241,10 @@
 			const runNamePass = async (pass: NamePass, urls: string[]): Promise<string[]> => {
 				if (pass.engine === 'paddle') {
 					const texts = await paddleRecognizeLines(urls);
-					if (texts.every((t) => t === '')) log('PaddleOCR pass: no text (engine unavailable or nothing read)');
+					if (texts.every((t) => t === '')) {
+						const why = paddleLoadError();
+						log(why ? `PaddleOCR pass: no text (${why})` : 'PaddleOCR pass: no text (nothing read)');
+					}
 					return texts.map((t) => t.replace(/[\r\n]+/g, ' ').trim());
 				}
 				return ocrNames(urls, pass.psm);
@@ -1900,6 +1916,7 @@
 		debugCanvasUrl = '';
 		debugLog = [];
 		scanProgress = '';
+		edgeWarning = '';
 		manualResults = [];
 		manualCardIndex = null;
 		selectedCards = new Set();
@@ -2070,6 +2087,9 @@
 		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-sm text-[var(--color-text-muted)]">
 			{scanProgress}
 		</div>
+	{/if}
+	{#if !scanning && edgeWarning}
+		<p class="text-sm px-3 py-2 rounded-lg bg-yellow-500/10 text-yellow-300 border border-yellow-500/30" data-edge-warning>{edgeWarning}</p>
 	{/if}
 
 	<!-- Detected Cards -->

@@ -6,7 +6,9 @@
  * every language with its `printed_name`. The job downloads it once, keeps
  * the distinct (English name, language, printed name) triples of the wanted
  * languages in `card_names` and throws the file away. German alone is about
- * 30k names.
+ * 30k names. French joined the default on 2026-10-25: the first phone session
+ * with French Ikoria cards read "Revanche de la progeniture" (Offspring's
+ * Revenge) cleanly five times and matched nothing.
  *
  * Not scheduled: new sets bring new printed names, so the job is run again
  * after a set release (it replaces the languages it imports). `--export` /
@@ -19,7 +21,7 @@ import { parseScryfallBulkStream } from './bulk-stream.js';
 import { downloadBulkFile, fetchBulkMeta } from './scryfall.js';
 import { printedNameRows, type BulkCard, type PrintedNameRow } from './printed-name-index.js';
 
-export const DEFAULT_LANGS = ['de'];
+export const DEFAULT_LANGS = ['de', 'fr'];
 const dataDir = join(process.cwd(), 'data');
 const TEMP_PREFIX = 'scryfall-all-cards-temp-';
 
