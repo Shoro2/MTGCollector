@@ -1,7 +1,7 @@
 /**
  * CLI for the printed names of non-English printings (the scanner's name
  * search for German, French … cards). Run from the repository root:
- *   npm run import-names                         # download Scryfall's all-cards bulk (~400 MB), import German names
+ *   npm run import-names                         # download Scryfall's all-cards bulk (~400 MB), import German and French names
  *   npm run import-names -- --langs de,fr,it     # other / more languages (each replaces its own rows)
  *   npm run import-names -- --status             # counts only
  *   npm run import-names -- --export names.json / --import names.json   # move the table between databases

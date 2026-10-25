@@ -214,7 +214,9 @@ export function scanQuickRects(
 	// One pass over `input` (a gray Mat at 1/div of the buffer); the content check runs on the full buffer.
 	const pass = (input: any, div: number, blur: number, lo: number, hi: number, source: 'fine' | 'coarse') => {
 		for (const { quad, area } of findCardQuads(cv, input, { blur, lo, hi, minAreaFrac, maxAreaFrac, minAspect, maxAspect })) {
-			const pts = quad.map((q) => [q[0] * div, q[1] * div] as Pt);
+			// Polygon order: the plausibility check sorts the corners itself, so a crossed
+			// approxPolyDP order passed it and reached the overlay and the warp as a bow-tie.
+			const pts = polygonOrder(quad).map((q) => [q[0] * div, q[1] * div] as Pt);
 			const spread = luminanceSpread(sampleQuadLuminance(rgba, width, height, pts));
 			if (spread < minSpread) continue;
 			const xs = pts.map((q) => q[0]);

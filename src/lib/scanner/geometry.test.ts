@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fitContain, touchesFrameEdge, orderCornersForCard } from './geometry';
+import { cardCutOffByFrame, fitContain, touchesFrameEdge, orderCornersForCard } from './geometry';
 
 describe('fitContain', () => {
 	it('pillarboxes a portrait stream inside a landscape box', () => {
@@ -70,5 +70,42 @@ describe('orderCornersForCard', () => {
 		const [tl, tr] = orderCornersForCard(pts);
 		const top = Math.hypot(tr[0] - tl[0], tr[1] - tl[1]);
 		expect(top).toBeCloseTo(600, 6);
+	});
+
+	it('untangles corners handed over in a crossed (bow-tie) order', () => {
+		// Live capture on an iPhone, 2026-10-23: the tracked rectangle arrived as
+		// TL(797,861) TR(299,597) BR(832,1419) BL(288,1440), and the warp of that
+		// self-intersecting quad was unreadable.
+		const crossed: Array<[number, number]> = [[797, 861], [299, 597], [832, 1419], [288, 1440]];
+		const q = orderCornersForCard(crossed);
+		// Every turn of the traversal has the same sign: a simple, convex polygon.
+		const turns = q.map((p, i) => {
+			const a = q[(i + 1) % 4], b = q[(i + 2) % 4];
+			return Math.sign((a[0] - p[0]) * (b[1] - a[1]) - (a[1] - p[1]) * (b[0] - a[0]));
+		});
+		expect(new Set(turns).size).toBe(1);
+		expect(new Set(q.map((p) => p.join(','))).size).toBe(4);
+		// The same corners in polygon order give the same result.
+		expect(orderCornersForCard([[299, 597], [797, 861], [832, 1419], [288, 1440]])).toEqual(q);
+	});
+
+	it('leaves a correctly ordered quad unchanged whatever corner it starts at', () => {
+		const ring: Array<[number, number]> = [[100, 400], [700, 400], [700, 1200], [100, 1200]];
+		for (let s = 0; s < 4; s++) {
+			const rotated = [...ring.slice(s), ...ring.slice(0, s)];
+			expect(orderCornersForCard(rotated)).toEqual(ring);
+			expect(orderCornersForCard([...rotated].reverse())).toEqual(ring);
+		}
+	});
+});
+
+describe('cardCutOffByFrame', () => {
+	it('flags the cut-off uploads of the 2026-10-23 iPhone session', () => {
+		expect(cardCutOffByFrame([[-118, 68], [2213, -55], [2389, 3226], [58, 3349]], 3024, 4032)).toBe(true);
+		expect(cardCutOffByFrame([[318, 1005], [2462, 743], [2860, 4024], [716, 4287]], 3024, 4032)).toBe(true);
+	});
+
+	it('leaves a card with space around it alone', () => {
+		expect(cardCutOffByFrame([[333, 958], [2238, 958], [2238, 3457], [333, 3457]], 3024, 4032)).toBe(false);
 	});
 });
