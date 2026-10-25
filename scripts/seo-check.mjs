@@ -91,6 +91,13 @@ try {
 		const response = await fetch(origin + path, { redirect: 'manual' });
 		check(response.status === 302 && response.headers.get('location') === '/login', `private route remains protected: ${path}`);
 	}
+	// SvelteKit runs the hook outside its error handling when it cannot decode the path, and the
+	// guard's redirect for /%c0 used to crash the server (production, 2026-10-24).
+	for (const path of ['/%c0', '/%c0%ae%c0%ae/etc/passwd', '/%E0%A4%A', '/api/%c0', '/admin%c0', '/collection/scan%c0', '/cards/%c0']) {
+		const response = await fetch(origin + path, { redirect: 'manual' }).catch(() => null);
+		const alive = (await fetch(origin + '/api/health').catch(() => null))?.ok;
+		check(response?.status === 400 && alive, `malformed path is a 400 and the server stays up: ${path}`);
+	}
 	const robots = await (await fetch(origin + '/robots.txt')).text();
 	check(robots.includes(`Sitemap: ${publicOrigin}/sitemap.xml`) && robots.includes('Disallow: /admin'), 'robots points to the sitemap and excludes admin');
 

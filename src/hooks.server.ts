@@ -5,7 +5,8 @@ import {
 	isMissingYesterdaySnapshot
 } from '$lib/server/price-updater';
 import { validateSession } from '$lib/server/auth';
-import { error, redirect, type Handle } from '@sveltejs/kit';
+import { isDecodablePath } from '$lib/server/request-path';
+import { error, redirect, text, type Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 
 initDb();
@@ -118,11 +119,30 @@ const CSP = [
 	"form-action 'self' https://accounts.google.com"
 ].join('; ');
 
+function withSecurityHeaders(response: Response): Response {
+	response.headers.set('X-Content-Type-Options', 'nosniff');
+	response.headers.set('X-Frame-Options', 'DENY');
+	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+	response.headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), interest-cohort=()');
+	response.headers.set('Content-Security-Policy', CSP);
+	if (!dev) {
+		response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+	}
+	return response;
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
+	const path = event.url.pathname;
+
+	// SvelteKit runs this hook outside its error handling for a path it cannot decode
+	// (/%c0), so the redirect or error thrown by the guard below would crash the
+	// process. Such paths get SvelteKit's own answer, a 400, before anything can throw.
+	if (!isDecodablePath(path)) {
+		return withSecurityHeaders(text('Malformed URI', { status: 400, headers: { 'content-type': 'text/plain; charset=utf-8' } }));
+	}
+
 	const sessionId = event.cookies.get('session');
 	event.locals.user = sessionId ? validateSession(sessionId) : null;
-
-	const path = event.url.pathname;
 
 	// /collection/scan was the old upload-only scanner with its own pipeline;
 	// /scan runs the shared pipeline (live camera, evidence fusion) and adds to
@@ -149,16 +169,5 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(302, '/');
 	}
 
-	const response = await resolve(event);
-
-	response.headers.set('X-Content-Type-Options', 'nosniff');
-	response.headers.set('X-Frame-Options', 'DENY');
-	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
-	response.headers.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), interest-cohort=()');
-	response.headers.set('Content-Security-Policy', CSP);
-	if (!dev) {
-		response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-	}
-
-	return response;
+	return withSecurityHeaders(await resolve(event));
 };
