@@ -21,12 +21,15 @@ export async function readBody(request: Request): Promise<Record<string, unknown
 
 /**
  * Validates the deck fields first (a typo should not spend the captcha), then, when the
- * write makes the deck public (see publishes()), the Turnstile token in `body.captcha`.
- * `current` is the deck's visibility before the write, null for a new deck.
+ * write makes the deck public (see publishes()), the publish limit (`checkLimit`, so a
+ * refused deck does not spend the token either) and the Turnstile token in `body.captcha`.
+ * `current` is the deck's visibility before the write, null for a new deck. The write
+ * itself checks the limit again inside its transaction (createDeck, updateDeck).
  */
-export async function requirePublishCaptcha(body: Record<string, unknown>, current: Visibility | null, ip: string | null) {
+export async function requirePublishCaptcha(body: Record<string, unknown>, current: Visibility | null, ip: string | null, checkLimit: () => void = () => {}) {
 	deckMeta(body, true);
 	if (!publishes(current, body.visibility)) return;
+	checkLimit();
 	if (!(await checkCaptcha(body.captcha, ip, 'publish-deck'))) {
 		throw new DeckError('Confirm the check "Verify you are human" before you make the deck public.');
 	}

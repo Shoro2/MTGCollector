@@ -11,9 +11,13 @@
 
 	/**
 	 * `authorName` prefills the author field with the name the user chose last;
-	 * `captchaSiteKey` (null when the captcha is off) shows the check a public deck needs.
+	 * `captchaSiteKey` (null when the captcha is off) shows the check a public deck needs;
+	 * `publishBlocked` is the limit's message once the user has made three decks public
+	 * within 24 hours (the server refuses a fourth either way).
 	 */
-	let { onclose, authorName = '', captchaSiteKey = null }: { onclose: () => void; authorName?: string; captchaSiteKey?: string | null } = $props();
+	let { onclose, authorName = '', captchaSiteKey = null, publishBlocked = null }: {
+		onclose: () => void; authorName?: string; captchaSiteKey?: string | null; publishBlocked?: string | null;
+	} = $props();
 	let dialog: HTMLDialogElement;
 	onMount(() => {
 		author = authorName;
@@ -30,7 +34,8 @@
 	let author = $state('');
 	let captcha = $state<ReturnType<typeof Turnstile>>();
 	let captchaToken = $state('');
-	const needsCaptcha = $derived(visibility === 'public' && !!captchaSiteKey);
+	const limitReached = $derived(visibility === 'public' && !!publishBlocked);
+	const needsCaptcha = $derived(visibility === 'public' && !limitReached && !!captchaSiteKey);
 	let source = $state<'none' | 'paste' | 'file'>('none');
 	let text = $state('');
 	// A pasted deck link gets an explanation of where the site's text export is.
@@ -206,7 +211,9 @@
 					{/if}
 				</fieldset>
 			</fieldset>
-			{#if needsCaptcha && captchaSiteKey}
+{#if limitReached}
+				<p role="alert" class="text-sm text-amber-300" data-publish-limit>{publishBlocked}</p>
+			{:else if needsCaptcha && captchaSiteKey}
 				<div data-deck-captcha>
 					<p class="mb-1 text-xs text-[var(--color-text-muted)]">A public deck is listed for everybody, so we check that you are human first.</p>
 					<Turnstile bind:this={captcha} bind:token={captchaToken} siteKey={captchaSiteKey} action="publish-deck" />
@@ -214,7 +221,7 @@
 			{/if}
 			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 			<div class="flex justify-end">
-				<button type="submit" disabled={busy || !name.trim() || !!linkHelp || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
+				<button type="submit" disabled={busy || !name.trim() || !!linkHelp || limitReached || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
 			</div>
 		</form>
 	{/if}
