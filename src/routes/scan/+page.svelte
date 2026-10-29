@@ -98,6 +98,8 @@
 		artHash?: string;
 		artHashAlt?: string;
 		artMatches?: ArtMatch[];
+		/** The fusion found the back of a card (card-back.ts): nothing to identify. */
+		cardBack?: boolean;
 		/** Crops from the 180°-rotated warp when the upside-down retry did not resolve the name (Phase 2b). */
 		altNameUrl?: string;
 		altBottomUrl?: string;
@@ -1895,6 +1897,7 @@
 				card.foil = d.finish === 'foil';
 				card.language = captureSession.language || d.language;
 				card.suggestions = [];
+				card.cardBack = d.cardBack === true;
 				const row = d.printing.row;
 				const cands = d.printing.candidates;
 				switch (d.identity.state) {
@@ -2603,7 +2606,11 @@
 									</button>
 								{/if}
 							{:else}
-								<p class="text-sm text-[var(--color-text-muted)] mb-2">Not identified automatically.</p>
+								{#if card.cardBack}
+									<p class="text-sm text-[var(--color-text-muted)] mb-2" data-card-back>This is the back of a card. Turn it over and scan the front.</p>
+								{:else}
+									<p class="text-sm text-[var(--color-text-muted)] mb-2">Not identified automatically.</p>
+								{/if}
 								{#if card.suggestions.length > 0}
 									<p class="text-xs text-yellow-300 mb-1">Could be (collector number only, no name evidence):</p>
 									{#each card.suggestions as sug}
