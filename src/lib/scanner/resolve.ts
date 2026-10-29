@@ -21,8 +21,11 @@ import { hammingDistance } from './phash';
 import { PREFIX_CONTRADICT, PREFIX_FIT, PREFIX_IDENTIFY, PREFIX_MARGIN, PREFIX_SET_LETTERS, bestPrefixAlias, letterCount, prefixIdentifies, prefixNameScore, stripLeadingToken } from './name-prefix';
 
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
-/** `lang`: language of the name the candidate matched — 'en' (or absent) for the catalogue's name, e.g. 'de' for a printed German name. */
-export type NameCandidate = { name: string; score: number; pass: string; lang?: string };
+/**
+ * `lang`: language of the name the candidate matched — 'en' (or absent) for the catalogue's name, e.g. 'de' for a printed German name.
+ * `text`: the OCR text the candidate was scored against (each name pass reads its own); absent means `nameText`.
+ */
+export type NameCandidate = { name: string; score: number; pass: string; lang?: string; text?: string };
 export type FooterReading = CollectorInfo & {
 	/** Which crop produced the reading: 'primary', 'small', 'rotated', 'rotated small'. */
 	variant: string;
@@ -214,6 +217,30 @@ export function nameIdentifies(candidate: { name: string; score: number }, nameT
 	return candidate.score >= NAME_CERTAIN || realWordCount(nameText) > 0;
 }
 
+/**
+ * Whether a name candidate is real evidence: read at NAME_CERTAIN or better, or
+ * scored against a text with at least one real word. A text without one
+ * ("ono ded spe", "wen oe oan", "er Et ous wt") still scores 0.5-0.6 against
+ * *some* name of a 38k-name pool; on the multi-card uploads of 2026-10-29 such
+ * candidates joined stray digits across sets (No Escape WAR #63 for an Ajani
+ * Vengeant, Twenty-Toed Toad BLC #51 for Swiftfoot Boots) and vetoed a correct
+ * footer reading (Root Out against Aerid Konstrari, FRA #121).
+ */
+export function nameSupported(candidate: { score: number; text?: string }, nameText: string): boolean {
+	return candidate.score >= NAME_CERTAIN || realWordCount(candidate.text ?? nameText) > 0;
+}
+
+/** The faces of a name, normalised: a reversible card's twin record "Propaganda // Propaganda" has the same faces as "Propaganda". */
+function faceSet(name: string): Set<string> {
+	return new Set(name.split(' // ').map((f) => normalizeName(f)));
+}
+/** Two names of the same card: the catalogue's twin records of reversible cards are not rivals. */
+export function sameFaces(a: string, b: string): boolean {
+	const fa = faceSet(a);
+	const fb = faceSet(b);
+	return fa.size === fb.size && [...fa].every((f) => fb.has(f));
+}
+
 export function resolveCard(input: ResolveInput): Decision {
 	// Every printings lookup of the fusion sees the name's printings narrowed
 	// by the scanned artwork (artPool); logged once per name.
@@ -283,6 +310,8 @@ export function resolveCard(input: ResolveInput): Decision {
 	const fitMin = input.nameTruncated ? PREFIX_FIT : NAME_LIKELY;
 	const contradictBelow = input.nameTruncated ? PREFIX_CONTRADICT : NAME_CONTRADICT;
 	const agrees = (row: PrintingRow) => scoreOf(input.nameText, String(row.name)) >= fitMin || (best !== null && best.name === row.name && best.score >= fitMin);
+	const textOf = (c: NameCandidate) => c.text ?? input.nameText;
+	const supported = (c: NameCandidate) => nameSupported(c, input.nameText);
 
 	const sameNumber = (r: FooterReading, row: PrintingRow) => r.collectorNumber !== '' && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number));
 	// A number-only hit is plausible unless the printed rarity letter or real
@@ -303,7 +332,7 @@ export function resolveCard(input: ResolveInput): Decision {
 			return false;
 		}
 		const hitScore = scoreOf(contraText, String(row.name));
-		if (best && best.score >= NAME_EVIDENCE && best.name !== row.name && hitScore < contradictBelow) {
+		if (best && best.score >= NAME_EVIDENCE && supported(best) && best.name !== row.name && hitScore < contradictBelow) {
 			log(`[${r.variant}] ${label} rejected: name OCR points at "${best.name}" (${best.score.toFixed(2)})`);
 			return false;
 		}
@@ -325,12 +354,17 @@ export function resolveCard(input: ResolveInput): Decision {
 	// "5" from the rotated strip joined "Endless Atlas" #55 although the upright strip
 	// read "103/272 R" (phone, 2026-09-18: an Infinite Obliteration, ORI #103).
 	const structuralReadings = ranked.filter(({ r }) => r.collectorNumber !== '' && isStructural(r.numberSource));
-	const joinHits = (name: string): PrintingRow[] =>
-		printingsOf(name).filter((row) => {
+	// Without a structural number a join rests on a stray digit run: it needs a
+	// set (read, or the scan's majority set) and a supported name candidate. A
+	// "3" next to a copyright line joined the junk read "ono ded spe" with
+	// No Escape WAR #63 for an Ajani Vengeant (multi-card upload, 2026-10-29).
+	const joinHits = (cand: NameCandidate, strayGate = true): PrintingRow[] =>
+		printingsOf(cand.name).filter((row) => {
 			if (setHints.size > 0 && !setHints.has(String(row.set_code).toLowerCase())) return false;
 			const contributing = ranked.filter(({ r }) => r.collectorNumber && numberCompatible(r.collectorNumber, String(row.collector_number)));
 			if (contributing.length === 0 || !contributing.every(({ r }) => rarityAgrees(r.rarity, row.rarity))) return false;
-			return structuralReadings.length === 0 || contributing.some(({ r }) => isStructural(r.numberSource));
+			if (contributing.some(({ r }) => isStructural(r.numberSource))) return true;
+			return structuralReadings.length === 0 && (!strayGate || (setHints.size > 0 && supported(cand)));
 		});
 	// A partial name and a partial number that agree on exactly one printing.
 	// Two independent signals that agree *exactly* — the number read as printed,
@@ -338,7 +372,10 @@ export function resolveCard(input: ResolveInput): Decision {
 	// confirm the printing; a number that is merely compatible (one edit, dropped
 	// digit) stays a one-tap offer.
 	const joinDecision = (cand: NameCandidate): Decision | null => {
-		const hits = joinHits(cand.name);
+		const hits = joinHits(cand);
+		if (hits.length === 0 && joinHits(cand, false).length > 0) {
+			reasons.push(`join: "${cand.name}" ${cand.score.toFixed(2)} from "${textOf(cand)}" with a stray number only: ${setHints.size === 0 ? 'no set to join in' : 'the text has no real word'}`);
+		}
 		if (hits.length > 1) reasons.push(`join: ${hits.length} printings of "${cand.name}" compatible, not unique`);
 		if (hits.length !== 1) return null;
 		const row = hits[0];
@@ -454,6 +491,22 @@ export function resolveCard(input: ResolveInput): Decision {
 	let artIgnored = false;
 	if (artStrong && artBest) {
 		if (best && best.score >= NAME_CERTAIN && identifies(best) && best.name !== artBest.name) {
+			// The text the certain name was read from fits the artwork's name as well: the two
+			// channels agree on that card, so a name that was not read exactly loses to them.
+			// "ean Lightning" reads Chain Lightning 0.80 and Ball Lightning 0.79 while the artwork
+			// is Ball Lightning at 4 bits; "Lightnin in T ol pr Ca Si" reads "Lightning" 0.86
+			// through the junk-tolerant prefix and Lightning Bolt 0.69, the artwork Lightning
+			// Bolt at 10 bits (multi-card uploads, 2026-10-29).
+			const text = textOf(best);
+			const recorded = byScore.find((c) => c.name === artBest.name);
+			const fit: NameCandidate = { name: artBest.name, score: scoreOf(text, artBest.name), pass: best.pass, text };
+			const support = recorded && recorded.score >= fit.score ? recorded : fit;
+			const supportIdentifies = input.nameTruncated ? prefixIdentifies(support, nameCandidates, textOf(support)) : nameIdentifies(support, textOf(support));
+			if (best.score < 0.999 && support.score >= NAME_CONFIRM && supportIdentifies) {
+				const p = artPrinting(artBest);
+				reasons.push(`art "${artBest.name}" ${artBest.distance} bits + the name text fits it (${support.score.toFixed(2)} from "${textOf(support)}") -> beats "${best.name}" ${best.score.toFixed(2)}, confirmed`);
+				return done(artBest.name, 'confirmed', p.row, p.candidates, p.state);
+			}
 			reasons.push(`conflict: name says "${best.name}" ${best.score.toFixed(2)}, artwork says "${artBest.name}"`);
 			return done(best.name, 'conflict', null, [...artBest.rows, ...printingsOf(best.name)], 'conflict');
 		}
@@ -569,6 +622,19 @@ export function resolveCard(input: ResolveInput): Decision {
 				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} vs artwork "${artRival.name}" ${artRival.distance} bits: neither is supported -> likely`);
 				return done(artRival.name, 'likely', artRival.rows.length === 1 ? artRival.rows[0] : null, [...artRival.rows, ...printings], 'likely');
 			}
+			// 1d''. A looser artwork (up to ART_LIKELY) that stands out and names another card
+			// stops an uncertain name from confirming: "EZ I Plane Swalker g" read Urza,
+			// Planeswalker 0.70 for a Nicol Bolas, Planeswalker whose artwork hashed 12 bits
+			// from DDH #42 (multi-card upload, 2026-10-29). Both are offered; the artwork goes
+			// first when the text fits its name too, otherwise the name.
+			if (best.score < NAME_CERTAIN && !artIgnored && artBest && artUnambiguous && artBest.name !== best.name) {
+				const artFit = scoreOf(textOf(best), artBest.name);
+				const artFirst = artFit >= fitMin;
+				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} vs artwork "${artBest.name}" ${artBest.distance} bits (its name fits the text ${artFit.toFixed(2)}): neither is supported -> likely, ${artFirst ? 'artwork' : 'name'} first`);
+				return artFirst
+					? done(artBest.name, 'likely', artBest.rows.length === 1 ? artBest.rows[0] : null, [...artBest.rows, ...printings], 'likely')
+					: done(best.name, 'likely', printings.length === 1 ? printings[0] : null, [...printings, ...artBest.rows], 'likely');
+			}
 			// 1d. A runner-up candidate too close to call: offer both. Both are
 			// measured on the whole name text, without the junk-tolerant prefix
 			// rule: "W Courier of Cotesiiis" scores 0.65 against Aven Courier
@@ -578,7 +644,9 @@ export function resolveCard(input: ResolveInput): Decision {
 			// whole text) while Ghoulish Procession reads 0.58 on the whole text.
 			const plainScore = (name: string) => (input.nameTruncated ? prefixNameScore(input.nameText, name) : Math.max(...nameAliases(name).map((alias) => similarity(input.nameText, alias))));
 			const bestPlain = Math.min(best.score, plainScore(best.name));
-			const runnerUp = byScore.map((c) => ({ ...c, plain: plainScore(c.name) })).find((c) => c.name !== best.name && c.plain >= NAME_LIKELY && c.plain >= bestPlain - NAME_MARGIN);
+			// A twin record of the same card ("Propaganda // Propaganda", Scryfall's reversible
+			// printings) is no runner-up: it made a 0.70 read of Propaganda a one-tap choice.
+			const runnerUp = byScore.map((c) => ({ ...c, plain: plainScore(c.name) })).find((c) => c.name !== best.name && !sameFaces(c.name, best.name) && c.plain >= NAME_LIKELY && c.plain >= bestPlain - NAME_MARGIN);
 			if (runnerUp) {
 				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${bestPlain.toFixed(2)} on the whole text) vs "${runnerUp.name}" ${runnerUp.plain.toFixed(2)}: too close to call -> likely`);
 				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, [...printings, ...printingsOf(runnerUp.name)], 'likely');
@@ -604,19 +672,19 @@ export function resolveCard(input: ResolveInput): Decision {
 	// joinable name gives its decision; several stay a one-tap choice.
 	if (input.nameTruncated && best && best.score >= fitMin) {
 		const seen = new Set<string>();
-		const joinable = byScore.filter((c) => c.score >= fitMin && !seen.has(c.name) && (seen.add(c.name), joinHits(c.name).length > 0));
+		const joinable = byScore.filter((c) => c.score >= fitMin && !seen.has(c.name) && (seen.add(c.name), joinHits(c).length > 0));
 		if (joinable.length === 1) {
 			const joined = joinDecision(joinable[0]);
 			if (joined) return joined;
 		} else if (joinable.length > 1) {
 			// Only a name whose printing a structural reading names exactly can win, and only alone:
 			// "146/249" fits Lightning Bolt M10 #146 and Lightning Berserker DTK #146 equally.
-			const exactly = joinable.filter((c) => joinHits(c.name).some((row) => structuralReadings.some(({ r }) => sameNumber(r, row))));
+			const exactly = joinable.filter((c) => joinHits(c).some((row) => structuralReadings.some(({ r }) => sameNumber(r, row))));
 			if (exactly.length === 1) {
 				const joined = joinDecision(exactly[0]);
 				if (joined && joined.identity.state === 'confirmed') return joined;
 			}
-			const rows = joinable.flatMap((c) => joinHits(c.name));
+			const rows = joinable.flatMap((c) => joinHits(c));
 			reasons.push(`prefix "${input.nameText}": ${joinable.map((c) => `"${c.name}" ${c.score.toFixed(2)}`).join(', ')} all fit the footer -> likely`);
 			return done(joinable[0].name, 'likely', null, rows, 'likely');
 		}
@@ -751,8 +819,10 @@ export function resolveCard(input: ResolveInput): Decision {
 	// than three letters: "El" offered the token Elf for an unreadable photo
 	// (iPhone, 2026-10-23); two letters resemble too many short names ("Boa"
 	// for Boar is still offered).
-	const tooFewLetters = normalizeName(input.nameText).replace(/[^a-z]/g, '').length < 3;
-	if (best && best.score >= NAME_LIKELY && tooFewLetters) reasons.push(`name candidate "${best.name}" ${best.score.toFixed(2)} from "${input.nameText}": too few letters for a suggestion`);
+	// Counted on the text the candidate was read from: the card's name text can be another pass's
+	// (an empty one offered "Base Camp" 0.44 as too short, 2026-10-29).
+	const tooFewLetters = best !== null && normalizeName(textOf(best)).replace(/[^a-z]/g, '').length < 3;
+	if (best && best.score >= NAME_LIKELY && tooFewLetters) reasons.push(`name candidate "${best.name}" ${best.score.toFixed(2)} from "${textOf(best)}": too few letters for a suggestion`);
 	if (best && best.score >= NAME_LIKELY && !tooFewLetters) {
 		const printings = printingsOf(best.name);
 		const setHints = new Set<string>();
@@ -765,6 +835,6 @@ export function resolveCard(input: ResolveInput): Decision {
 			return done(null, 'unknown', null, pick, 'unknown');
 		}
 	}
-	if (best) reasons.push(`best name candidate "${best.name}" ${best.score.toFixed(2)} below ${NAME_LIKELY}, no usable footer`);
+	if (best && best.score < NAME_LIKELY) reasons.push(`best name candidate "${best.name}" ${best.score.toFixed(2)} below ${NAME_LIKELY}, no usable footer`);
 	return done(null, 'unknown', null, [], 'unknown');
 }
