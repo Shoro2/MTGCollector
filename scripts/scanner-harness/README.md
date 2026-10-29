@@ -730,6 +730,13 @@ Result on 2026-10-29 (cloud session, Chromium 1243): 29 / 29. The site stored
 from the cache (`detector: Web Worker`), the live capture and the upload were
 saved, and back online both were identified as Lightning Bolt M10 #146
 (confirmed / confirmed). A scan whose lookups failed with the server gone (the
-browser still "online") was saved and identified with "Identify now". Not
-covered: OpenCV from `docs.opencv.org` as an opaque response, Safari, Firefox,
-a real phone.
+browser still "online") was saved and identified with "Identify now".
+
+With PR #116 (same day): 37 / 37. The first phone try failed because the CSP's
+`connect-src` lacked `docs.opencv.org`, a path this run cannot exercise with
+`/vendor`. The check now reads the served CSP for both CDNs in `connect-src`,
+makes the page's `fetch()` of `opencv.js` fail in a second browser context
+(the error names the file, nothing says "Ready offline", no worker and no
+caches are left) and registers a worker without warming it (the panel reads
+"Not ready offline", "Turn off" removes it). Not covered: OpenCV from
+`docs.opencv.org` as an opaque response, Safari, Firefox, a real phone.
