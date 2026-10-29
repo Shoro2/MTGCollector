@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCollectorInfo, fixOcrDigits, stripLeadingZeros } from './parse';
+import { parseCollectorInfo, parseLegacyCollectorLine, fixOcrDigits, stripLeadingZeros } from './parse';
 
 // Matches the language list the scanner passes in production (scan/+page.svelte).
 const LANGS = 'EN|DE|FR|IT|ES|JA|PT|RU|ZH|KO';
@@ -283,5 +283,32 @@ describe('parseCollectorInfo with several fractions in one strip', () => {
 		const r = parse('198/274 R IKO * FR');
 		expect(r.collectorNumber).toBe('198');
 		expect(r.rarity).toBe('r');
+	});
+});
+
+describe('parseLegacyCollectorLine (1998–2014 frames, right half of the bottom strip)', () => {
+	it('reads the fraction after the copyright line', () => {
+		expect(parseLegacyCollectorLine('TM & 2009 Wizards of the Coast Inc 146/249')).toEqual({ collectorNumber: '146', numberSource: 'fraction', total: '249' });
+	});
+
+	it('takes digit lookalikes in tiny print', () => {
+		expect(parseLegacyCollectorLine('Coast Inc. l46/2S0').collectorNumber).toBe('146');
+	});
+
+	it('keeps a numerator shorter than the total as a weak hint (no padding on these frames)', () => {
+		const r = parseLegacyCollectorLine('Wizards of the Coast Inc 38/249');
+		expect(r.collectorNumber).toBe('38');
+		expect(r.numberSource).toBe('weak');
+	});
+
+	it('ignores copyright years and text without a fraction', () => {
+		expect(parseLegacyCollectorLine('TM & 1993-2011 Wizards of the Coast').numberSource).toBe('none');
+		expect(parseLegacyCollectorLine('TM & 2016 Wizards of the Coast LLC').numberSource).toBe('none');
+		expect(parseLegacyCollectorLine('').numberSource).toBe('none');
+	});
+
+	it('drops a numerator larger than the total (an OCR merge) and a zero numerator', () => {
+		expect(parseLegacyCollectorLine('Inc 1146/249').numberSource).toBe('none');
+		expect(parseLegacyCollectorLine('Inc 0/249').numberSource).toBe('none');
 	});
 });

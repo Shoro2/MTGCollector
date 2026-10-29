@@ -1,0 +1,46 @@
+[
+ {
+  "id": "legacy-m11-149",
+  "name": "Lightning Bolt",
+  "set_code": "m11",
+  "set_name": "Magic 2011",
+  "collector_number": "149",
+  "rarity": "common",
+  "mana_cost": "{R}",
+  "type_line": "Instant",
+  "oracle_id": "4457ed35-7c10-48c8-9776-456485fdf070"
+ },
+ {
+  "id": "legacy-10e-268",
+  "name": "Giant Growth",
+  "set_code": "10e",
+  "set_name": "Tenth Edition",
+  "collector_number": "268",
+  "rarity": "common",
+  "mana_cost": "{G}",
+  "type_line": "Instant",
+  "oracle_id": "5748ebf1-24e3-499d-ab7c-c2cebd462a24"
+ },
+ {
+  "id": "legacy-m10-175",
+  "name": "Llanowar Elves",
+  "set_code": "m10",
+  "set_name": "Magic 2010",
+  "collector_number": "175",
+  "rarity": "common",
+  "mana_cost": "{G}",
+  "type_line": "Creature — Elf Druid",
+  "oracle_id": "legacy-o-llanowar-elves"
+ },
+ {
+  "id": "legacy-m11-175",
+  "name": "Llanowar Elves",
+  "set_code": "m11",
+  "set_name": "Magic 2011",
+  "collector_number": "175",
+  "rarity": "common",
+  "mana_cost": "{G}",
+  "type_line": "Creature — Elf Druid",
+  "oracle_id": "legacy-o-llanowar-elves"
+ }
+]

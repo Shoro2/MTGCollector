@@ -34,5 +34,34 @@
    "set": "mh2",
    "number": "267"
   }
+ ],
+ "synth-legacy-single.jpg": [
+  {
+   "name": "Lightning Bolt",
+   "set": "m10",
+   "number": "146"
+  }
+ ],
+ "synth-legacy-grid.jpg": [
+  {
+   "name": "Lightning Bolt",
+   "set": "m11",
+   "number": "149"
+  },
+  {
+   "name": "Counterspell",
+   "set": "mh2",
+   "number": "267"
+  },
+  {
+   "name": "Giant Growth",
+   "set": "10e",
+   "number": "268"
+  },
+  {
+   "name": "Llanowar Elves",
+   "set": "m10",
+   "number": "175"
+  }
  ]
 }
