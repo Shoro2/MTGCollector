@@ -110,6 +110,15 @@ a {
 	text-underline-offset: 3px;
 }
 
+/* Tailwind's preflight sets margin: 0 on every element, which drops the browser's
+   margin: auto for modal dialogs and pins them to the top left corner. Inside the base
+   layer, so a margin utility on a dialog still wins. */
+@layer base {
+	dialog:modal {
+		margin: auto;
+	}
+}
+
 :focus-visible {
 	outline: 2px solid rgba(111, 178, 255, 0.85);
 	outline-offset: 2px;

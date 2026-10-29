@@ -348,6 +348,9 @@ try {
 	big.on('pageerror', error => errors.push(error.message));
 	await big.goto(origin + '/decks');
 	await big.getByRole('button', { name: 'New deck', exact: true }).click();
+	// Tailwind's preflight used to drop the dialog's margin: auto and pin it to the top left corner.
+	const box = await big.locator('dialog').boundingBox();
+	check(box && Math.abs(box.x + box.width / 2 - 640) < 4 && box.y > 8, `the create dialog is centred (x ${Math.round(box?.x ?? -1)}, y ${Math.round(box?.y ?? -1)}, width ${Math.round(box?.width ?? -1)})`);
 	await big.getByLabel('Name', { exact: true }).fill('Thrasios and Tymna');
 	check(await big.locator('[data-partner-field]').count() === 0, 'the partner field waits for a commander that can take one');
 	await big.getByRole('combobox', { name: 'Commander' }).fill('Thrasios');
