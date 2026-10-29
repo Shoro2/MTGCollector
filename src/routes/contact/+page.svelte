@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { onMount } from 'svelte';
+	import Turnstile from '$lib/components/Turnstile.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -8,17 +9,10 @@
 	let lang = $state<'de' | 'en'>('de');
 	let loadedAt = $state(0);
 	let submitting = $state(false);
+	let captcha = $state<ReturnType<typeof Turnstile>>();
 
 	onMount(() => {
 		loadedAt = Date.now();
-		if (data.turnstileSiteKey && !document.querySelector('script[data-turnstile]')) {
-			const s = document.createElement('script');
-			s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
-			s.async = true;
-			s.defer = true;
-			s.setAttribute('data-turnstile', '');
-			document.head.appendChild(s);
-		}
 	});
 
 	const t = $derived(
@@ -75,6 +69,8 @@
 				return async ({ update }) => {
 					await update();
 					submitting = false;
+					// A Turnstile token is good for one check.
+					captcha?.reset();
 				};
 			}}
 			class="space-y-4"
@@ -140,7 +136,7 @@
 			</div>
 
 			{#if data.turnstileSiteKey}
-				<div class="cf-turnstile" data-sitekey={data.turnstileSiteKey} data-theme="dark"></div>
+				<Turnstile bind:this={captcha} siteKey={data.turnstileSiteKey} action="contact" />
 			{/if}
 
 			{#if form?.error}

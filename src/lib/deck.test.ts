@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	allocateOwnership, ownershipRank, cardCategory, cardFrame, deckColors, deckTotals, groupDeck, isBracket, manaColors, manaCurve, pickDeckPrinting,
-	timeAgo, unitPriceEur, type Board
+	publishes, timeAgo, unitPriceEur, type Board
 } from './deck';
 
 const price = { price_eur: null, price_eur_foil: null, price_usd: null, price_usd_foil: null };
@@ -194,5 +194,17 @@ describe('brackets', () => {
 	it('accepts the five Commander Brackets only', () => {
 		expect([1, 2, 3, 4, 5].every(isBracket)).toBe(true);
 		expect([0, 6, '3', 2.5, null].some(isBracket)).toBe(false);
+	});
+});
+
+describe('publishes', () => {
+	it('is true only for the step that makes a deck public', () => {
+		expect(publishes(null, 'public')).toBe(true);
+		expect(publishes('private', 'public')).toBe(true);
+		expect(publishes('unlisted', 'public')).toBe(true);
+		expect(publishes('public', 'public')).toBe(false);
+		expect(publishes(null, 'unlisted')).toBe(false);
+		expect(publishes('private', undefined)).toBe(false);
+		expect(publishes('public', 'private')).toBe(false);
 	});
 });

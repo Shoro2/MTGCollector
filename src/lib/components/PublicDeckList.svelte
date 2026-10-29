@@ -8,7 +8,7 @@
 	import { formatPrice } from '$lib/utils';
 
 	type Summary = {
-		id: string; name: string; format: string; visibility: Visibility; bracket: number | null; updated_at: string;
+		id: string; name: string; format: string; visibility: Visibility; bracket: number | null; author_name: string; updated_at: string;
 		cards: number; sideboard: number; value: number; unpriced: number; colors: string[]; commander: { name: string } | null;
 	};
 	/** Everybody's public decks: searched, filtered, sorted and paged on the server (URL parameters). */
@@ -32,7 +32,7 @@
 
 <div class="toolbar flex-wrap">
 	<form onsubmit={(e) => { e.preventDefault(); navigate({ q: search.trim() }); }} class="flex min-w-0 basis-full gap-2 sm:basis-0 sm:flex-1">
-		<input type="search" bind:value={search} placeholder="Search deck names or commanders…" aria-label="Search public decks" class="control min-w-0 flex-1 px-3 text-sm" />
+		<input type="search" bind:value={search} placeholder="Search deck names, authors or commanders…" aria-label="Search public decks" class="control min-w-0 flex-1 px-3 text-sm" />
 		<button type="submit" class="btn">Search</button>
 	</form>
 	<label class="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
@@ -52,7 +52,7 @@
 
 <p class="text-sm text-[var(--color-text-muted)]" data-public-total={list.total}>
 	{list.total === 1 ? '1 public deck' : `${list.total} public decks`}{list.q ? ` matching "${list.q}"` : ''}.
-	Decks show their list only, never who made them.
+	Decks show their list and the author name their owner chose, never the account behind them.
 </p>
 
 {#if list.decks.length}
@@ -78,6 +78,7 @@
 								{#if deck.commander}{deck.commander.name}{/if}
 								<span class="md:hidden">{deck.commander ? ' · ' : ''}{deckFormat(deck.format).label}</span>
 							</p>
+							{#if deck.author_name}<p class="truncate text-xs text-[var(--color-text-muted)]" data-public-author>by {deck.author_name}</p>{/if}
 						</td>
 						<td class="hidden px-3 py-3 sm:table-cell"><ColorPips colors={deck.colors} includeColorless /></td>
 						<td class="hidden px-3 py-3 text-[var(--color-text-muted)] md:table-cell">{deckFormat(deck.format).label}</td>

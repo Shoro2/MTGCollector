@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { SCHEMA_SQL } from './schema-sql';
 import {
-	DECKS_SQL, DeckError, REPORTS_TO_HIDE, addDeckBracket, addDeckCard, addDeckReports, hasReported, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
+	DECKS_SQL, DeckError, REPORTS_TO_HIDE, addDeckAuthor, addDeckBracket, addDeckCard, addDeckReports, lastAuthorName, ownDeckVisibility, hasReported, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
 	listDecks, ownedCards, readableDeck, removeDeckCard, searchDeckCards, updateDeck, updateDeckCard
 } from './decks';
 
@@ -14,6 +14,7 @@ function fixture() {
 	db.exec(DECKS_SQL);
 	addDeckBracket(db);
 	addDeckReports(db);
+	addDeckAuthor(db);
 	db.exec('CREATE TABLE card_names (name TEXT NOT NULL, lang TEXT NOT NULL, printed_name TEXT NOT NULL, PRIMARY KEY (lang, printed_name, name))');
 	const insert = db.prepare(`INSERT INTO cards (id, oracle_id, name, type_line, oracle_text, cmc, color_identity, set_code, set_name, collector_number,
 		rarity, released_at, image_uri, layout, legalities, price_eur, price_usd, is_paper) VALUES
@@ -164,6 +165,45 @@ describe('creating, sharing and copying decks', () => {
 		expect(() => updateDeck(db, 'a', id, { description: 'mail me: me (at) example dot com' })).toThrow('not allowed');
 		updateDeck(db, 'a', id, { description: 'Turn 3 Krenko.\r\nThen B.F.M. wins.\u202E' });
 		expect(readableDeck(db, id, 'a')?.description).toBe('Turn 3 Krenko.\nThen B.F.M. wins.');
+		db.close();
+	});
+
+	it('stores a chosen author name, filters it like a name, and never takes it from the account', () => {
+		const db = fixture();
+		const { id } = createDeck(db, 'a', { name: 'Goblins', list: '1 Mountain', visibility: 'public' });
+		expect(readableDeck(db, id, null)?.author_name).toBe('');
+		expect(lastAuthorName(db, 'a')).toBe('');
+		updateDeck(db, 'a', id, { author_name: '  Goblin\u200B  King  ' });
+		expect(readableDeck(db, id, null)?.author_name).toBe('Goblin King');
+		expect(lastAuthorName(db, 'a')).toBe('Goblin King');
+		expect(lastAuthorName(db, 'b')).toBe('');
+		const named = createDeck(db, 'a', { name: 'Burn', author_name: 'Sparky' });
+		expect(readableDeck(db, named.id, 'a')?.author_name).toBe('Sparky');
+		expect(lastAuthorName(db, 'a')).toBe('Sparky');
+		expect(() => updateDeck(db, 'a', id, { author_name: 'twitch.tv slash goblins' })).toThrow('not allowed in deck names, author names and descriptions');
+		expect(() => updateDeck(db, 'a', id, { author_name: 'me@example.com' })).toThrow('not allowed');
+		expect(() => updateDeck(db, 'a', id, { author_name: 'x'.repeat(41) })).toThrow('The author name has at most 40 characters.');
+		expect(() => updateDeck(db, 'a', id, { author_name: 7 })).toThrow('The author name must be text.');
+		updateDeck(db, 'a', id, { author_name: null });
+		expect(readableDeck(db, id, null)?.author_name).toBe('');
+		updateDeck(db, 'a', id, { author_name: 'Goblin King' });
+		// Your own duplicate keeps the author; someone else's copy starts without one.
+		expect(readableDeck(db, copyDeck(db, 'a', id), 'a')?.author_name).toBe('Goblin King');
+		expect(readableDeck(db, copyDeck(db, 'b', id), 'b')?.author_name).toBe('');
+		const listed = publicDecks(db, {}, 1);
+		expect(listed.decks[0]).toMatchObject({ id, author_name: 'Goblin King' });
+		expect(JSON.stringify(listed)).not.toMatch(/example\.invalid|"A"/);
+		expect(publicDecks(db, { q: 'king' }, 1).decks.map((d) => d.id)).toEqual([id]);
+		expect(listDecks(db, 'a', 1).find((d) => d.id === id)?.author_name).toBe('Goblin King');
+		addDeckAuthor(db);
+		db.close();
+	});
+
+	it('tells an endpoint the visibility of an own deck only', () => {
+		const db = fixture();
+		const { id } = createDeck(db, 'a', { name: 'Goblins', visibility: 'unlisted' });
+		expect(ownDeckVisibility(db, 'a', id)).toBe('unlisted');
+		expect(() => ownDeckVisibility(db, 'b', id)).toThrow('Deck not found.');
 		db.close();
 	});
 

@@ -1,30 +1,12 @@
 import { sqlite } from '$lib/server/db';
 import { fail } from '@sveltejs/kit';
 import { hashIdentifier } from '$lib/server/crypto';
-import { env } from '$env/dynamic/private';
-import { env as publicEnv } from '$env/dynamic/public';
+import { captchaSiteKey, checkCaptcha } from '$lib/server/captcha';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = () => {
-	return { turnstileSiteKey: publicEnv.PUBLIC_TURNSTILE_SITE_KEY ?? null };
+	return { turnstileSiteKey: captchaSiteKey() };
 };
-
-async function verifyTurnstile(token: string, ip: string): Promise<boolean> {
-	const secret = env.TURNSTILE_SECRET_KEY;
-	if (!secret) return true; // Turnstile not configured — skip verification
-	if (!token) return false;
-	try {
-		const body = new URLSearchParams({ secret, response: token, remoteip: ip });
-		const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-			method: 'POST',
-			body
-		});
-		const data = (await res.json()) as { success?: boolean };
-		return data.success === true;
-	} catch {
-		return false;
-	}
-}
 
 // Simple in-memory rate limit: max 3 submissions per IP per hour.
 const submissions = new Map<string, number[]>();
@@ -88,7 +70,7 @@ export const actions: Actions = {
 		const ipHash = hashIdentifier(ip, 'contact-ip');
 
 		const turnstileToken = String(form.get('cf-turnstile-response') ?? '');
-		if (!(await verifyTurnstile(turnstileToken, ip))) {
+		if (!(await checkCaptcha(turnstileToken, ip, 'contact'))) {
 			return fail(400, { error: 'Captcha-Prüfung fehlgeschlagen. Bitte erneut versuchen.', values });
 		}
 

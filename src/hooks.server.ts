@@ -104,15 +104,18 @@ const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/portfolio-tracker
 // Permissive CSP: the app loads OpenCV and Tesseract from CDNs and embeds a
 // self-hosted Plausible script. 'unsafe-inline' is required by SvelteKit's
 // hydration payloads; 'unsafe-eval' is required by OpenCV's WASM glue.
+// challenges.cloudflare.com serves the Turnstile captcha (script and its iframe) on
+// /contact and when a deck is made public.
 const CSP = [
 	"default-src 'self'",
-	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com",
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com https://challenges.cloudflare.com",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https://cards.scryfall.io https://c1.scryfall.com https://c2.scryfall.com https://lh3.googleusercontent.com",
 	// data: is for OpenCV.js, whose single-file build fetches its embedded WASM
 	// from a data: URL (it silently falls back to a slower path when refused).
 	"connect-src 'self' data: https://api.scryfall.com https://api.frankfurter.dev https://analytics.mtg-collector.com https://cdn.jsdelivr.net",
 	"font-src 'self' data:",
+	"frame-src https://challenges.cloudflare.com",
 	"worker-src 'self' blob:",
 	"frame-ancestors 'none'",
 	"base-uri 'self'",
