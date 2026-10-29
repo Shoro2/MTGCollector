@@ -577,7 +577,9 @@ describe('resolveCard — multi-card uploads of so-so internet images (2026-10-2
 	const propaganda = [row('Propaganda', 'tmp', '80', 'uncommon'), row('Propaganda', 'ema', '69', 'uncommon')];
 	const twin = row('Propaganda // Propaganda', 'sld', '1531', 'rare');
 	const elf = row('Elf', 'tlrr', '5');
-	const cards = [noEscape, toad, aerid, rootOut, fireglass, ...ball, ...chain, ...bolt, lightning, ...urza, nicol, ...propaganda, twin, elf];
+	const egg = [row('Egg', 'tdmc', '8'), row('Egg', 'plst', 'TDMC-8')];
+	const arc = [row('Arc Lightning', 'usg', '174', 'uncommon'), row('Arc Lightning', 'plst', 'USG-174', 'uncommon')];
+	const cards = [noEscape, toad, aerid, rootOut, fireglass, ...ball, ...chain, ...bolt, lightning, ...urza, nicol, ...propaganda, twin, elf, ...egg, ...arc];
 	const web = (o: Partial<ResolveInput>) => base({
 		printingsByName: (n) => cards.filter((r) => r.name === n),
 		lookup: (s, n) => cards.filter((r) => r.set_code === s.toLowerCase() && r.collector_number === n.replace(/^0+/, '')),
@@ -662,5 +664,35 @@ describe('resolveCard — multi-card uploads of so-so internet images (2026-10-2
 		const short = resolveCard(web({ nameCandidates: [{ name: 'Elf', score: 0.67, pass: 'rotated', text: 'El' }], nameText: 'Elaborate Firecannon' }));
 		expect(short.printing.candidates).toEqual([]);
 		expect(short.reasons.join(' ')).toContain('from "El": too few letters');
+	});
+
+	it('offers a short name read exactly, with nothing else behind it, for one tap', () => {
+		// A sideways Snow-Covered Mountain: the rotated, binarised name strip read "egg" and
+		// confirmed Egg (full catalogue, 212effb). No artwork within 12 bits, no footer.
+		const d = resolveCard(web({ nameCandidates: [{ name: 'Egg', score: 1, pass: 'rotated binarized', text: 'egg' }], nameText: 'egg' }));
+		expect(d.identity).toMatchObject({ name: 'Egg', state: 'likely' });
+		expect(d.reasons.join(' ')).toContain('short name with no support');
+		// the footer, the artwork or the majority set still confirm it
+		const footer = resolveCard(web({ nameCandidates: [{ name: 'Egg', score: 1, pass: 'primary', text: 'Egg' }], nameText: 'Egg', footer: [reading({ setCode: 'tdmc', collectorNumber: '8', numberSource: 'rarity', rarity: 'c', text: 'C 0008 TDMC EN' })], isKnownSet: (s) => s === 'tdmc' }));
+		expect(footer.identity).toMatchObject({ name: 'Egg', state: 'confirmed' });
+		expect(footer.printing.row).toBe(egg[0]);
+		const artwork = resolveCard(web({ nameCandidates: [{ name: 'Egg', score: 1, pass: 'primary', text: 'Egg' }], nameText: 'Egg', artMatches: [art(egg[0], 11)] }));
+		expect(artwork.identity).toMatchObject({ name: 'Egg', state: 'confirmed' });
+		const majority = resolveCard(web({ nameCandidates: [{ name: 'Egg', score: 1, pass: 'primary', text: 'Egg' }], nameText: 'Egg', majoritySet: 'tdmc' }));
+		expect(majority.identity).toMatchObject({ name: 'Egg', state: 'confirmed' });
+		// a name of six letters or more read exactly needs nothing else
+		const long = resolveCard(web({ nameCandidates: [{ name: 'Propaganda', score: 1, pass: 'primary', text: 'Propaganda' }], nameText: 'Propaganda' }));
+		expect(long.identity).toMatchObject({ name: 'Propaganda', state: 'confirmed' });
+	});
+
+	it('does not confirm an uncertain name whose read word every rival shares', () => {
+		// Chain Lightning read as "ams Lighining": Arc Lightning 0.77. Ball Lightning (0.71) was cut from
+		// the server's pool, so nothing stopped the confirmation; with the full name scan it is a runner-up.
+		const cand = (name: string, score: number) => ({ name, score, pass: 'raw-line', text: 'ams Lighining' });
+		const alone = resolveCard(web({ nameCandidates: [cand('Arc Lightning', 0.769)], nameText: 'ams Lighining' }));
+		expect(alone.identity).toMatchObject({ name: 'Arc Lightning', state: 'confirmed' });
+		const rivals = resolveCard(web({ nameCandidates: [cand('Arc Lightning', 0.769), cand('Ball Lightning', 0.714), cand('Chain Lightning', 0.667)], nameText: 'ams Lighining' }));
+		expect(rivals.identity).toMatchObject({ name: 'Arc Lightning', state: 'likely' });
+		expect(rivals.printing.candidates.map((r) => r.name)).toContain('Ball Lightning');
 	});
 });

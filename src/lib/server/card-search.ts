@@ -17,6 +17,8 @@ const SCANNER_FILTER = SCANNABLE_CARD;
 const FUZZY_ROWS = 200;
 /** Distinct names a fuzzy search returns, best similarity first. */
 const FUZZY_NAMES = 20;
+/** The edit-distance scan over every name runs while the best pooled name scores below this (NAME_CERTAIN in resolve.ts). */
+const FUZZY_SCAN_BELOW = 0.8;
 /** Printings per returned name in a fuzzy result (the fusion fetches the complete list separately). */
 const ROWS_PER_NAME = 10;
 /**
@@ -213,9 +215,15 @@ function searchEnglishName(cleaned: string, exactOnly = false): SearchResult {
 	// Edit-distance search over every distinct name (and face): several
 	// misread letters inside one word ("wmotorion" for Immolation) defeat the
 	// index-based paths; a scan of ~38k names with a bigram prefilter takes a
-	// few tens of milliseconds.
-	if (ranked.length === 0 || ranked[0].score < 0.6) {
-		const fuzzy = fuzzyNames(cleaned);
+	// few tens of milliseconds. It also runs while the best pooled name is
+	// still uncertain (below NAME_CERTAIN in resolve.ts): the stem path keeps
+	// FUZZY_ROWS rows ordered by bm25 and release date, which for a common stem
+	// are the newest printings, not the closest names. "ams Lighining" pooled
+	// 671 rows for "Ligh"; Chain Lightning (row 494) and Ball Lightning (531)
+	// fell off, so Arc Lightning 0.77 had no runner-up and confirmed a Chain
+	// Lightning (multi-card upload, full catalogue, 2026-10-29).
+	if (ranked.length === 0 || ranked[0].score < FUZZY_SCAN_BELOW) {
+		const fuzzy = fuzzyNames(cleaned, 10);
 		if (fuzzy.length > 0) {
 			pool.push(...fuzzy.flatMap((f) => exactStmt().all(f.name, `${f.name} //%`, f.name) as CardRow[]));
 			ranked = rankNameMatches(pool, cleaned, FUZZY_NAMES);
