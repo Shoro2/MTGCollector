@@ -6,7 +6,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import { dev, version } from '$app/environment';
-	import { disableOffline, enableOffline, formatBytes, offlineEnabled, offlineSupported, storedBytes } from '$lib/offline/client';
+	import { disableOffline, enableOffline, formatBytes, offlineState, offlineSupported, storedBytes, type OfflineState } from '$lib/offline/client';
 	import { openCvUrl } from '$lib/scanner/assets';
 	import { DETECT_WORKER_URL } from '$lib/scanner/detect';
 
@@ -22,13 +22,17 @@
 	} = $props();
 
 	let supported = $state(false);
-	let enabled = $state(false);
+	let status = $state<OfflineState>('off');
+	const enabled = $derived(status !== 'off');
 	let busy = $state(false);
 	let error = $state('');
 	let stored = $state<number | null>(null);
 
+	/** The files beyond the build that the offline scanner needs (OpenCV.js, this build's detection worker). */
+	const warmUrls = () => [openCvUrl(), `${DETECT_WORKER_URL}?v=${encodeURIComponent(version)}`];
+
 	async function refresh() {
-		enabled = await offlineEnabled();
+		status = await offlineState(warmUrls());
 		stored = await storedBytes();
 	}
 
@@ -41,7 +45,7 @@
 		busy = true;
 		error = '';
 		try {
-			await enableOffline([openCvUrl(), `${DETECT_WORKER_URL}?v=${encodeURIComponent(version)}`], dev);
+			await enableOffline(warmUrls(), dev);
 		} catch (err) {
 			error = (err as Error).message || 'Offline mode could not be turned on.';
 		} finally {
@@ -70,7 +74,7 @@
 		class="rounded-lg border px-3 py-2 text-sm {online ? 'border-[var(--color-border)] bg-[var(--color-surface)]' : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200'}">
 		{#if !online}
 			<p class="font-medium">You are offline.</p>
-			<p class="text-yellow-200/80">Captures are saved on this device and identified as soon as the connection is back{queued > 0 ? ` (${queued} waiting)` : ''}.{#if !enabled && supported} Turn on offline mode below so this page also opens without a connection.{/if}</p>
+			<p class="text-yellow-200/80">Captures are saved on this device and identified as soon as the connection is back{queued > 0 ? ` (${queued} waiting)` : ''}.{#if status !== 'ready' && supported} Turn on offline mode below so this page also opens without a connection.{/if}</p>
 		{:else}
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
 				<p class="mr-auto">
@@ -92,11 +96,17 @@
 {/if}
 
 {#if supported}
-	<details class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3" data-offline-mode={enabled ? 'on' : 'off'}>
-		<summary class="cursor-pointer font-medium">Offline mode · {enabled ? 'On' : 'Off'}</summary>
+	<details class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3" data-offline-mode={status === 'ready' ? 'on' : status}>
+		<summary class="cursor-pointer font-medium">Offline mode · {status === 'ready' ? 'On' : status === 'incomplete' ? 'Not complete' : 'Off'}</summary>
 		<div class="mt-3 space-y-3 text-sm">
 			<p class="text-[var(--color-text-muted)]">Scan without a connection, at a fair or in a basement. This keeps the scanner page and the card detector on this device (about 15 MB). Captures made offline are stored here and identified with the same checks as always once you are back online. Nothing is sent while offline.</p>
-			{#if enabled}
+			{#if status === 'incomplete'}
+				<p class="text-yellow-200">Not ready offline: the card detector is not stored on this device yet{stored !== null ? ` (${formatBytes(stored)} stored by this site)` : ''}. Store it again, or turn offline mode off.</p>
+				<div class="flex flex-wrap gap-2">
+					<button type="button" class="btn btn-primary" onclick={turnOn} disabled={busy || !online}>{busy ? 'Storing…' : 'Store again'}</button>
+					<button type="button" class="btn" onclick={turnOff} disabled={busy}>Turn off offline mode</button>
+				</div>
+			{:else if enabled}
 				<p>Ready offline{stored !== null ? ` · ${formatBytes(stored)} stored by this site` : ''}.</p>
 				<button type="button" class="btn" onclick={turnOff} disabled={busy}>{busy ? 'Working…' : 'Turn off offline mode'}</button>
 			{:else}
