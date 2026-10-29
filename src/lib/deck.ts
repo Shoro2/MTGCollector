@@ -20,6 +20,15 @@ export type Visibility = (typeof VISIBILITIES)[number];
 export const VISIBILITY_LABELS: Record<Visibility, string> = { private: 'Private', unlisted: 'Unlisted', public: 'Public' };
 
 /**
+ * True when a write makes a deck public: creating it public (`current` null) or switching
+ * a private or unlisted deck to public. That step lists the deck for everybody, so it
+ * needs the captcha; editing a deck that is already public does not.
+ */
+export function publishes(current: Visibility | null, next: unknown): boolean {
+	return next === 'public' && current !== 'public';
+}
+
+/**
  * Commander Brackets (Wizards of the Coast, 2025): the power level a deck's owner states,
  * so a table can agree on what to expect. The app stores what the owner chooses; it does
  * not estimate a bracket.

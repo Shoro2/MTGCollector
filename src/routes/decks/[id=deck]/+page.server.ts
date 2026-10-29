@@ -1,14 +1,15 @@
 import { error } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { deckCards, hasReported, ownedCards, ownedPrintings, readableDeck } from '$lib/server/decks';
+import { captchaSiteKey } from '$lib/server/captcha';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { allocateOwnership, cardFrame, deckColors, deckTotals, manaCurve, ownershipKey, unitPriceEur } from '$lib/deck';
 import { canHavePartner, checkDeck } from '$lib/deck-formats';
 
 /**
  * One deck, for its owner and for anyone with the link unless it is private. Ownership
- * marks compare the deck with the viewer's own collection; the owner's collection and
- * name never reach other viewers.
+ * marks compare the deck with the viewer's own collection; the owner's collection, Google
+ * name and e-mail address never reach other viewers, only the author name they chose.
  */
 export async function load({ params, locals, depends }) {
 	depends('app:deck');
@@ -35,12 +36,15 @@ export async function load({ params, locals, depends }) {
 	return {
 		deck: {
 			id: deck.id, name: deck.name, format: deck.format, visibility: deck.visibility, bracket: deck.bracket ?? null,
-			// A deck hidden after reports keeps its description from everybody but its owner.
+			// A deck hidden after reports keeps its description and author name from everybody but its owner.
 			description: deck.hidden_at && !isOwner ? '' : deck.description,
+			author_name: deck.hidden_at && !isOwner ? '' : deck.author_name ?? '',
 			hidden: !!deck.hidden_at,
 			created_at: deck.created_at, updated_at: deck.updated_at
 		},
 		isOwner,
+		// The settings dialog shows the captcha when the owner makes the deck public.
+		captchaSiteKey: isOwner ? captchaSiteKey() : null,
 		partnerOf,
 		reported: viewer !== null && !isOwner ? hasReported(sqlite, viewer, deck.id) : false,
 		signedIn: viewer !== null,

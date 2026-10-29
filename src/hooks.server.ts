@@ -6,6 +6,7 @@ import {
 } from '$lib/server/price-updater';
 import { validateSession } from '$lib/server/auth';
 import { isDecodablePath } from '$lib/server/request-path';
+import { CSP } from '$lib/server/csp';
 import { error, redirect, text, type Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 
@@ -101,23 +102,7 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 // deck loads hide private decks and show a visitor only the public list.
 const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/portfolio-tracker', '/impressum', '/datenschutz', '/contact', '/api/health', '/api/scan-log', '/decks'];
 
-// Permissive CSP: the app loads OpenCV and Tesseract from CDNs and embeds a
-// self-hosted Plausible script. 'unsafe-inline' is required by SvelteKit's
-// hydration payloads; 'unsafe-eval' is required by OpenCV's WASM glue.
-const CSP = [
-	"default-src 'self'",
-	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com",
-	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' data: blob: https://cards.scryfall.io https://c1.scryfall.com https://c2.scryfall.com https://lh3.googleusercontent.com",
-	// data: is for OpenCV.js, whose single-file build fetches its embedded WASM
-	// from a data: URL (it silently falls back to a slower path when refused).
-	"connect-src 'self' data: https://api.scryfall.com https://api.frankfurter.dev https://analytics.mtg-collector.com https://cdn.jsdelivr.net",
-	"font-src 'self' data:",
-	"worker-src 'self' blob:",
-	"frame-ancestors 'none'",
-	"base-uri 'self'",
-	"form-action 'self' https://accounts.google.com"
-].join('; ');
+// The CSP lives in src/lib/server/csp.ts (unit-tested against the scanner library hosts).
 
 function withSecurityHeaders(response: Response): Response {
 	response.headers.set('X-Content-Type-Options', 'nosniff');

@@ -77,6 +77,18 @@ export function addDeckReports(db: Database) {
 	db.exec(DECK_REPORTS_SQL);
 }
 
+/**
+ * Migration 0030_deck_author: the author name the owner chooses to show on a shared deck
+ * (empty for none). Never the Google name or e-mail address. Appended after `hidden_at`
+ * (positional dump).
+ */
+export function addDeckAuthor(db: Database) {
+	const columns = db.prepare('PRAGMA table_info(decks)').all() as { name: string }[];
+	if (!columns.some((c) => c.name === 'author_name')) db.exec("ALTER TABLE decks ADD COLUMN author_name TEXT NOT NULL DEFAULT ''");
+}
+
+export const MAX_AUTHOR_NAME = 40;
+
 /** Distinct accounts whose reports hide a deck's description and take it off the public list. */
 export const REPORTS_TO_HIDE = 3;
 export const REPORT_REASONS = ['spam', 'offensive', 'other'] as const;
@@ -95,8 +107,20 @@ const notFound = () => new DeckError('Deck not found.', 404);
 
 export const newDeckId = () => randomBytes(12).toString('base64url');
 
-export type DeckMeta = { name: string; format: string; visibility: Visibility; description: string; bracket: Bracket | null };
+export type DeckMeta = { name: string; format: string; visibility: Visibility; description: string; bracket: Bracket | null; author_name: string };
 export type DeckRecord = DeckMeta & { id: string; user_id: string; created_at: string; updated_at: string; hidden_at?: string | null };
+
+/** The author name the user chose last, to prefill the next deck (empty when none). */
+export function lastAuthorName(db: Database, userId: string): string {
+	const row = db.prepare("SELECT author_name FROM decks WHERE user_id = ? AND author_name != '' ORDER BY updated_at DESC, rowid DESC LIMIT 1").get(userId) as
+		{ author_name: string } | undefined;
+	return row?.author_name ?? '';
+}
+
+/** The deck's visibility for its owner, so an endpoint can tell when a write publishes it. */
+export function ownDeckVisibility(db: Database, userId: string, deckId: string): Visibility {
+	return ownDeck(db, userId, deckId).visibility;
+}
 
 /** Validates the fields present in `input` (all of them unless `partial`). */
 export function deckMeta(input: Record<string, unknown>, partial = false): Partial<DeckMeta> {
@@ -126,6 +150,14 @@ export function deckMeta(input: Record<string, unknown>, partial = false): Parti
 		const bracket = input.bracket ?? null;
 		if (bracket !== null && !isBracket(bracket)) throw new DeckError('The bracket is a number from 1 to 5.');
 		out.bracket = bracket;
+	}
+	if (given('author_name')) {
+		const author = input.author_name ?? '';
+		if (typeof author !== 'string') throw new DeckError('The author name must be text.');
+		const cleaned = cleanUserText(author, false);
+		if (cleaned.length > MAX_AUTHOR_NAME) throw new DeckError(`The author name has at most ${MAX_AUTHOR_NAME} characters.`);
+		if (hasContact(cleaned)) throw new DeckError(CONTACT_MESSAGE);
+		out.author_name = cleaned;
 	}
 	return out;
 }
@@ -278,7 +310,7 @@ function writeList(db: Database, deck: DeckRecord, text: string, mode: 'add' | '
  * the two cards' abilities allow, see canPair()) and a pasted list.
  */
 export function createDeck(db: Database, userId: string, input: Record<string, unknown>) {
-	const meta = deckMeta({ format: 'commander', visibility: 'private', description: '', bracket: null, ...input }) as DeckMeta;
+	const meta = deckMeta({ format: 'commander', visibility: 'private', description: '', bracket: null, author_name: '', ...input }) as DeckMeta;
 	const list = input.list ?? '';
 	if (typeof list !== 'string') throw new DeckError('The card list must be text.');
 	const commanderId = input.commanderId ? String(input.commanderId) : null;
@@ -289,8 +321,8 @@ export function createDeck(db: Database, userId: string, input: Record<string, u
 		if (n >= MAX_DECKS_PER_USER) throw new DeckError(`You can keep at most ${MAX_DECKS_PER_USER} decks.`);
 		const now = new Date().toISOString();
 		const id = newDeckId();
-		db.prepare('INSERT INTO decks (id, user_id, name, format, description, visibility, bracket, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-			.run(id, userId, meta.name, meta.format, meta.description, meta.visibility, meta.bracket, now, now);
+		db.prepare('INSERT INTO decks (id, user_id, name, format, description, visibility, bracket, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+			.run(id, userId, meta.name, meta.format, meta.description, meta.visibility, meta.bracket, meta.author_name, now, now);
 		const deck = ownDeck(db, userId, id);
 		const leaders: PairCard[] = [];
 		if (commanderId) {
@@ -331,7 +363,10 @@ export function deleteDeck(db: Database, userId: string, deckId: string) {
 	if (!db.prepare('DELETE FROM decks WHERE id = ? AND user_id = ?').run(deckId, userId).changes) throw notFound();
 }
 
-/** A private copy in the viewer's account: their own deck or anyone's shared one. */
+/**
+ * A private copy in the viewer's account: their own deck or anyone's shared one. A copy of
+ * someone else's deck starts without an author name: its new owner is not that author.
+ */
 export function copyDeck(db: Database, viewerId: string, deckId: string): string {
 	return db.transaction(() => {
 		const source = readableDeck(db, deckId, viewerId);
@@ -340,9 +375,10 @@ export function copyDeck(db: Database, viewerId: string, deckId: string): string
 		if (n >= MAX_DECKS_PER_USER) throw new DeckError(`You can keep at most ${MAX_DECKS_PER_USER} decks.`);
 		const id = newDeckId();
 		const now = new Date().toISOString();
-		const name = source.user_id === viewerId ? `${source.name} (copy)`.slice(0, 100) : source.name;
-		db.prepare("INSERT INTO decks (id, user_id, name, format, description, visibility, bracket, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'private', ?, ?, ?)")
-			.run(id, viewerId, name, source.format, source.hidden_at && source.user_id !== viewerId ? '' : source.description, source.bracket ?? null, now, now);
+		const own = source.user_id === viewerId;
+		const name = own ? `${source.name} (copy)`.slice(0, 100) : source.name;
+		db.prepare("INSERT INTO decks (id, user_id, name, format, description, visibility, bracket, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'private', ?, ?, ?, ?)")
+			.run(id, viewerId, name, source.format, source.hidden_at && !own ? '' : source.description, source.bracket ?? null, own ? source.author_name ?? '' : '', now, now);
 		db.prepare(`INSERT INTO deck_cards (deck_id, card_id, board, quantity, foil)
 			SELECT ?, card_id, board, quantity, foil FROM deck_cards WHERE deck_id = ? ORDER BY id`).run(id, deckId);
 		return id;
@@ -488,7 +524,7 @@ export function ownedPrintings(db: Database, userId: string, cardIds: string[]):
 }
 
 export type DeckSummary = {
-	id: string; name: string; format: string; visibility: Visibility; bracket: Bracket | null; created_at: string; updated_at: string;
+	id: string; name: string; format: string; visibility: Visibility; bracket: Bracket | null; author_name: string; created_at: string; updated_at: string;
 	cards: number; sideboard: number; value: number; unpriced: number; colors: string[];
 	commander: { name: string; image_uri: string | null } | null;
 };
@@ -531,7 +567,7 @@ function summarize(decks: DeckHead[], rows: SummaryRow[], usdToEur: number): Dec
 
 /** The owner's decks, newest change first. */
 export function listDecks(db: Database, userId: string, usdToEur: number): DeckSummary[] {
-	const decks = db.prepare('SELECT id, name, format, visibility, bracket, created_at, updated_at FROM decks WHERE user_id = ? ORDER BY updated_at DESC')
+	const decks = db.prepare('SELECT id, name, format, visibility, bracket, author_name, created_at, updated_at FROM decks WHERE user_id = ? ORDER BY updated_at DESC')
 		.all(userId) as DeckHead[];
 	const rows = db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM deck_cards dc JOIN decks d ON d.id = dc.deck_id JOIN cards c ON c.id = dc.card_id
 		WHERE d.user_id = ? ORDER BY dc.id`).all(userId) as SummaryRow[];
@@ -550,7 +586,7 @@ const likePattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}
 
 /**
  * Everybody's public decks, for visitors too: never the owner, never a hidden deck (see
- * reportDeck), never an empty one. `q` searches deck names and commanders.
+ * reportDeck), never an empty one. `q` searches deck names, author names and commanders.
  */
 export function publicDecks(db: Database, query: { q?: string; format?: string; sort?: PublicDeckSort; page?: number }, usdToEur: number) {
 	const q = (query.q ?? '').trim().slice(0, 100);
@@ -558,11 +594,11 @@ export function publicDecks(db: Database, query: { q?: string; format?: string; 
 	const sort = query.sort && PUBLIC_DECK_SORTS.includes(query.sort) ? query.sort : 'updated';
 	const listed = `
 		WITH listed AS (
-			SELECT d.id, d.name, d.format, d.visibility, d.bracket, d.created_at, d.updated_at,
+			SELECT d.id, d.name, d.format, d.visibility, d.bracket, d.author_name, d.created_at, d.updated_at,
 				(SELECT COALESCE(SUM(quantity), 0) FROM deck_cards WHERE deck_id = d.id AND board IN ('commander', 'main')) AS cards
 			FROM decks d
 			WHERE d.visibility = 'public' AND d.hidden_at IS NULL AND (@format = '' OR d.format = @format)
-				AND (@q = '' OR d.name LIKE @like ESCAPE '\\' OR EXISTS (
+				AND (@q = '' OR d.name LIKE @like ESCAPE '\\' OR d.author_name LIKE @like ESCAPE '\\' OR EXISTS (
 					SELECT 1 FROM deck_cards dc JOIN cards c ON c.id = dc.card_id
 					WHERE dc.deck_id = d.id AND dc.board = 'commander' AND c.name LIKE @like ESCAPE '\\'))
 		)`;
@@ -570,7 +606,7 @@ export function publicDecks(db: Database, query: { q?: string; format?: string; 
 	const { total } = db.prepare(`${listed} SELECT COUNT(*) AS total FROM listed WHERE cards > 0`).get(params) as { total: number };
 	const pages = Math.max(1, Math.ceil(total / PUBLIC_PAGE_SIZE));
 	const page = Math.min(Math.max(1, Math.floor(query.page ?? 1) || 1), pages);
-	const heads = db.prepare(`${listed} SELECT id, name, format, visibility, bracket, created_at, updated_at FROM listed WHERE cards > 0
+	const heads = db.prepare(`${listed} SELECT id, name, format, visibility, bracket, author_name, created_at, updated_at FROM listed WHERE cards > 0
 		ORDER BY ${PUBLIC_ORDER[sort]} LIMIT @limit OFFSET @offset`).all({ ...params, limit: PUBLIC_PAGE_SIZE, offset: (page - 1) * PUBLIC_PAGE_SIZE }) as DeckHead[];
 	const rows = heads.length
 		? (db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM deck_cards dc JOIN cards c ON c.id = dc.card_id

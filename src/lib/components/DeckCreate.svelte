@@ -6,11 +6,19 @@
 	import CardSearchInput from './CardSearchInput.svelte';
 	import BracketSelect from './BracketSelect.svelte';
 	import DeckLineIssues from './DeckLineIssues.svelte';
+	import Turnstile from './Turnstile.svelte';
 	import { deckLinkHelp } from '$lib/deck-text';
 
-	let { onclose }: { onclose: () => void } = $props();
+	/**
+	 * `authorName` prefills the author field with the name the user chose last;
+	 * `captchaSiteKey` (null when the captcha is off) shows the check a public deck needs.
+	 */
+	let { onclose, authorName = '', captchaSiteKey = null }: { onclose: () => void; authorName?: string; captchaSiteKey?: string | null } = $props();
 	let dialog: HTMLDialogElement;
-	onMount(() => dialog.showModal());
+	onMount(() => {
+		author = authorName;
+		dialog.showModal();
+	});
 
 	let name = $state('');
 	let format = $state('commander');
@@ -19,6 +27,10 @@
 	let bracket = $state<Bracket | null>(null);
 	let legalOnly = $state(true);
 	let visibility = $state<Visibility>('private');
+	let author = $state('');
+	let captcha = $state<ReturnType<typeof Turnstile>>();
+	let captchaToken = $state('');
+	const needsCaptcha = $derived(visibility === 'public' && !!captchaSiteKey);
 	let source = $state<'none' | 'paste' | 'file'>('none');
 	let text = $state('');
 	// A pasted deck link gets an explanation of where the site's text export is.
@@ -64,7 +76,8 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					name, format, visibility, list,
+					name, format, visibility, list, author_name: author,
+					captcha: needsCaptcha ? captchaToken : undefined,
 					commanderId: selected.command ? commander?.id : undefined,
 					partnerId: canTakePartner ? partner?.id : undefined,
 					bracket: selected.kind === 'commander' ? bracket : null
@@ -76,6 +89,8 @@
 			else await goto(`/decks/${result.id}`);
 		} catch (error) {
 			message = (error as Error).message;
+			// A Turnstile token is good for one check, even when the deck was refused for another reason.
+			if (needsCaptcha) captcha?.reset();
 		} finally {
 			busy = false;
 		}
@@ -157,8 +172,12 @@
 							</label>
 						{/each}
 					</div>
-					<p class="mt-1 text-xs text-[var(--color-text-muted)]">{VISIBILITY_HELP[visibility]} Your name and your collection are never shown.</p>
+					<p class="mt-1 text-xs text-[var(--color-text-muted)]">{VISIBILITY_HELP[visibility]} Your Google name, e-mail address and collection are never shown.</p>
 				</fieldset>
+				<label class="block text-sm">
+					<span class="text-[var(--color-text-muted)]">Author name (optional)</span>
+					<input bind:value={author} maxlength="40" autocomplete="nickname" placeholder="Shown as “by …” when you share the deck" class="control mt-1 block w-full px-3 text-sm" data-author-input />
+				</label>
 				<fieldset>
 					<legend class="text-sm text-[var(--color-text-muted)]">Existing deck list (optional)</legend>
 					<div class="mt-1 flex flex-wrap gap-2">
@@ -187,9 +206,15 @@
 					{/if}
 				</fieldset>
 			</fieldset>
+			{#if needsCaptcha && captchaSiteKey}
+				<div data-deck-captcha>
+					<p class="mb-1 text-xs text-[var(--color-text-muted)]">A public deck is listed for everybody, so we check that you are human first.</p>
+					<Turnstile bind:this={captcha} bind:token={captchaToken} siteKey={captchaSiteKey} action="publish-deck" />
+				</div>
+			{/if}
 			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 			<div class="flex justify-end">
-				<button type="submit" disabled={busy || !name.trim() || !!linkHelp} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
+				<button type="submit" disabled={busy || !name.trim() || !!linkHelp || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
 			</div>
 		</form>
 	{/if}

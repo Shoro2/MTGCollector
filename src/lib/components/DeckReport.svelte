@@ -62,7 +62,7 @@
 				{/each}
 			</fieldset>
 			<p class="text-xs text-[var(--color-text-muted)]">
-				When several players report a deck, its description is hidden and it leaves the public deck list. Your report is stored with your account and never shown to the deck's owner.
+				When several players report a deck, its description and author name are hidden and it leaves the public deck list. Your report is stored with your account and never shown to the deck's owner.
 			</p>
 			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 			<div class="flex justify-end">

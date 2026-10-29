@@ -157,15 +157,16 @@
 			</h1>
 			<p class="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
 				<ColorPips colors={data.colors} includeColorless />
+				{#if deck.author_name}<span data-deck-author>by <span class="text-[var(--color-text)]">{deck.author_name}</span></span>{/if}
 				<span title={new Date(deck.updated_at).toLocaleString()}>Updated {timeAgo(deck.updated_at)}</span>
 			</p>
 			{#if deck.description}<p class="mt-3 whitespace-pre-line break-words text-sm">{deck.description}</p>{/if}
 			{#if deck.hidden}
 				<p class="mt-3 rounded-lg border border-[var(--color-accent-muted)] p-3 text-sm" data-hidden-note>
 					{#if data.isOwner}
-						Several players reported this deck. Its description is hidden from them, and it is not in the public deck list.
+						Several players reported this deck. Its description and author name are hidden from them, and it is not in the public deck list.
 					{:else}
-						This deck's description is hidden after reports from several players.
+						This deck's description and author name are hidden after reports from several players.
 					{/if}
 				</p>
 			{/if}
@@ -385,7 +386,7 @@
 	<DeckCardEdit deckId={deck.id} row={editing} onclose={() => (editing = null)} onsaved={refresh} />
 {/if}
 {#if settings}
-	<DeckSettings {deck} hint={settings.hint} onclose={() => (settings = null)} onsaved={refresh} />
+	<DeckSettings {deck} hint={settings.hint} captchaSiteKey={data.captchaSiteKey} onclose={() => (settings = null)} onsaved={refresh} />
 {/if}
 {#if importing}
 	<DeckImport deckId={deck.id} onclose={() => (importing = false)} onimported={refresh} />

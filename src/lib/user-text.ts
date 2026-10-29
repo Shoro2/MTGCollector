@@ -1,6 +1,6 @@
 /**
- * Text that users write for others to read (deck names and descriptions). Pure, so the
- * rules are unit-tested and the same on every write path.
+ * Text that users write for others to read (deck names, author names and descriptions).
+ * Pure, so the rules are unit-tested and the same on every write path.
  *
  * Nobody moderates by hand, so the rules take away what spam needs: a way to reach the
  * spammer. Links, web addresses, e-mail addresses and invite links are refused when the
@@ -48,7 +48,7 @@ const CONTACT: RegExp[] = [
 	/\bdiscord(?:app)?\s*\.\s*(?:gg|com\s*\/\s*invite)\b/i
 ];
 
-export const CONTACT_MESSAGE = 'Links, web addresses and e-mail addresses are not allowed in deck names and descriptions.';
+export const CONTACT_MESSAGE = 'Links, web addresses and e-mail addresses are not allowed in deck names, author names and descriptions.';
 
 /** True when the text holds a link, a web or e-mail address or an invite link. */
 export function hasContact(text: string): boolean {

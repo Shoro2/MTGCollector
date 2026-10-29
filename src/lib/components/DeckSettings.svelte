@@ -4,10 +4,16 @@
 	import { DECK_FORMATS } from '$lib/deck-formats';
 	import { VISIBILITIES, VISIBILITY_LABELS, type Bracket, type Visibility } from '$lib/deck';
 	import BracketSelect from './BracketSelect.svelte';
+	import Turnstile from './Turnstile.svelte';
 
-	type Deck = { id: string; name: string; format: string; visibility: Visibility; description: string; bracket: Bracket | null };
-	/** Name, format, visibility, bracket and description of a deck, and deleting it. */
-	let { deck, hint = '', onclose, onsaved }: { deck: Deck; hint?: string; onclose: () => void; onsaved: () => Promise<void> } = $props();
+	type Deck = { id: string; name: string; format: string; visibility: Visibility; description: string; bracket: Bracket | null; author_name: string };
+	/**
+	 * Name, format, visibility, bracket, author name and description of a deck, and deleting
+	 * it. Making the deck public needs the captcha (`captchaSiteKey`, null when it is off).
+	 */
+	let { deck, hint = '', captchaSiteKey = null, onclose, onsaved }: {
+		deck: Deck; hint?: string; captchaSiteKey?: string | null; onclose: () => void; onsaved: () => Promise<void>;
+	} = $props();
 
 	let dialog: HTMLDialogElement;
 	let name = $state('');
@@ -15,6 +21,10 @@
 	let visibility = $state<Visibility>('private');
 	let description = $state('');
 	let bracket = $state<Bracket | null>(null);
+	let author = $state('');
+	let captcha = $state<ReturnType<typeof Turnstile>>();
+	let captchaToken = $state('');
+	const needsCaptcha = $derived(visibility === 'public' && deck.visibility !== 'public' && !!captchaSiteKey);
 	// Brackets belong to the commander formats; another format keeps the stored value untouched.
 	const commanderFormat = $derived(DECK_FORMATS.find((f) => f.key === format)?.kind === 'commander');
 	let confirmDelete = $state(false);
@@ -23,6 +33,7 @@
 
 	onMount(() => {
 		({ name, format, visibility, description, bracket } = deck);
+		author = deck.author_name;
 		dialog.showModal();
 	});
 
@@ -40,6 +51,8 @@
 			return true;
 		} catch (error) {
 			message = (error as Error).message;
+			// A Turnstile token is good for one check, even when the change was refused for another reason.
+			if (needsCaptcha) captcha?.reset();
 			return false;
 		} finally {
 			busy = false;
@@ -48,7 +61,8 @@
 
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
-		if (await request('PATCH', { name, format, visibility, description, ...(commanderFormat ? { bracket } : {}) })) {
+		const body = { name, format, visibility, description, author_name: author, ...(commanderFormat ? { bracket } : {}) };
+		if (await request('PATCH', needsCaptcha ? { ...body, captcha: captchaToken } : body)) {
 			await onsaved();
 			dialog.close();
 		}
@@ -97,17 +111,27 @@
 					{/each}
 				</div>
 				<p class="mt-1 text-xs text-[var(--color-text-muted)]">
-					Private decks are yours alone. Unlisted and public decks can be viewed by anyone with the link, without your name or collection.
+					Private decks are yours alone. Unlisted and public decks can be viewed by anyone with the link, with the author name below but never your Google name, e-mail address or collection.
 				</p>
 			</fieldset>
+			<label class="block text-sm">
+				<span class="text-[var(--color-text-muted)]">Author name (optional)</span>
+				<input bind:value={author} maxlength="40" autocomplete="nickname" placeholder="Shown as “by …” when you share the deck" class="control mt-1 block w-full px-3 text-sm" data-author-input />
+			</label>
 			<label class="block text-sm">
 				<span class="text-[var(--color-text-muted)]">Description</span>
 				<textarea bind:value={description} rows="4" maxlength="5000" class="control mt-1 block w-full px-3 py-2 text-sm"></textarea>
 			</label>
 		</fieldset>
+		{#if needsCaptcha && captchaSiteKey}
+			<div data-deck-captcha>
+				<p class="mb-1 text-xs text-[var(--color-text-muted)]">A public deck is listed for everybody, so we check that you are human first.</p>
+				<Turnstile bind:this={captcha} bind:token={captchaToken} siteKey={captchaSiteKey} action="publish-deck" />
+			</div>
+		{/if}
 		{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 		<div class="flex justify-end">
-			<button type="submit" disabled={busy || !name.trim()} class="btn btn-primary">{busy ? 'Saving…' : 'Save'}</button>
+			<button type="submit" disabled={busy || !name.trim() || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Saving…' : 'Save'}</button>
 		</div>
 	</form>
 	<div class="mt-6 border-t border-[var(--color-border)] pt-4">

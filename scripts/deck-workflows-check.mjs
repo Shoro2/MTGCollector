@@ -2,12 +2,16 @@
 // create with a pasted list, type groups, ownership against the viewer's collection, totals and
 // format checks, editing, adding, importing, exporting, sharing by link, copying, privacy and
 // deleting, partner commanders, brackets, color frames, the deck-link help, the link filter,
-// the public deck list, reports, ownership sorting and the printing preview, on a phone-sized
-// and a desktop-sized browser.
+// the public deck list, reports, ownership sorting, the printing preview, the author name and
+// the captcha in front of a public deck, on a phone-sized and a desktop-sized browser.
+// Turnstile is replaced by stand-ins: a fake widget script for the browser and a local
+// siteverify endpoint for the server (TURNSTILE_VERIFY_URL), since cloud sessions cannot
+// reach challenges.cloudflare.com and real keys must never be in a test.
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { chromium } from 'playwright';
@@ -71,9 +75,46 @@ db.exec(`INSERT INTO collection_cards(user_id,card_id,quantity,condition,languag
 	('owner','${uuid(6)}',10,'near_mint','en',0,'2026-01-01T00:00:00.000Z',1),
 	('other','${uuid(5)}',1,'near_mint','en',0,'2026-01-01T00:00:00.000Z',0)`);
 
+// The stand-in siteverify: a token "pass:<action>:<n>" is valid once and reports its action.
+const spentTokens = new Set();
+const verifier = createServer((req, res) => {
+	let body = '';
+	req.on('data', chunk => body += chunk);
+	req.on('end', () => {
+		const params = new URLSearchParams(body), token = params.get('response') ?? '';
+		const [kind, action] = token.split(':');
+		const success = params.get('secret') === 'test-secret' && kind === 'pass' && !spentTokens.has(token);
+		spentTokens.add(token);
+		res.setHeader('Content-Type', 'application/json');
+		res.end(JSON.stringify(success ? { success, action } : { success: false, 'error-codes': ['invalid-input-response'] }));
+	});
+});
+await new Promise(r => verifier.listen(0, '127.0.0.1', r));
+const verifyUrl = `http://127.0.0.1:${verifier.address().port}/siteverify`;
+// The stand-in widget: a button that answers with a fresh token for the widget's action.
+const FAKE_TURNSTILE = `window.turnstile = (() => {
+	let n = 0; const widgets = {};
+	return {
+		render(el, o) {
+			const id = 'w' + (++n);
+			const button = document.createElement('button');
+			button.type = 'button'; button.textContent = 'Verify you are human'; button.dataset.fakeTurnstile = '';
+			button.onclick = () => { button.textContent = 'Success'; o.callback('pass:' + o.action + ':' + Math.random().toString(36).slice(2)); };
+			el.appendChild(button); widgets[id] = { el, button };
+			return id;
+		},
+		reset(id) { widgets[id].button.textContent = 'Verify you are human'; },
+		remove(id) { widgets[id]?.button.remove(); delete widgets[id]; }
+	};
+})();`;
+const fakeTurnstile = (context) => context.route('https://challenges.cloudflare.com/**', route =>
+	route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_TURNSTILE }));
+const captchaCount = () => [...spentTokens].filter(t => t.includes(':publish-deck:')).length;
+
 const port = Number(process.env.DECK_UX_PORT || 5194), origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['build/index.js'], { windowsHide: true,
-	env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, MTG_DB_PATH: dbPath, DISABLE_PRICE_UPDATES: '1', ADMIN_EMAIL: 'fixture@example.invalid' },
+	env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, MTG_DB_PATH: dbPath, DISABLE_PRICE_UPDATES: '1', ADMIN_EMAIL: 'fixture@example.invalid',
+		PUBLIC_TURNSTILE_SITE_KEY: 'test-site-key', TURNSTILE_SECRET_KEY: 'test-secret', TURNSTILE_VERIFY_URL: verifyUrl },
 	stdio: ['ignore', 'pipe', 'pipe'] });
 let output = '', browser, checks = 0;
 server.stdout.on('data', data => output += data); server.stderr.on('data', data => output += data);
@@ -103,11 +144,12 @@ try {
 		try { if ((await fetch(origin + '/api/health')).ok) break; } catch {}
 		await new Promise(r => setTimeout(r, 200));
 	}
-	check(['0027_decks', '0028_deck_bracket', '0029_deck_reports'].every(id => db.prepare('SELECT 1 FROM _schema_migrations WHERE id=?').get(id)), 'migrations 0027 to 0029 create the deck tables');
+	check(['0027_decks', '0028_deck_bracket', '0029_deck_reports', '0030_deck_author'].every(id => db.prepare('SELECT 1 FROM _schema_migrations WHERE id=?').get(id)), 'migrations 0027 to 0030 create the deck tables');
 
 	browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
 	const phone = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
 	const ownerContext = await browser.newContext(phone);
+	await fakeTurnstile(ownerContext);
 	await ownerContext.addCookies([{ name: 'session', value: tokens.owner, url: origin }]);
 	await ownerContext.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
 	const page = await ownerContext.newPage(), errors = [];
@@ -121,7 +163,13 @@ try {
 	await page.getByLabel('Name', { exact: true }).fill('Krenko Goblins');
 	await page.getByRole('combobox', { name: 'Commander' }).fill('Krenko');
 	await page.getByRole('option', { name: /Krenko, Mob Boss/ }).click();
+	await page.getByText('Public', { exact: true }).click();
+	await page.locator('dialog [data-fake-turnstile]').waitFor();
+	check(await page.locator('dialog [data-deck-captcha] [data-fake-turnstile]').count() === 1 && await page.getByRole('button', { name: 'Create', exact: true }).isDisabled(),
+		'a public deck shows the captcha and waits for it');
 	await page.getByText('Unlisted', { exact: true }).click();
+	check(await page.locator('dialog [data-deck-captcha]').count() === 0, 'an unlisted deck needs no captcha');
+	await page.getByLabel('Author name (optional)').fill('Goblin  Tamer');
 	await page.getByText('Paste in list', { exact: true }).click();
 	await page.getByLabel('Card list', { exact: true }).fill([
 		'1 Sol Ring', '4 Lightning Bolt (TST) 3', '1 Counterspell', '10 Mountain', '1 Goblin Guide', '1 Black Lotus', '1 Nonexistent Card Name',
@@ -133,7 +181,8 @@ try {
 	await page.getByRole('status').filter({ hasText: 'The deck was created with' }).waitFor();
 	check((await page.locator('dialog').innerText()).includes('Nonexistent Card Name'), 'an unknown card is reported with its line');
 	const deck = db.prepare("SELECT * FROM decks WHERE user_id='owner'").get();
-	check(deck && deck.name === 'Krenko Goblins' && deck.format === 'commander' && deck.visibility === 'unlisted', 'the deck is stored with name, format and visibility');
+	check(deck && deck.name === 'Krenko Goblins' && deck.format === 'commander' && deck.visibility === 'unlisted' && deck.author_name === 'Goblin Tamer',
+		'the deck is stored with name, format, visibility and author name');
 	const boards = Object.fromEntries(db.prepare('SELECT board, SUM(quantity) AS n FROM deck_cards WHERE deck_id=? GROUP BY board').all(deck.id).map(r => [r.board, r.n]));
 	check(boards.commander === 1 && boards.main === 18 && boards.sideboard === 1, 'commander, main deck and sideboard are filled from the dialog');
 	check(db.prepare('SELECT card_id FROM deck_cards WHERE deck_id=? AND board=? AND card_id=?').get(deck.id, 'main', uuid(3)), 'a set and number pick that printing');
@@ -227,6 +276,7 @@ try {
 	check(anonymous.status() === 200 && await visitor.getByRole('heading', { level: 1 }).innerText().then(t => t.includes('Krenko Goblins')), 'a visitor opens an unlisted deck by its link');
 	const html = await visitor.content();
 	check(!html.includes('Fixture Owner') && !html.includes('fixture@example.invalid'), 'a shared deck never shows its owner');
+	check((await visitor.locator('[data-deck-author]').innerText()) === 'by Goblin Tamer', 'a shared deck shows the author name its owner chose');
 	check(await visitor.locator('[data-owned]').count() === 0 && await visitor.getByRole('link', { name: 'Sign in to copy' }).count() === 1, 'a visitor gets no ownership marks and a sign-in link to copy');
 	check(await visitor.getByRole('button', { name: 'Settings', exact: true }).count() === 0 && await visitor.getByRole('button', { name: /^Edit / }).count() === 0, 'a visitor cannot edit the deck');
 	await visitor.goto(origin + '/decks');
@@ -292,6 +342,7 @@ try {
 
 	// Partner commanders and a bracket, on a desktop-sized browser.
 	const ownerWide = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	await fakeTurnstile(ownerWide);
 	await ownerWide.addCookies([{ name: 'session', value: tokens.owner, url: origin }]);
 	const big = await ownerWide.newPage();
 	big.on('pageerror', error => errors.push(error.message));
@@ -339,17 +390,52 @@ try {
 	await big.getByRole('button', { name: 'Save', exact: true }).click();
 	await big.locator('dialog').waitFor({ state: 'detached' });
 	check(db.prepare('SELECT bracket FROM decks WHERE id=?').get(duo.id).bracket === 4 && await big.locator('h1 [data-bracket="4"]').count() === 1, 'settings change the bracket');
-	// Links are refused, then the deck goes public with a plain description.
+	// Links are refused, then the deck goes public with a plain description, behind the captcha.
 	await big.getByRole('button', { name: 'Settings', exact: true }).click();
+	check(await big.getByLabel('Author name (optional)').inputValue() === 'Goblin Tamer', 'the create dialog filled in the author name of the first deck');
 	await big.getByText('Public', { exact: true }).click();
+	const save = big.getByRole('button', { name: 'Save', exact: true });
+	await big.locator('dialog [data-fake-turnstile]').waitFor();
+	check(await save.isDisabled() && await big.locator('dialog [data-fake-turnstile]').count() === 1, 'making a deck public waits for the captcha');
+	await big.screenshot({ path: resolve(dir, 'publish-captcha-desktop.png') });
 	await big.getByLabel('Description', { exact: true }).fill('Cheap singles at cardshop.com');
-	await big.getByRole('button', { name: 'Save', exact: true }).click();
+	await big.locator('dialog [data-fake-turnstile]').click();
+	await save.click();
 	await big.getByRole('alert').filter({ hasText: 'Links, web addresses and e-mail addresses are not allowed' }).waitFor();
 	check(db.prepare('SELECT visibility FROM decks WHERE id=?').get(duo.id).visibility === 'private', 'a description with a link is not saved');
+	check(captchaCount() === 0 && await save.isDisabled(), 'a refused description does not spend the captcha, and the widget starts over');
 	await big.getByLabel('Description', { exact: true }).fill('Draw cards, gain life.');
-	await big.getByRole('button', { name: 'Save', exact: true }).click();
+	await big.getByLabel('Author name (optional)').fill('shop.com');
+	await big.locator('dialog [data-fake-turnstile]').click();
+	await save.click();
+	await big.getByRole('alert').filter({ hasText: 'author names' }).waitFor();
+	check(db.prepare('SELECT visibility FROM decks WHERE id=?').get(duo.id).visibility === 'private', 'an author name with a web address is not saved');
+	await big.getByLabel('Author name (optional)').fill('Tamer of Partners');
+	await big.locator('dialog [data-fake-turnstile]').click();
+	await save.click();
 	await big.locator('dialog').waitFor({ state: 'detached' });
-	check(db.prepare('SELECT visibility, description FROM decks WHERE id=?').get(duo.id).description === 'Draw cards, gain life.', 'the deck is public with a plain description');
+	const published = db.prepare('SELECT visibility, description, author_name FROM decks WHERE id=?').get(duo.id);
+	check(published.visibility === 'public' && published.description === 'Draw cards, gain life.' && published.author_name === 'Tamer of Partners' && captchaCount() === 1,
+		'the deck is public with a plain description and author name after one passed captcha');
+	await big.getByRole('button', { name: 'Settings', exact: true }).click();
+	check(await big.locator('dialog [data-deck-captcha]').count() === 0, 'editing a deck that is already public needs no captcha');
+	await big.keyboard.press('Escape');
+	await big.locator('dialog').waitFor({ state: 'detached' });
+
+	// The server enforces the captcha, whatever the browser sends.
+	const api = (method, path, data) => ownerWide.request.fetch(origin + path, { method, data });
+	const refused = async (response) => response.status() === 400 && /Verify you are human/.test((await response.json()).message);
+	check(await refused(await api('POST', '/api/decks', { name: 'Spam', visibility: 'public' })), 'creating a public deck without the captcha is refused');
+	check(await refused(await api('POST', '/api/decks', { name: 'Spam', visibility: 'public', captcha: 'pass:contact:1' })), 'a captcha solved for another form is refused');
+	const ok = await (await api('POST', '/api/decks', { name: 'Fair deck', visibility: 'public', captcha: 'pass:publish-deck:api-1' })).json();
+	check(ok.success && db.prepare('SELECT visibility FROM decks WHERE id=?').get(ok.id).visibility === 'public', 'a passed captcha creates the public deck');
+	check(await refused(await api('POST', '/api/decks', { name: 'Again', visibility: 'public', captcha: 'pass:publish-deck:api-1' })), 'a captcha token works only once');
+	const quiet = await (await api('POST', '/api/decks', { name: 'Quiet deck', visibility: 'private' })).json();
+	check(await refused(await api('PATCH', `/api/decks/${quiet.id}`, { visibility: 'public' })), 'switching a deck to public without the captcha is refused');
+	check((await api('PATCH', `/api/decks/${quiet.id}`, { visibility: 'unlisted' })).ok() && (await api('PATCH', `/api/decks/${ok.id}`, { description: 'Still public.' })).ok(),
+		'unlisting a deck or editing a public one needs no captcha');
+	check((await api('PATCH', `/api/decks/${quiet.id}`, { author_name: 'me@example.com' })).status() === 400, 'the API refuses an author name with an e-mail address');
+	await api('DELETE', `/api/decks/${ok.id}`); await api('DELETE', `/api/decks/${quiet.id}`);
 	await big.getByRole('button', { name: 'Import', exact: true }).click();
 	await big.getByLabel('Card list', { exact: true }).fill('moxfield.com/decks/AbCdEf123');
 	check(await big.locator('dialog [data-link-help]').count() === 1 && await big.locator('dialog').getByRole('button', { name: 'Import', exact: true }).isDisabled(), 'the import dialog explains a Moxfield link too');
@@ -374,6 +460,12 @@ try {
 	const publicRow = visitor.locator('[data-public-decks] tbody tr', { hasText: 'Thrasios and Tymna' });
 	check(await publicRow.count() === 1 && (await publicRow.innerText()).includes('Thrasios, Triton Hero & Tymna the Weaver') && await publicRow.locator('[data-bracket="4"]').count() === 1, 'the public list shows the deck, its commanders and bracket');
 	check(!(await visitor.content()).includes('Fixture Owner') && await visitor.locator('[data-public-decks] tbody tr').count() === 1, 'the public list never names the owner and leaves private decks out');
+	check((await publicRow.locator('[data-public-author]').innerText()).includes('by Tamer of Partners'), 'the public list shows the author name');
+	await visitor.getByLabel('Search public decks').fill('tamer of');
+	await visitor.getByRole('button', { name: 'Search', exact: true }).click();
+	await visitor.waitForURL(/q=tamer/);
+	check(await visitor.locator('[data-public-total="1"]').count() === 1, 'the public list searches author names');
+	await visitor.screenshot({ path: resolve(dir, 'public-author-mobile.png'), fullPage: true });
 	await visitor.getByLabel('Search public decks').fill('tymna');
 	await visitor.getByRole('button', { name: 'Search', exact: true }).click();
 	await visitor.waitForURL(/q=tymna/);
@@ -404,8 +496,15 @@ try {
 	check(await visitor.locator('[data-public-total="0"]').count() === 1, 'a hidden deck leaves the public list');
 	await visitor.goto(origin + `/decks/${duo.id}`);
 	check(!(await visitor.content()).includes('Draw cards, gain life.') && await visitor.locator('[data-hidden-note]').count() === 1, 'others no longer see its description');
+	check(!(await visitor.content()).includes('Tamer of Partners'), 'others no longer see its author name');
 	await big.goto(origin + `/decks/${duo.id}`);
 	check((await big.content()).includes('Draw cards, gain life.') && (await big.locator('[data-hidden-note]').innerText()).includes('Several players reported this deck'), 'the owner still sees it and is told why');
+	// The next new deck starts with the author name the owner chose last.
+	await big.goto(origin + '/decks');
+	await big.getByRole('button', { name: 'New deck', exact: true }).click();
+	check(await big.getByLabel('Author name (optional)').inputValue() === 'Tamer of Partners', 'the create dialog suggests the author name chosen last');
+	await big.keyboard.press('Escape');
+	await big.locator('dialog').waitFor({ state: 'detached' });
 	check((await ownerWide.request.post(origin + `/api/decks/${duo.id}/report`, { data: { reason: 'spam' } })).status() === 400, 'an owner cannot report their own deck');
 	await big.goto(origin + '/admin');
 	const reportedRow = big.locator('[data-reported-decks] tr', { hasText: 'Thrasios and Tymna' });
@@ -432,4 +531,4 @@ try {
 	check(db.prepare("SELECT COUNT(*) AS n FROM collection_cards WHERE user_id='owner'").get().n === 3, 'deleting a deck leaves the collection alone');
 	check(errors.length === 0, `no browser errors: ${errors.join('; ')}`);
 	console.log(`\n${checks} checks passed. Screenshots in ${dir}`);
-} finally { await browser?.close(); server.kill(); db.close(); }
+} finally { await browser?.close(); server.kill(); verifier.close(); db.close(); }
