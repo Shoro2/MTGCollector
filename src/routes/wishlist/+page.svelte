@@ -99,7 +99,7 @@
 
 	<!-- Search & Sort -->
 	<div class="toolbar">
-		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex-1 flex gap-2">
+		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex min-w-0 flex-1 gap-2">
 			<input
 				type="text"
 				bind:value={search}
