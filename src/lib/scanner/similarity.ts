@@ -26,8 +26,11 @@ export function normalizeName(s: string): string {
 
 /** Normalized similarity score (0-1): Levenshtein distance over normalized names. */
 export function similarity(a: string, b: string): number {
-	const al = normalizeName(a);
-	const bl = normalizeName(b);
+	return normalizedSimilarity(normalizeName(a), normalizeName(b));
+}
+
+/** similarity() of two strings already passed through normalizeName(): the scan over every catalogue name (fuzzyNames) calls it thousands of times per query. */
+export function normalizedSimilarity(al: string, bl: string): number {
 	if (al === bl) return 1;
 	const maxLen = Math.max(al.length, bl.length);
 	if (maxLen === 0) return 1;
