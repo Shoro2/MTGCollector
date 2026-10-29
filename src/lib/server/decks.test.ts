@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { SCHEMA_SQL } from './schema-sql';
 import {
-	DECKS_SQL, DeckError, REPORTS_TO_HIDE, addDeckAuthor, addDeckBracket, addDeckCard, addDeckReports, lastAuthorName, ownDeckVisibility, hasReported, indexableDecks, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
+	DECKS_SQL, DeckError, PUBLISH_LIMIT, PUBLISH_WINDOW_MS, REPORTS_TO_HIDE, addDeckAuthor, addDeckPublications, assertCanPublish, publishAllowance, publishBlocked, addDeckBracket, addDeckCard, addDeckReports, lastAuthorName, ownDeckVisibility, hasReported, indexableDecks, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
 	listDecks, ownedCards, readableDeck, removeDeckCard, searchDeckCards, updateDeck, updateDeckCard
 } from './decks';
 
@@ -15,6 +15,7 @@ function fixture() {
 	addDeckBracket(db);
 	addDeckReports(db);
 	addDeckAuthor(db);
+	addDeckPublications(db);
 	db.exec('CREATE TABLE card_names (name TEXT NOT NULL, lang TEXT NOT NULL, printed_name TEXT NOT NULL, PRIMARY KEY (lang, printed_name, name))');
 	const insert = db.prepare(`INSERT INTO cards (id, oracle_id, name, type_line, oracle_text, cmc, color_identity, set_code, set_name, collector_number,
 		rarity, released_at, image_uri, layout, legalities, price_eur, price_usd, is_paper) VALUES
@@ -165,6 +166,63 @@ describe('creating, sharing and copying decks', () => {
 		expect(() => updateDeck(db, 'a', id, { description: 'mail me: me (at) example dot com' })).toThrow('not allowed');
 		updateDeck(db, 'a', id, { description: 'Turn 3 Krenko.\r\nThen B.F.M. wins.\u202E' });
 		expect(readableDeck(db, id, 'a')?.description).toBe('Turn 3 Krenko.\nThen B.F.M. wins.');
+		db.close();
+	});
+
+	it('allows three public decks per 24 hours, counting switches and deletions', () => {
+		const db = fixture();
+		expect(PUBLISH_LIMIT).toBe(3);
+		const first = createDeck(db, 'a', { name: 'One', visibility: 'public' });
+		createDeck(db, 'a', { name: 'Private', visibility: 'private' });
+		const unlisted = createDeck(db, 'a', { name: 'Unlisted', visibility: 'unlisted' });
+		updateDeck(db, 'a', unlisted.id, { visibility: 'public' });
+		expect(publishAllowance(db, 'a').left).toBe(1);
+		// Editing a deck that is already public is not a new publication.
+		updateDeck(db, 'a', first.id, { name: 'One again', visibility: 'public' });
+		// Private and back counts again, so toggling cannot reuse a publication.
+		updateDeck(db, 'a', first.id, { visibility: 'private' });
+		updateDeck(db, 'a', first.id, { visibility: 'public' });
+		expect(publishAllowance(db, 'a').left).toBe(0);
+		const refused = (() => { try { createDeck(db, 'a', { name: 'Four', visibility: 'public' }); } catch (err) { return err as DeckError; } })();
+		expect(refused).toBeInstanceOf(DeckError);
+		expect(refused?.status).toBe(429);
+		expect(refused?.message).toMatch(/^You can make at most 3 decks public within 24 hours\. You can make the next one public in (\d+ hours?)?( ?\d+ minutes?)?\. Private and unlisted decks have no limit\.$/);
+		// A refused create leaves nothing behind; private and unlisted decks still work.
+		expect(listDecks(db, 'a', 1).map((d) => d.name)).not.toContain('Four');
+		createDeck(db, 'a', { name: 'Five', visibility: 'unlisted' });
+		updateDeck(db, 'a', first.id, { visibility: 'unlisted' });
+		expect(() => updateDeck(db, 'a', first.id, { visibility: 'public' })).toThrow('at most 3 decks public');
+		expect(readableDeck(db, first.id, 'a')?.visibility).toBe('unlisted');
+		// Deleting a published deck does not give its publication back.
+		deleteDeck(db, 'a', unlisted.id);
+		expect(publishAllowance(db, 'a').left).toBe(0);
+		expect(publishBlocked(db, 'a')).toMatch(/at most 3 decks public/);
+		// Other accounts have their own allowance; the admin's decks are counted, never refused.
+		expect(publishBlocked(db, 'b')).toBeNull();
+		createDeck(db, 'a', { name: 'Admin', visibility: 'public' }, { publishLimit: false });
+		expect(publishAllowance(db, 'a').left).toBe(0);
+		// A rolling window: publications older than 24 hours no longer count.
+		db.prepare('UPDATE deck_publications SET published_at = ? WHERE user_id = ?').run(new Date(Date.now() - PUBLISH_WINDOW_MS - 1000).toISOString(), 'a');
+		expect(publishAllowance(db, 'a').left).toBe(3);
+		expect(() => assertCanPublish(db, 'a')).not.toThrow();
+		// The next publication deletes the rows that no longer count (privacy policy: 24 hours).
+		createDeck(db, 'b', { name: 'Fresh', visibility: 'public' });
+		expect(db.prepare('SELECT user_id FROM deck_publications').all()).toEqual([{ user_id: 'b' }]);
+		db.close();
+	});
+
+	it('names the wait until the next public deck in hours and minutes', () => {
+		const db = fixture();
+		const now = Date.parse('2026-10-29T12:00:00.000Z');
+		const at = (ms: number) => new Date(now - ms).toISOString();
+		const insert = db.prepare("INSERT INTO deck_publications (user_id, deck_id, published_at) VALUES ('a', 'x', ?)");
+		insert.run(at(PUBLISH_WINDOW_MS - 90 * 60_000));
+		insert.run(at(60_000));
+		insert.run(at(0));
+		expect(publishAllowance(db, 'a', now)).toEqual({ left: 0, nextAt: now + 90 * 60_000 });
+		expect(publishBlocked(db, 'a', now)).toContain('in 1 hour 30 minutes.');
+		expect(publishBlocked(db, 'a', now + 60 * 60_000)).toContain('in 30 minutes.');
+		expect(publishBlocked(db, 'a', now + 90 * 60_000)).toBeNull();
 		db.close();
 	});
 

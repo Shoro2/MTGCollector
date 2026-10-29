@@ -10,10 +10,12 @@
 	type Deck = { id: string; name: string; format: string; visibility: Visibility; description: string; bracket: Bracket | null; author_name: string };
 	/**
 	 * Name, format, visibility, bracket, author name and description of a deck, and deleting
-	 * it. Making the deck public needs the captcha (`captchaSiteKey`, null when it is off).
+	 * it. Making the deck public needs the captcha (`captchaSiteKey`, null when it is off) and
+	 * is refused up front with `publishBlocked`, the limit's message, after three public decks
+	 * within 24 hours.
 	 */
-	let { deck, hint = '', captchaSiteKey = null, onclose, onsaved }: {
-		deck: Deck; hint?: string; captchaSiteKey?: string | null; onclose: () => void; onsaved: () => Promise<void>;
+	let { deck, hint = '', captchaSiteKey = null, publishBlocked = null, onclose, onsaved }: {
+		deck: Deck; hint?: string; captchaSiteKey?: string | null; publishBlocked?: string | null; onclose: () => void; onsaved: () => Promise<void>;
 	} = $props();
 
 	let dialog: HTMLDialogElement;
@@ -25,7 +27,8 @@
 	let author = $state('');
 	let captcha = $state<ReturnType<typeof Turnstile>>();
 	let captchaToken = $state('');
-	const needsCaptcha = $derived(visibility === 'public' && deck.visibility !== 'public' && !!captchaSiteKey);
+	const limitReached = $derived(visibility === 'public' && deck.visibility !== 'public' && !!publishBlocked);
+	const needsCaptcha = $derived(visibility === 'public' && deck.visibility !== 'public' && !limitReached && !!captchaSiteKey);
 	// Brackets belong to the commander formats; another format keeps the stored value untouched.
 	const commanderFormat = $derived(DECK_FORMATS.find((f) => f.key === format)?.kind === 'commander');
 	let confirmDelete = $state(false);
@@ -124,7 +127,9 @@
 				<textarea bind:value={description} rows="4" maxlength="5000" class="control mt-1 block w-full px-3 py-2 text-sm"></textarea>
 			</label>
 		</fieldset>
-		{#if needsCaptcha && captchaSiteKey}
+		{#if limitReached}
+			<p role="alert" class="text-sm text-amber-300" data-publish-limit>{publishBlocked}</p>
+		{:else if needsCaptcha && captchaSiteKey}
 			<div data-deck-captcha>
 				<p class="mb-1 text-xs text-[var(--color-text-muted)]">A public deck is listed for everybody, so we check that you are human first.</p>
 				<Turnstile bind:this={captcha} bind:token={captchaToken} siteKey={captchaSiteKey} action="publish-deck" />
@@ -132,7 +137,7 @@
 		{/if}
 		{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 		<div class="flex justify-end">
-			<button type="submit" disabled={busy || !name.trim() || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Saving…' : 'Save'}</button>
+			<button type="submit" disabled={busy || !name.trim() || limitReached || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Saving…' : 'Save'}</button>
 		</div>
 	</form>
 	<div class="mt-6 border-t border-[var(--color-border)] pt-4">

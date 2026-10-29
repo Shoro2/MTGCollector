@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
-import { deckCards, hasReported, ownedCards, ownedPrintings, readableDeck } from '$lib/server/decks';
+import { deckCards, hasReported, ownedCards, ownedPrintings, publishBlocked, readableDeck } from '$lib/server/decks';
 import { captchaSiteKey } from '$lib/server/captcha';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { allocateOwnership, cardCategory, cardFrame, deckColors, deckTotals, manaCurve, ownershipKey, unitPriceEur } from '$lib/deck';
@@ -67,6 +67,8 @@ export async function load({ params, locals, depends }) {
 		isOwner,
 		// The settings dialog shows the captcha when the owner makes the deck public.
 		captchaSiteKey: isOwner ? captchaSiteKey() : null,
+		// ...and refuses it up front once the owner has made three decks public within 24 hours.
+		publishBlocked: isOwner && !locals.user?.isAdmin && deck.visibility !== 'public' ? publishBlocked(sqlite, deck.user_id) : null,
 		partnerOf,
 		reported: viewer !== null && !isOwner ? hasReported(sqlite, viewer, deck.id) : false,
 		signedIn: viewer !== null,

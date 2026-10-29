@@ -9,7 +9,7 @@
 import type { Database } from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import {
-	BOARDS, VISIBILITIES, isBoard, isBracket, ownershipKey, pickDeckPrinting, unitPriceEur, deckColors,
+	BOARDS, VISIBILITIES, isBoard, isBracket, ownershipKey, pickDeckPrinting, publishes, unitPriceEur, deckColors,
 	type Board, type Bracket, type CardSuggestion, type Owned, type Visibility
 } from '../deck';
 import { canHavePartner, canLead, canPair, deckFormat, isDeckFormat, type RuleCard } from '../deck-formats';
@@ -89,6 +89,85 @@ export function addDeckAuthor(db: Database) {
 }
 
 export const MAX_AUTHOR_NAME = 40;
+
+/**
+ * Migration 0031_deck_publications: one row each time a deck becomes public (created as
+ * public or switched to public), for the limit of PUBLISH_LIMIT per PUBLISH_WINDOW_MS. The
+ * row outlives its deck (no foreign key on deck_id), so deleting a deck or switching it to
+ * private and back never frees a publication; the account's rows go with the account.
+ */
+export const DECK_PUBLICATIONS_SQL = `
+CREATE TABLE IF NOT EXISTS deck_publications (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	deck_id TEXT NOT NULL,
+	published_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_deck_publications_user ON deck_publications(user_id, published_at);
+`;
+
+export function addDeckPublications(db: Database) {
+	db.exec(DECK_PUBLICATIONS_SQL);
+}
+
+/** Decks one account may make public within PUBLISH_WINDOW_MS (owner request 2026-10-29). */
+export const PUBLISH_LIMIT = 3;
+/** A rolling 24 hours: a calendar day would allow six in a row around midnight. */
+export const PUBLISH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** How long until a duration ends, in words: "5 hours 12 minutes", "40 minutes". */
+function waitText(ms: number): string {
+	const minutes = Math.max(1, Math.ceil(ms / 60_000));
+	const hours = Math.floor(minutes / 60);
+	const rest = minutes % 60;
+	const h = hours ? `${hours} hour${hours === 1 ? '' : 's'}` : '';
+	const m = rest ? `${rest} minute${rest === 1 ? '' : 's'}` : '';
+	return [h, m].filter(Boolean).join(' ');
+}
+
+/** How many decks the user may still make public now, and when the next one frees up. */
+export function publishAllowance(db: Database, userId: string, now = Date.now()): { left: number; nextAt: number | null } {
+	const since = new Date(now - PUBLISH_WINDOW_MS).toISOString();
+	const rows = db.prepare('SELECT published_at FROM deck_publications WHERE user_id = ? AND published_at > ? ORDER BY published_at')
+		.all(userId, since) as { published_at: string }[];
+	const left = Math.max(0, PUBLISH_LIMIT - rows.length);
+	const oldest = rows.length >= PUBLISH_LIMIT ? rows[rows.length - PUBLISH_LIMIT] : null;
+	return { left, nextAt: oldest ? Date.parse(oldest.published_at) + PUBLISH_WINDOW_MS : null };
+}
+
+/** Throws the limit's message (429) when the user has made PUBLISH_LIMIT decks public within the window. */
+export function assertCanPublish(db: Database, userId: string, now = Date.now()) {
+	const { left, nextAt } = publishAllowance(db, userId, now);
+	if (left > 0) return;
+	const wait = nextAt === null ? '' : ` You can make the next one public in ${waitText(nextAt - now)}.`;
+	throw new DeckError(`You can make at most ${PUBLISH_LIMIT} decks public within 24 hours.${wait} Private and unlisted decks have no limit.`, 429);
+}
+
+/** The limit's message when the user cannot make another deck public now, else null (for the dialogs). */
+export function publishBlocked(db: Database, userId: string, now = Date.now()): string | null {
+	try {
+		assertCanPublish(db, userId, now);
+		return null;
+	} catch (err) {
+		if (err instanceof DeckError) return err.message;
+		throw err;
+	}
+}
+
+/**
+ * Records a publication; with `limit`, refuses it first when the allowance is used up. Rows
+ * older than the window are deleted on the way: they no longer count, and the privacy policy
+ * promises to keep them for 24 hours only.
+ */
+function recordPublication(db: Database, userId: string, deckId: string, limit: boolean) {
+	const now = Date.now();
+	if (limit) assertCanPublish(db, userId, now);
+	db.prepare('DELETE FROM deck_publications WHERE published_at <= ?').run(new Date(now - PUBLISH_WINDOW_MS).toISOString());
+	db.prepare('INSERT INTO deck_publications (user_id, deck_id, published_at) VALUES (?, ?, ?)').run(userId, deckId, new Date(now).toISOString());
+}
+
+/** `publishLimit` false: the admin's decks are counted but never refused. */
+export type PublishOptions = { publishLimit?: boolean };
 
 /** Distinct accounts whose reports hide a deck's description and take it off the public list. */
 export const REPORTS_TO_HIDE = 3;
@@ -310,7 +389,7 @@ function writeList(db: Database, deck: DeckRecord, text: string, mode: 'add' | '
  * Creates a deck, optionally with its commander, a partner for it (a second commander
  * the two cards' abilities allow, see canPair()) and a pasted list.
  */
-export function createDeck(db: Database, userId: string, input: Record<string, unknown>) {
+export function createDeck(db: Database, userId: string, input: Record<string, unknown>, { publishLimit = true }: PublishOptions = {}) {
 	const meta = deckMeta({ format: 'commander', visibility: 'private', description: '', bracket: null, author_name: '', ...input }) as DeckMeta;
 	const list = input.list ?? '';
 	if (typeof list !== 'string') throw new DeckError('The card list must be text.');
@@ -324,6 +403,7 @@ export function createDeck(db: Database, userId: string, input: Record<string, u
 		const id = newDeckId();
 		db.prepare('INSERT INTO decks (id, user_id, name, format, description, visibility, bracket, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
 			.run(id, userId, meta.name, meta.format, meta.description, meta.visibility, meta.bracket, meta.author_name, now, now);
+		if (meta.visibility === 'public') recordPublication(db, userId, id, publishLimit);
 		const deck = ownDeck(db, userId, id);
 		const leaders: PairCard[] = [];
 		if (commanderId) {
@@ -352,12 +432,16 @@ export function createDeck(db: Database, userId: string, input: Record<string, u
 	})();
 }
 
-export function updateDeck(db: Database, userId: string, deckId: string, input: Record<string, unknown>) {
-	const changes = Object.entries(deckMeta(input, true));
+export function updateDeck(db: Database, userId: string, deckId: string, input: Record<string, unknown>, { publishLimit = true }: PublishOptions = {}) {
+	const meta = deckMeta(input, true);
+	const changes = Object.entries(meta);
 	if (!changes.length) throw new DeckError('Nothing to change.');
-	ownDeck(db, userId, deckId);
-	db.prepare(`UPDATE decks SET ${changes.map(([key]) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ? AND user_id = ?`)
-		.run(...changes.map(([, value]) => value), new Date().toISOString(), deckId, userId);
+	db.transaction(() => {
+		const current = ownDeck(db, userId, deckId).visibility;
+		if (publishes(current, meta.visibility)) recordPublication(db, userId, deckId, publishLimit);
+		db.prepare(`UPDATE decks SET ${changes.map(([key]) => `${key} = ?`).join(', ')}, updated_at = ? WHERE id = ? AND user_id = ?`)
+			.run(...changes.map(([, value]) => value), new Date().toISOString(), deckId, userId);
+	})();
 }
 
 export function deleteDeck(db: Database, userId: string, deckId: string) {
