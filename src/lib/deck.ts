@@ -177,7 +177,7 @@ export type CardSuggestion = {
 	id: string; name: string; type_line: string | null; mana_cost: string | null; set_code: string; image_uri: string | null; partner: boolean;
 };
 
-export type FrameKind = 'w' | 'u' | 'b' | 'r' | 'g' | 'multi' | 'hybrid' | 'artifact' | 'land' | 'colorless';
+export type FrameKind = 'w' | 'u' | 'b' | 'r' | 'g' | 'dual' | 'multi' | 'colorless';
 export type CardFrame = { kind: FrameKind; colors: string[] };
 
 /** Colors in a mana cost, in WUBRG order: {G}, {W/U}, {2/R} and {B/P} all count. */
@@ -188,23 +188,20 @@ export function manaColors(cost: string | null | undefined): string[] {
 }
 
 /**
- * The frame color a printed card of this kind has, for the deck list: one color, gold for
- * several, split for a hybrid card whose colored symbols are all hybrid, silver for a
- * colorless artifact, brown for a colorless land, grey for other colorless cards.
- * `colors` are the card's colors (Scryfall's `colors`); without them (double-faced
- * cards keep them on the faces) the front face's mana cost decides.
+ * The frame of a deck list row (owner rule 2026-10-29): one color in its own color, two
+ * colors split half and half, three or more gold, colorless grey. `colors` are the card's
+ * colors (Scryfall's `colors`); without them (double-faced cards keep them on the faces)
+ * the front face's mana cost decides. A land has no color of its own, so it takes the
+ * colors of the mana it makes, its color identity: a Mountain is red, Stomping Ground red
+ * and green, Command Tower grey.
  */
-export function cardFrame(card: { colors: string[] | null; mana_cost: string | null; type_line: string | null }): CardFrame {
-	const colors = WUBRG.filter((c) => (card.colors ?? manaColors(card.mana_cost)).includes(c));
-	const type = frontType(card.type_line);
+export function cardFrame(card: { colors: string[] | null; mana_cost: string | null; type_line: string | null; color_identity?: string[] | null }): CardFrame {
+	let own = card.colors ?? manaColors(card.mana_cost);
+	if (!own.length && /\bLand\b/.test(frontType(card.type_line))) own = card.color_identity ?? [];
+	const colors = WUBRG.filter((c) => own.includes(c));
 	if (colors.length === 1) return { kind: colors[0].toLowerCase() as FrameKind, colors };
-	if (colors.length > 1) {
-		const colored = [...(card.mana_cost ?? '').matchAll(/\{([^}]+)\}/g)].map((m) => m[1]).filter((s) => /[WUBRG]/.test(s));
-		const hybrid = colors.length === 2 && colored.length > 0 && colored.every((s) => /^[WUBRG]\/[WUBRG]$/.test(s));
-		return { kind: hybrid ? 'hybrid' : 'multi', colors };
-	}
-	if (/\bLand\b/.test(type)) return { kind: 'land', colors };
-	if (/\bArtifact\b/.test(type)) return { kind: 'artifact', colors };
+	if (colors.length === 2) return { kind: 'dual', colors };
+	if (colors.length > 2) return { kind: 'multi', colors };
 	return { kind: 'colorless', colors };
 }
 

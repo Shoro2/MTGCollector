@@ -95,9 +95,9 @@
 		}
 	}
 
-	// A hybrid card shows both of its colors; every other frame is a single class.
+	// A two-color card splits its frame between both colors; every other frame is a single class.
 	const frameStyle = (row: Row) =>
-		row.frame.kind === 'hybrid' ? `--frame-a: var(--pip-${row.frame.colors[0].toLowerCase()}); --frame-b: var(--pip-${row.frame.colors[1].toLowerCase()})` : undefined;
+		row.frame.kind === 'dual' ? `--frame-a: var(--pip-${row.frame.colors[0].toLowerCase()}); --frame-b: var(--pip-${row.frame.colors[1].toLowerCase()})` : undefined;
 
 	async function copyDeck() {
 		const result = await post(`/api/decks/${deck.id}/copy`);

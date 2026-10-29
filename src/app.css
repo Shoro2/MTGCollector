@@ -36,8 +36,6 @@
 	--rarity-rare: #d9a94b;
 	--rarity-mythic: #e7613a;
 	--frame-gold: #d6b04c;
-	--frame-artifact: #a9b6c6;
-	--frame-land: #b4865a;
 	--frame-colorless: #b3aea5;
 	--shadow-raised: 0 10px 30px rgba(0, 0, 0, 0.24);
 	--shadow-overlay: 0 24px 70px rgba(0, 0, 0, 0.45);
@@ -478,9 +476,9 @@ tbody tr:hover {
 }
 
 /*
- * Deck list rows framed in the color a printed card of that kind has (original tints,
- * no frame art): a stripe on the left, a tinted border and a fading background. Gold
- * for several colors; a hybrid card shows its two colors (--frame-a, --frame-b inline).
+ * Deck list rows framed in the card's color (original tints, no frame art): a stripe on
+ * the left, a tinted border and a fading background. Two colors split the row half and
+ * half (--frame-a, --frame-b inline), three or more are gold, colorless is grey.
  */
 .deck-card {
 	--frame: var(--frame-colorless);
@@ -515,17 +513,34 @@ tbody tr:hover {
 .frame-r { --frame: var(--pip-r); }
 .frame-g { --frame: var(--pip-g); }
 .frame-multi { --frame: var(--frame-gold); }
-.frame-artifact { --frame: var(--frame-artifact); }
-.frame-land { --frame: var(--frame-land); }
 .frame-colorless { --frame: var(--frame-colorless); }
 
-.frame-hybrid {
+.frame-dual {
 	--frame: color-mix(in srgb, var(--frame-a) 50%, var(--frame-b));
-	background: linear-gradient(90deg, color-mix(in srgb, var(--frame-a) 20%, transparent), color-mix(in srgb, var(--frame-b) 14%, transparent) 70%);
+	padding-right: 0.25rem;
+	background: linear-gradient(90deg,
+		color-mix(in srgb, var(--frame-a) 22%, transparent), color-mix(in srgb, var(--frame-a) 8%, transparent) 50%,
+		color-mix(in srgb, var(--frame-b) 8%, transparent) 50%, color-mix(in srgb, var(--frame-b) 22%, transparent));
 }
 
-.frame-hybrid::before {
-	background: linear-gradient(180deg, var(--frame-a) 50%, var(--frame-b) 50%);
+.frame-dual::before { background: var(--frame-a); }
+
+.frame-dual::after {
+	position: absolute;
+	top: -1px;
+	right: -1px;
+	bottom: -1px;
+	width: 4px;
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	background: var(--frame-b);
+	content: "";
+}
+
+.frame-dual:hover,
+.frame-dual:focus-within {
+	background: linear-gradient(90deg,
+		color-mix(in srgb, var(--frame-a) 32%, transparent), color-mix(in srgb, var(--frame-a) 12%, transparent) 50%,
+		color-mix(in srgb, var(--frame-b) 12%, transparent) 50%, color-mix(in srgb, var(--frame-b) 32%, transparent));
 }
 
 .bracket-chip {

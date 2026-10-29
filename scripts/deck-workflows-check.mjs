@@ -34,14 +34,14 @@ const CARDS = [
 	[3, 'bolt', 'Lightning Bolt', 'tst', '3', 'common', 'Instant', '{R}', 1, '["R"]', legal(), 2, '2024-01-01'],
 	[4, 'bolt', 'Lightning Bolt', 'lea', '161', 'common', 'Instant', '{R}', 1, '["R"]', legal(), 300, '1993-08-05'],
 	[5, 'counter', 'Counterspell', 'tst', '5', 'common', 'Instant', '{U}{U}', 2, '["U"]', legal(), 1, '2024-01-01'],
-	[6, 'mountain', 'Mountain', 'tst', '6', 'common', 'Basic Land — Mountain', null, 0, '[]', legal(), 0.1, '2024-01-01'],
+	[6, 'mountain', 'Mountain', 'tst', '6', 'common', 'Basic Land — Mountain', null, 0, '["R"]', legal(), 0.1, '2024-01-01'],
 	[7, 'guide', 'Goblin Guide', 'tst', '7', 'rare', 'Creature — Goblin Scout', '{R}', 1, '["R"]', legal(), 4, '2024-01-01'],
 	[8, 'lotus', 'Black Lotus', 'lea', '232', 'rare', 'Artifact', '{0}', 0, '[]', legal({ commander: 'banned', legacy: 'banned', vintage: 'restricted' }), null, '1993-08-05']
 ];
 for (const [n, oracle, name, set, number, rarity, type, cost, cmc, identity, legalities, price, released] of CARDS) {
 	insert.run(uuid(n), oracle, name, set, set === 'lea' ? 'Limited Edition Alpha' : 'Test Set', number, rarity, type, cost, cmc, identity, legalities, price, released);
 }
-// Partners, a hybrid and a gold card carry Scryfall's colors and rules text.
+// Partners, a hybrid, two-color and three-color cards carry Scryfall's colors and rules text.
 const insertRules = db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,mana_cost,cmc,colors,color_identity,oracle_text,legalities,price_eur,layout,released_at,is_paper)
 	VALUES (?,?,?,'tst','Test Set',?,?,?,?,?,?,?,?,?,?,'normal','2024-01-01',1)`);
 const PARTNER = 'Partner (You can have two commanders if both have partner.)';
@@ -49,10 +49,14 @@ for (const [n, oracle, name, rarity, type, cost, cmc, colors, text, price] of [
 	[9, 'thrasios', 'Thrasios, Triton Hero', 'rare', 'Legendary Creature — Merfolk Wizard', '{G}{U}', 2, '["G","U"]', `{4}: Scry 1. Then reveal the top card of your library.\n${PARTNER}`, 2],
 	[10, 'tymna', 'Tymna the Weaver', 'mythic', 'Legendary Creature — Human Cleric', '{1}{W}{B}', 3, '["B","W"]', `Lifelink\n${PARTNER}`, 5],
 	[11, 'reckoner', 'Boros Reckoner', 'rare', 'Creature — Minotaur Wizard', '{R/W}{R/W}{R/W}', 3, '["R","W"]', 'Whenever Boros Reckoner is dealt damage, it deals that much damage to any target.', 0.5],
-	[12, 'helix', 'Lightning Helix', 'uncommon', 'Instant', '{R}{W}', 2, '["R","W"]', 'Lightning Helix deals 3 damage to any target and you gain 3 life.', 0.4]
+	[12, 'helix', 'Lightning Helix', 'uncommon', 'Instant', '{R}{W}', 2, '["R","W"]', 'Lightning Helix deals 3 damage to any target and you gain 3 life.', 0.4],
+	[13, 'esper', 'Esper Charm', 'uncommon', 'Instant', '{W}{U}{B}', 3, '["B","U","W"]', 'Choose one — Destroy target enchantment; or draw two cards; or target player discards two cards.', 0.3]
 ]) {
 	insertRules.run(uuid(n), oracle, name, String(n), rarity, type, cost, cmc, colors, colors, text, legal(), price);
 }
+// A land has no colors; its frame comes from the mana it makes (its color identity).
+insertRules.run(uuid(14), 'fountain', 'Hallowed Fountain', '14', 'rare', 'Land — Plains Island', null, 0, '[]', '["U","W"]',
+	'({T}: Add {W} or {U}.)\nAs Hallowed Fountain enters, you may pay 2 life. If you don\'t, it enters tapped.', legal(), 8);
 // Card images for the printing preview, served by the app itself.
 db.prepare("UPDATE cards SET image_uri = '/favicon.ico?' || collector_number WHERE oracle_id = 'bolt'").run();
 db.exec("INSERT INTO cards_fts(cards_fts) VALUES('rebuild')");
@@ -140,10 +144,10 @@ try {
 	await page.screenshot({ path: resolve(dir, 'deck-mobile.png'), fullPage: true });
 	check(await fits(page), 'deck view fits mobile width');
 	check(await page.locator('[data-add-partner]').count() === 0, 'a commander without Partner gets no partner field');
-	check(await page.locator('li[data-row="Sol Ring"]').first().getAttribute('data-frame') === 'artifact' &&
-		await page.locator('li[data-row="Mountain"]').first().getAttribute('data-frame') === 'land' &&
+	check(await page.locator('li[data-row="Sol Ring"]').first().getAttribute('data-frame') === 'colorless' &&
+		await page.locator('li[data-row="Mountain"]').first().getAttribute('data-frame') === 'r' &&
 		await page.locator('li[data-row="Counterspell"]').first().getAttribute('data-frame') === 'u' &&
-		await page.locator('li[data-row="Krenko, Mob Boss"]').first().getAttribute('data-frame') === 'r', 'rows are framed by color: artifact, land, blue, red');
+		await page.locator('li[data-row="Krenko, Mob Boss"]').first().getAttribute('data-frame') === 'r', 'rows are framed by color: a colorless artifact grey, a Mountain red, blue, red');
 
 	await page.getByLabel('Group by').selectOption('cmc');
 	await page.waitForURL('**?group=cmc');
@@ -294,7 +298,7 @@ try {
 	await big.getByLabel('Card list', { exact: true }).fill('https://moxfield.com/decks/AbCdEf123');
 	check((await big.locator('[data-link-help]').innerText()).includes('choose More, then Export') &&
 		await big.getByRole('button', { name: 'Create', exact: true }).isDisabled(), 'a pasted Moxfield link explains where its text export is');
-	await big.getByLabel('Card list', { exact: true }).fill('1 Sol Ring\n1 Counterspell\n1 Boros Reckoner\n1 Lightning Helix\n5 Mountain');
+	await big.getByLabel('Card list', { exact: true }).fill('1 Sol Ring\n1 Counterspell\n1 Boros Reckoner\n1 Lightning Helix\n1 Esper Charm\n1 Hallowed Fountain\n5 Mountain');
 	await big.getByRole('button', { name: 'Create', exact: true }).click();
 	// A list without problems opens the new deck right away.
 	await big.waitForURL(/\/decks\/[A-Za-z0-9_-]{16}$/);
@@ -305,8 +309,12 @@ try {
 	check(await big.locator('h1 [data-bracket="3"]').innerText().then(t => t.includes('Bracket 3') && t.includes('Upgraded')), 'the bracket follows the name');
 	check(await big.locator('[data-group="commander"] li').count() === 2 && await big.locator('[data-add-partner]').count() === 0, 'two commanders are listed and no third is offered');
 	const frames = Object.fromEntries(await big.locator('[data-group] li[data-row]').evaluateAll(els => els.map(el => [el.getAttribute('data-row'), el.getAttribute('data-frame')])));
-	check(frames['Thrasios, Triton Hero'] === 'multi' && frames['Lightning Helix'] === 'multi' && frames['Boros Reckoner'] === 'hybrid' && frames['Counterspell'] === 'u', 'gold frames for several colors, a split frame for a hybrid card');
-	check(await big.locator('li[data-row="Boros Reckoner"]').evaluate(el => getComputedStyle(el, '::before').backgroundImage.includes('gradient')), 'the hybrid stripe shows both colors');
+	check(frames['Thrasios, Triton Hero'] === 'dual' && frames['Lightning Helix'] === 'dual' && frames['Boros Reckoner'] === 'dual' && frames['Hallowed Fountain'] === 'dual' &&
+		frames['Esper Charm'] === 'multi' && frames['Mountain'] === 'r' && frames['Counterspell'] === 'u', `two colors split, three gold, lands by their mana (${JSON.stringify(frames)})`);
+	check(await big.locator('li[data-row="Lightning Helix"]').evaluate(el => {
+		const left = getComputedStyle(el, '::before').backgroundColor, right = getComputedStyle(el, '::after').backgroundColor;
+		return left !== right && left !== 'rgba(0, 0, 0, 0)' && right !== 'rgba(0, 0, 0, 0)';
+	}), 'a two-color row has a stripe in each color');
 	check(await big.locator('[data-group] li[data-row] a').evaluateAll(els => els.every(a => a.scrollWidth <= a.clientWidth + 1)), 'card names fit their rows on a desktop');
 	check(await big.evaluate(() => getComputedStyle(document.querySelector('[data-group]').parentElement).columnCount) === '2', 'the list uses two columns next to the preview');
 	check(problemsText(await big.locator('[data-problems]').innerText().catch(() => '')), 'two partners pass the command-zone check and share one color identity');

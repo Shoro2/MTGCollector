@@ -158,33 +158,35 @@ describe('timeAgo', () => {
 });
 
 describe('card frames', () => {
-	const frame = (colors: string[] | null, mana_cost: string | null, type_line = 'Instant') => cardFrame({ colors, mana_cost, type_line });
+	const frame = (colors: string[] | null, mana_cost: string | null, type_line = 'Instant', color_identity: string[] = []) =>
+		cardFrame({ colors, mana_cost, type_line, color_identity });
 	it('reads the colors of a mana cost', () => {
 		expect(manaColors('{2}{G}{W/U}{B/P}{2/R}{C}{X}')).toEqual(['W', 'U', 'B', 'R', 'G']);
 		expect(manaColors(null)).toEqual([]);
 	});
-	it('gives one color its own frame and several a gold one', () => {
+	it('gives one color its own frame, two colors a split one and three or more a gold one', () => {
 		expect(frame(['R'], '{R}')).toEqual({ kind: 'r', colors: ['R'] });
-		expect(frame(['G', 'U'], '{1}{G}{U}').kind).toBe('multi');
-		expect(frame(['U', 'G'], '{1}{G}{U}').colors).toEqual(['U', 'G']);
+		expect(frame(['G', 'U'], '{1}{G}{U}')).toEqual({ kind: 'dual', colors: ['U', 'G'] });
+		expect(frame(['G', 'W'], '{1}{G/W}{G/W}').kind).toBe('dual');
+		expect(frame(['R', 'G'], '{R}{R/G}').kind).toBe('dual');
+		expect(frame(['W', 'U', 'B'], '{W/U}{B/W}').kind).toBe('multi');
 		expect(frame(['W', 'U', 'B', 'R', 'G'], '{W}{U}{B}{R}{G}').kind).toBe('multi');
 	});
-	it('splits a two-color hybrid card, not a gold card with a hybrid symbol', () => {
-		expect(frame(['G', 'W'], '{1}{G/W}{G/W}')).toEqual({ kind: 'hybrid', colors: ['W', 'G'] });
-		expect(frame(['R', 'G'], '{R}{R/G}').kind).toBe('multi');
-		expect(frame(['W', 'U', 'B'], '{W/U}{B/W}').kind).toBe('multi');
+	it('colors a land by the mana it makes', () => {
+		expect(frame([], null, 'Basic Land — Mountain', ['R'])).toEqual({ kind: 'r', colors: ['R'] });
+		expect(frame([], null, 'Land — Forest Mountain', ['R', 'G']).kind).toBe('dual');
+		expect(frame([], null, 'Land', ['W', 'U', 'B'])).toEqual({ kind: 'multi', colors: ['W', 'U', 'B'] });
+		expect(frame([], null, 'Land', []).kind).toBe('colorless');
+		expect(frame(['G'], null, 'Land Creature — Forest Dryad', ['G']).kind).toBe('g');
+		expect(frame(null, null, 'Land // Land', ['B']).kind).toBe('b');
 	});
-	it('frames colorless cards as artifact, land or colorless', () => {
-		expect(frame([], '{1}', 'Artifact').kind).toBe('artifact');
-		expect(frame([], '{0}', 'Artifact Creature — Golem').kind).toBe('artifact');
-		expect(frame([], null, 'Basic Land — Forest').kind).toBe('land');
-		expect(frame(['G'], null, 'Land Creature — Forest Dryad').kind).toBe('g');
+	it('keeps colorless cards grey, also when their rules text names a color', () => {
+		expect(frame([], '{1}', 'Artifact', ['U']).kind).toBe('colorless');
+		expect(frame([], '{0}', 'Artifact Creature — Golem').kind).toBe('colorless');
 		expect(frame([], '{10}', 'Creature — Eldrazi').kind).toBe('colorless');
-		expect(frame([], '{3}{U}', 'Creature — Eldrazi Drone').kind).toBe('colorless');
 	});
 	it('falls back to the mana cost when the card stores no colors', () => {
 		expect(frame(null, '{U}', 'Creature — Human Wizard // Creature — Human Insect').kind).toBe('u');
-		expect(frame(null, null, 'Land // Land').kind).toBe('land');
 	});
 });
 
