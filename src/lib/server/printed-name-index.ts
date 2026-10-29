@@ -9,6 +9,7 @@
  * the DB-bound users; this module stays importable by unit tests.
  */
 import { bigramsOf, normalizeName, similarity, type PrintedAlias } from '../scanner/similarity.js';
+import { PREFIX_MIN_LETTERS, letterCount, prefixScoreNorm, startShares } from '../scanner/name-prefix.js';
 
 /** One printed name: the canonical English card name, the language, the name as printed. */
 export type PrintedNameRow = { name: string; lang: string; printed: string };
@@ -97,6 +98,24 @@ export class PrintedNameIndex {
 			for (const b of qb) if (e.bigrams.has(b)) inter++;
 			if ((2 * inter) / (qb.size + e.bigrams.size) < 0.25) continue;
 			const score = similarity(norm, e.norm);
+			if (score >= min && score > (best.get(e.name)?.score ?? 0)) best.set(e.name, { name: e.name, alias: e.alias, lang: e.lang, score });
+		}
+		return [...best.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+	}
+
+	/**
+	 * English names whose printed name *starts* like the query (a name bar cut
+	 * off by the next card, see name-prefix.ts), prefix score `min` or better,
+	 * best first. Queries with fewer than three letters match nothing.
+	 */
+	prefixMatch(query: string, limit = 40, min = 0.6): Array<{ name: string; alias: string; lang: string; score: number }> {
+		const norm = normalizeName(query);
+		if (letterCount(norm) < PREFIX_MIN_LETTERS) return [];
+		const qb = [...bigramsOf(norm)];
+		const best = new Map<string, { name: string; alias: string; lang: string; score: number }>();
+		for (const e of this.entries) {
+			if (!startShares(qb, e.norm, norm.length)) continue;
+			const score = prefixScoreNorm(norm, e.norm);
 			if (score >= min && score > (best.get(e.name)?.score ?? 0)) best.set(e.name, { name: e.name, alias: e.alias, lang: e.lang, score });
 		}
 		return [...best.values()].sort((a, b) => b.score - a.score).slice(0, limit);

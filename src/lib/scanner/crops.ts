@@ -155,3 +155,34 @@ export function cropWindowsFromProfiles(
 	}
 	return win;
 }
+
+/**
+ * OCR windows of a card that the next card covers right of `visibleX` (warp
+ * pixels): the "rows" scan mode (overlap.ts), where only a strip at the left
+ * of most cards shows. The profiles must come from the visible part only —
+ * `rowMeansVisible` over the columns between 4% of the width and the
+ * covering card's edge — because the covering card's own frame and text box
+ * would set the thresholds otherwise. Both windows then end `marginFrac` of
+ * the width before that edge: the covering card's black border and its
+ * shadow read as letters ("l", "I") when they are inside the crop, and the
+ * detected edge is a few pixels off. The name window keeps at least a few
+ * pixels, so a crop is never empty.
+ */
+export function stripCropWindows(
+	rowMeansVisible: ArrayLike<number>,
+	colMeans: ArrayLike<number>,
+	W: number,
+	H: number,
+	visibleX: number,
+	synthetic: boolean,
+	marginFrac = 0.015
+): CropWindows {
+	const win = cropWindowsFromProfiles(rowMeansVisible, rowMeansVisible, colMeans, W, H, synthetic);
+	const end = Math.min(W, Math.round(visibleX - W * marginFrac));
+	const minW = Math.max(1, Math.round(W * 0.02));
+	return {
+		...win,
+		nameW: Math.max(minW, Math.min(win.nameW, end - win.nameX)),
+		bottomW: Math.max(minW, Math.min(win.bottomW, end - win.bottomX))
+	};
+}
