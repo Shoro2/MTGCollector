@@ -5,6 +5,8 @@
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import LiveScanner from '$lib/components/LiveScanner.svelte';
 	import ScanSessionSettings from '$lib/components/ScanSessionSettings.svelte';
+	import ScanOffline from '$lib/components/ScanOffline.svelte';
+	import { addQueuedScan, blobToCanvas, canvasToJpeg, clearQueuedScans, deleteQueuedScan, listQueuedScans, markQueuedScanFailed, MAX_ATTEMPTS, pendingScans, queueSupported, type QueuedMode } from '$lib/offline/queue';
 	import { defaultSession, restoreSession, applySessionSet, type ScanSession } from '$lib/scanner/session';
 	import { onMount, onDestroy } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
@@ -135,7 +137,98 @@
 	let scanMode = $state<ScanMode>('single');
 	/** Size of the photo the outlines in `detectedCards` refer to (the result overlay). */
 	let photoSize = $state<{ width: number; height: number } | null>(null);
-	const expectedCardCount = $derived<number | null>(scanMode === 'single' ? 1 : null);
+
+	// Offline mode (CLAUDE.md §6.5). Without a connection a capture is not
+	// identified (the lookups need the server) but saved in IndexedDB; when the
+	// connection is back the queue runs through processImage like any capture.
+	let online = $state(true);
+	let queuedCount = $state(0);
+	let queuedFailed = $state(0);
+	let processingQueue = $state(false);
+	/** Outcome of one processImage run; 'network' means the lookups could not reach the server, so nothing was decided. */
+	type ScanOutcome = 'done' | 'network' | 'failed' | 'superseded';
+
+	async function refreshQueue() {
+		if (!queueSupported()) return;
+		try {
+			const scans = await listQueuedScans();
+			queuedCount = scans.length;
+			queuedFailed = scans.filter((s) => s.attempts >= MAX_ATTEMPTS).length;
+		} catch { /* IndexedDB unavailable (private mode): nothing can be queued either */ }
+	}
+
+	/** Whether the site answers at all (navigator.onLine is true on a network that carries nothing). */
+	async function serverReachable(): Promise<boolean> {
+		const ctrl = new AbortController();
+		const timer = setTimeout(() => ctrl.abort(), 4000);
+		try {
+			return (await fetch('/api/health', { cache: 'no-store', signal: ctrl.signal })).ok;
+		} catch {
+			return false;
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	/** Save a capture for later. Returns false when it could not be stored. */
+	async function queueCapture(image: Blob, rects: QuickRect[], mode: QueuedMode, captureSession: ScanSession): Promise<boolean> {
+		if (!queueSupported()) return false;
+		try {
+			await addQueuedScan({ createdAt: new Date().toISOString(), mode, image, rects, session: { ...captureSession } });
+			log(`Saved for later (offline): ${mode} capture, ${rects.length} tracked rectangle(s), ${Math.round(image.size / 1024)} KB`);
+			return true;
+		} catch (err) {
+			addError = `Could not save the capture on this device: ${(err as Error).message}`;
+			return false;
+		} finally {
+			await refreshQueue();
+		}
+	}
+
+	/** Identify every saved capture, oldest first; stops when the connection goes or another scan takes over. */
+	async function processQueue() {
+		if (processingQueue || scanning || !navigator.onLine || !queueSupported()) return;
+		processingQueue = true;
+		try {
+			const scans = pendingScans(await listQueuedScans());
+			for (const [k, scan] of scans.entries()) {
+				if (!navigator.onLine) break;
+				log(`Saved capture ${k + 1} of ${scans.length} (taken ${new Date(scan.createdAt).toLocaleString()})`);
+				const source = scan.mode === 'live'
+					? await blobToCanvas(scan.image)
+					: new File([scan.image], 'saved-capture', { type: scan.image.type || 'image/jpeg' });
+				const outcome = await processImage(source, scan.rects, undefined, { mode: scan.mode, session: scan.session });
+				if (outcome === 'done') await deleteQueuedScan(scan.id!);
+				else if (outcome === 'failed') await markQueuedScanFailed(scan);
+				await refreshQueue();
+				if (outcome === 'network' || outcome === 'superseded') break;
+			}
+		} catch (err) {
+			log(`Saved captures: ${(err as Error).message}`);
+		} finally {
+			processingQueue = false;
+			await refreshQueue();
+		}
+	}
+
+	async function discardQueue() {
+		if (!confirm(`Discard ${queuedCount} saved capture${queuedCount === 1 ? '' : 's'}? They have not been identified.`)) return;
+		try { await clearQueuedScans(); } catch (err) { addError = (err as Error).message; }
+		await refreshQueue();
+	}
+
+	onMount(() => {
+		online = navigator.onLine;
+		const goOnline = () => { online = true; void processQueue(); };
+		const goOffline = () => { online = false; };
+		window.addEventListener('online', goOnline);
+		window.addEventListener('offline', goOffline);
+		void refreshQueue().then(() => { if (online && queuedCount > queuedFailed) void processQueue(); });
+		return () => {
+			window.removeEventListener('online', goOnline);
+			window.removeEventListener('offline', goOffline);
+		};
+	});
 
 	// Long edge of the image the detection strategies run on. Card edges don't
 	// need a 12-megapixel phone photo — running the six strategies at full
@@ -380,8 +473,17 @@
 
 	function onFileSelect(e: Event) {
 		const input = e.target as HTMLInputElement;
+		if (processingQueue) return;
 		if (input.files?.[0]) {
 			const file = input.files[0];
+			input.value = '';
+			if (!navigator.onLine && queueSupported()) {
+				const mode: QueuedMode = scanMode === 'live' ? 'single' : scanMode;
+				void queueCapture(file, [], mode, session).then((ok) => {
+					scanProgress = ok ? 'You are offline: the photo is saved on this device and will be identified when you are back online.' : '';
+				});
+				return;
+			}
 			if (imagePreview) URL.revokeObjectURL(imagePreview);
 			imagePreview = URL.createObjectURL(file);
 			photoSize = null;
@@ -390,13 +492,19 @@
 			debugLog = [];
 			manualResults = [];
 			manualCardIndex = null;
-			processImage(file);
+			const captureSession = { ...session };
+			const mode: QueuedMode = scanMode === 'live' ? 'single' : scanMode;
+			void processImage(file).then(async (outcome) => {
+				if (outcome !== 'network') return;
+				if (await queueCapture(file, [], mode, captureSession)) scanProgress = 'The connection dropped: the photo is saved on this device and will be identified when you are back online.';
+			});
 		}
 	}
 
 	/** The live scanner's exported methods (result cue). */
 	let liveScanner = $state<{
 		notifyResult: (captureId: number, established: boolean, detail: string, failed?: boolean, identity?: string | null) => void;
+		notifyQueued: (captureId: number, detail: string) => void;
 		clearReceipt: () => void;
 	} | null>(null);
 
@@ -404,11 +512,32 @@
 		// Don't reset detectedCards — captures accumulate. Skip if a previous
 		// capture is still being identified (the LiveScanner's busy prop also
 		// gates the auto-capture loop, but a manual click can race past it).
-		if (scanning) return false;
+		if (scanning || processingQueue) return false;
 		manualResults = [];
 		manualCardIndex = null;
 		const receiver = liveScanner;
-		void processImage(canvas, rects, (established, detail, failed, identity) => receiver?.notifyResult(captureId, established, detail, failed, identity));
+		const captureSession = { ...session };
+		// Offline (or the lookups failed): keep the frame and its tracked rectangles for later.
+		// The JPEG is encoded right away, because the live scanner reuses its capture canvas.
+		const saveForLater = (jpeg: Promise<Blob>, why: string) => {
+			void jpeg
+				.then((image) => queueCapture(image, rects, 'live', captureSession))
+				.catch(() => false)
+				.then((ok) => ok
+					? receiver?.notifyQueued(captureId, `${why} Saved on this device; it will be identified when you are back online.`)
+					: receiver?.notifyResult(captureId, false, 'The capture could not be saved on this device. Capture it again when you are online.', true));
+		};
+		if (!navigator.onLine && queueSupported()) {
+			saveForLater(canvasToJpeg(canvas), 'You are offline.');
+			return true;
+		}
+		const jpeg = queueSupported() ? canvasToJpeg(canvas) : null;
+		jpeg?.catch(() => { /* only needed when the connection drops */ });
+		void processImage(canvas, rects, (established, detail, failed, identity) => receiver?.notifyResult(captureId, established, detail, failed, identity)).then((outcome) => {
+			if (outcome !== 'network') return;
+			if (jpeg) saveForLater(jpeg, 'The connection dropped.');
+			else receiver?.notifyResult(captureId, false, 'No connection: the card could not be identified. Capture it again when you are online.', true);
+		});
 		return true;
 	}
 
@@ -418,21 +547,42 @@
 	 * as steady on this very frame; when given, the six-strategy detection is
 	 * skipped and the cards are warped straight from them.
 	 */
-	async function processImage(source: File | HTMLCanvasElement, presetRects: QuickRect[] = [], onLiveResult?: (established: boolean, detail: string, failed?: boolean, identity?: string | null) => void) {
-		const captureSession = { ...session };
+	async function processImage(
+		source: File | HTMLCanvasElement,
+		presetRects: QuickRect[] = [],
+		onLiveResult?: (established: boolean, detail: string, failed?: boolean, identity?: string | null) => void,
+		/** A saved offline capture brings the mode and session presets it was taken with. */
+		opts: { mode?: QueuedMode; session?: ScanSession } = {}
+	): Promise<ScanOutcome> {
+		const captureSession = { ...(opts.session ?? session) };
+		const mode = opts.mode ?? scanMode;
+		const expectedCardCount = mode === 'single' ? 1 : null;
+		/** Lookups that could not reach the server; any makes the scan's results meaningless. */
+		let lookupFailures = 0;
+		const noteLookupFailure = (err: unknown) => {
+			if (err instanceof TypeError || !navigator.onLine) lookupFailures++;
+		};
+		/** Cards of earlier captures stay listed; a capture whose lookups failed removes only its own. */
+		const startLength = detectedCards.length;
+		const dropForLater = (why: string): ScanOutcome => {
+			detectedCards = detectedCards.slice(0, startLength);
+			log(`No connection (${why}): nothing of this capture was decided, its results are dropped`);
+			scanProgress = 'No connection: nothing could be identified.';
+			return 'network';
+		};
 		const myToken = ++scanToken;
 		const superseded = () => myToken !== scanToken;
 		scanning = true;
 		scanStartTime = performance.now();
 		scanProgress = 'Loading OpenCV...';
 		edgeWarning = '';
-		log(`Scan started: app version ${version}, mode=${scanMode}`);
+		log(`Scan started: app version ${version}, mode=${mode}${opts.mode ? ' (saved capture)' : ''}`);
 
 		try {
 			await loadOpenCV();
 			const cv = (window as any).cv;
 			log('OpenCV loaded');
-			if (superseded()) return;
+			if (superseded()) return 'superseded';
 
 			scanProgress = 'Detecting cards...';
 
@@ -459,7 +609,7 @@
 			const img = { width: imgW, height: imgH };
 
 			log(`Image loaded: ${img.width}x${img.height} (${(img.width * img.height).toLocaleString()}px)`);
-			log(`Mode: ${scanMode}, expectedCardCount: ${expectedCardCount ?? 'unlimited'}`);
+			log(`Mode: ${mode}, expectedCardCount: ${expectedCardCount ?? 'unlimited'}`);
 
 			// Detection runs on a copy whose long edge is at most DETECT_MAX_EDGE.
 			// Coordinates are mapped back to full resolution before the warp. Live
@@ -507,7 +657,7 @@
 					}
 					cardContours.push({ corners: pts, area: r.area, rect: { ...r.rect } });
 				}
-			} else if (scanMode === 'rows') {
+			} else if (mode === 'rows') {
 				// Rows of overlapping cards: no card but the last of a row is a
 				// rectangle any more, so the strategies below would find nothing (or
 				// the whole row). The left edges of the cards form a comb of long
@@ -857,7 +1007,7 @@
 				// from the surviving neighbours.
 				// What the dimension filter drops is no card, but it marks where the spread goes on (grid inference below).
 				let dimDropped: Array<{ corners: Pt[] }> = [];
-				if (scanMode === 'multiple' && cardContours.length >= 4) {
+				if (mode === 'multiple' && cardContours.length >= 4) {
 					const beforeDim = cardContours.length;
 					const { kept, dropped, median: medDims } = filterByDimensions(
 						cardContours.map((c) => ({ candidate: c, corners: matCorners(c.corners) }))
@@ -947,7 +1097,7 @@
 				// cards when there is texture inside them. Background texture alone
 				// cannot establish an extra outer row. The lattice is a hypothesis: nothing is
 				// added when the detected cards do not sit on one.
-				if (scanMode === 'multiple' && cardContours.length >= 3) {
+				if (mode === 'multiple' && cardContours.length >= 3) {
 					const quads = cardContours.map((c) => ({ corners: matCorners(c.corners) }));
 					const grid = inferGrid(quads, det);
 					if (!grid) {
@@ -1031,7 +1181,7 @@
 			// In single-card mode, keep only the most prominent (largest-area)
 			// detection so the user doesn't get spurious extra crops from
 			// background noise.
-			if (scanMode === 'single' && cardContours.length > 1) {
+			if (mode === 'single' && cardContours.length > 1) {
 				log(`Single mode: trimming ${cardContours.length} candidates to largest`);
 				cardContours.sort((a, b) => b.area - a.area);
 				cardContours = cardContours.slice(0, 1);
@@ -1055,7 +1205,7 @@
 				onLiveResult?.(false, 'No cards detected. Use Capture now to retry.');
 				scanning = false;
 				src.delete(); gray.delete();
-				return;
+				return 'done';
 			}
 
 			// Map the surviving candidates from detection space to full resolution
@@ -1344,7 +1494,7 @@
 			// list (live mode pushes successive captures into the same UI).
 			// `firstIdx` is the index in `detectedCards` of the first newly
 			// added card; all subsequent loops iterate `firstIdx ... end`.
-			if (superseded()) return;
+			if (superseded()) return 'superseded';
 			const firstIdx = detectedCards.length;
 			detectedCards = [...detectedCards, ...cards];
 			if (!(source instanceof HTMLCanvasElement)) photoSize = { width: img.width, height: img.height };
@@ -1390,6 +1540,7 @@
 				try {
 					batch = await searchNames(items.map(({ i, cleanName }) => ({ text: cleanName, truncated: !!detectedCards[firstIdx + i].truncated })));
 				} catch (err) {
+					noteLookupFailure(err);
 					log(`${tag}: batch search error: ${err}`);
 					return accepted;
 				}
@@ -1527,7 +1678,7 @@
 			// Phase 2: Batch-search all names server-side in a single round trip.
 			// Previously this was 1+ fetch per card (and a second fetch per word
 			// fallback), which dominated wall-clock time at low network latency.
-			if (superseded()) return;
+			if (superseded()) return 'superseded';
 			log('Phase 2: Exact name search before orientation check');
 
 			const namesToSearch: Array<{ cardIdx: number; cleanName: string }> = [];
@@ -1549,6 +1700,7 @@
 				try {
 					primaryBatch = await searchNames(namesToSearch.map((n) => ({ text: n.cleanName, truncated: !!detectedCards[n.cardIdx].truncated })), true);
 				} catch (err) {
+					noteLookupFailure(err);
 					log(`Batch name search error: ${err}`);
 				}
 			}
@@ -1586,7 +1738,7 @@
 			}
 
 			// Rows mode decides every card's top from the row it lies in: no rotated retry.
-			for (const i of scanMode === 'rows' ? [] : unresolved()) {
+			for (const i of mode === 'rows' ? [] : unresolved()) {
 				if (superseded()) break;
 				const original = cardCanvases[i];
 				const rot = document.createElement('canvas');
@@ -1622,6 +1774,7 @@
 					const data = learnPrinted(await res.json());
 					fallbackBatch = Array.isArray(data?.batch) ? data.batch : [];
 				} catch (err) {
+					noteLookupFailure(err);
 					log(`Batch fallback search error: ${err}`);
 				}
 
@@ -1795,7 +1948,7 @@
 				card.setCode = shown.setCode;
 				card.collectorNumber = shown.collectorNumber;
 			}
-			if (superseded()) return;
+			if (superseded()) return 'superseded';
 
 			// Evidence fusion. The resolver is pure, so everything it may ask for is
 			// prefetched in two batched round trips: every printing of every name
@@ -1913,6 +2066,7 @@
 					}
 					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s), ${artCards.length} art hash(es)${prefixSets.length ? `, ${prefixSets.length} name start(s) in a set` : ''}`);
 				} catch (err) {
+					noteLookupFailure(err);
 					log(`Phase 3 prefetch error: ${err}`);
 				}
 			}
@@ -1971,14 +2125,14 @@
 			const unsettled = () => detectedCards.slice(firstIdx).filter((c) => !(c.status === 'found' && c.printingState === 'confirmed'));
 			scanProgress = 'Matching...';
 			await prefetch(detectedCards.slice(firstIdx), null);
-			if (superseded()) return;
+			if (superseded()) return 'superseded';
 			for (let i = 0; i < newCount; i++) resolveOne(detectedCards[firstIdx + i], firstIdx + i + 1, null);
 			// Second pass: the set most confirmed cards belong to helps the rest.
 			const majoritySet = majoritySetOf(detectedCards.slice(firstIdx));
 			if (majoritySet && unsettled().length > 0) {
 				log(`Phase 3c: majority set ${majoritySet.toUpperCase()} for ${unsettled().length} unsettled card(s)`);
 				await prefetch(unsettled(), majoritySet);
-				if (superseded()) return;
+				if (superseded()) return 'superseded';
 				for (let i = 0; i < newCount; i++) {
 					const c = detectedCards[firstIdx + i];
 					if (!(c.status === 'found' && c.printingState === 'confirmed')) resolveOne(c, firstIdx + i + 1, majoritySet);
@@ -1988,7 +2142,7 @@
 			// Pixel-based foil detection — only for single-card mode where the
 			// bottom strip is large enough to reliably sample the separator.
 			// Multi-card scans skip this (per-card resolution too low).
-			if (scanMode === 'single' && newCount === 1 && bottomCanvases[0]) {
+			if (mode === 'single' && newCount === 1 && bottomCanvases[0]) {
 				const card = detectedCards[firstIdx];
 				if (card.setCode) {
 					const detailed = await recognizeDetailed(pool, card.bottomUrl);
@@ -2009,7 +2163,11 @@
 			}
 			detectedCards = [...detectedCards];
 
-			if (superseded()) return;
+			if (superseded()) return 'superseded';
+
+			// A lookup that never reached the server leaves its cards "unknown" for no
+			// reason; such a capture is saved for later instead (see the callers).
+			if (lookupFailures > 0) return dropForLater(`${lookupFailures} lookup(s) failed`);
 
 			const newSlice = detectedCards.slice(firstIdx);
 			for (const card of newSlice) {
@@ -2026,12 +2184,15 @@
 			onLiveResult?.(counts.total > 0 && counts.printings === counts.total,
 				`${names.slice(0, 3).join('; ')}${names.length > 3 ? `; +${names.length - 3} more` : ''}${names.length ? ' — ' : ''}${summary}. Review results below before adding to your collection.`, false, newSlice.length === 1 && names.length === 1 ? names[0] : null);
 			scanProgress = `Done! ${summary}.`;
+			return 'done';
 		} catch (err) {
-			if (!superseded()) {
-				scanProgress = `Error: ${(err as Error).message}`;
-				log(`Scan failed: ${(err as Error).message}`);
-				onLiveResult?.(false, 'Identification failed. Use Capture now to retry.', true);
-			}
+			if (superseded()) return 'superseded';
+			log(`Scan failed: ${(err as Error).message}`);
+			// The OCR engines load from a CDN (or /vendor) on first use: without a connection that fails too.
+			if (!navigator.onLine || lookupFailures > 0 || !(await serverReachable())) return dropForLater((err as Error).message);
+			scanProgress = `Error: ${(err as Error).message}`;
+			onLiveResult?.(false, 'Identification failed. Use Capture now to retry.', true);
+			return 'failed';
 		} finally {
 			// Don't clear the busy flag if a newer scan superseded us — that scan
 			// owns `scanning` now.
@@ -2263,6 +2424,7 @@
 
 	<!-- Upload / Live -->
 	<ScanSessionSettings bind:value={session} sets={data.sets} locations={data.locations} disabled={scanning} />
+	<ScanOffline {online} queued={queuedCount} failed={queuedFailed} processing={processingQueue} onProcess={() => void processQueue()} onDiscard={() => void discardQueue()} />
 	{#if addError}<p role="alert" class="text-red-400">{addError}</p>{/if}
 	{#if scanMode === 'live'}
 		<div class="flex items-center gap-2">
@@ -2284,7 +2446,7 @@
 				</button>
 			{/if}
 		</div>
-		<LiveScanner bind:this={liveScanner} onCapture={handleLiveCapture} busy={scanning} log={(m) => log(`[live] ${m}`)} />
+		<LiveScanner bind:this={liveScanner} onCapture={handleLiveCapture} busy={scanning || processingQueue} log={(m) => log(`[live] ${m}`)} />
 	{:else if !imagePreview}
 		<label class="panel flex h-48 cursor-pointer flex-col items-center justify-center border-dashed transition-colors hover:border-[var(--color-primary)]">
 			<svg class="w-12 h-12 text-[var(--color-text-muted)] mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -2293,7 +2455,7 @@
 			</svg>
 			<p class="text-[var(--color-text-muted)] font-medium">{scanMode === 'rows' ? 'Upload photo of your card rows' : 'Upload photo of card(s)'}</p>
 			<p class="text-xs text-[var(--color-text-muted)] mt-1">{scanMode === 'rows' ? 'Up to two or three rows of overlapping cards in one image' : 'Detects multiple cards in one image'}</p>
-			<input type="file" accept="image/*" capture="environment" onchange={onFileSelect} class="hidden" />
+			<input type="file" accept="image/*" capture="environment" onchange={onFileSelect} disabled={processingQueue} class="hidden" />
 		</label>
 		<div class="flex items-center gap-2 mt-3">
 			<span class="text-xs text-[var(--color-text-muted)]">Mode:</span>
@@ -2392,8 +2554,8 @@
 			<div class="w-5 h-5 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin"></div>
 			<span class="text-sm">{scanProgress}</span>
 		</div>
-	{:else if scanProgress && (imagePreview || scanMode === 'live')}
-		<!-- Live captures have no imagePreview; still show the final "Done! x of y identified." line. -->
+	{:else if scanProgress && (imagePreview || scanMode === 'live' || !online || queuedCount > 0 || detectedCards.length > 0)}
+		<!-- Live captures, saved offline captures and photos saved for later have no imagePreview; still show their last line. -->
 		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3 text-sm text-[var(--color-text-muted)]">
 			{scanProgress}
 		</div>
