@@ -105,11 +105,12 @@ describe('offline queue records', () => {
 		const scan = queuedScanFromRecord(record());
 		expect(scan?.mode).toBe('live');
 		expect(scan?.rects).toHaveLength(1);
+		expect(queuedScanFromRecord(record({ mode: 'rows' }))?.mode).toBe('rows');
 	});
 
 	it('rejects damaged records instead of feeding them to the pipeline', () => {
 		expect(queuedScanFromRecord(null)).toBeNull();
-		expect(queuedScanFromRecord(record({ mode: 'rows' }))).toBeNull();
+		expect(queuedScanFromRecord(record({ mode: 'panorama' }))).toBeNull();
 		expect(queuedScanFromRecord(record({ image: 'not a blob' }))).toBeNull();
 		expect(queuedScanFromRecord(record({ rects: [{ corners: [[0, 0]] }] }))).toBeNull();
 		expect(queuedScanFromRecord(record({ id: undefined }))).toBeNull();

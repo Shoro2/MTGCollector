@@ -13,7 +13,7 @@
 import type { QuickRect } from '../scanner/quick-rects';
 import type { ScanSession } from '../scanner/session';
 
-export type QueuedMode = 'single' | 'multiple' | 'live';
+export type QueuedMode = 'single' | 'multiple' | 'rows' | 'live';
 export type QueuedScan = {
 	id?: number;
 	/** ISO time of the capture. */
@@ -42,7 +42,7 @@ export function queuedScanFromRecord(raw: unknown): QueuedScan | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const r = raw as Record<string, unknown>;
 	if (typeof r.id !== 'number' || typeof r.createdAt !== 'string') return null;
-	if (r.mode !== 'single' && r.mode !== 'multiple' && r.mode !== 'live') return null;
+	if (r.mode !== 'single' && r.mode !== 'multiple' && r.mode !== 'rows' && r.mode !== 'live') return null;
 	if (typeof Blob !== 'undefined' && !(r.image instanceof Blob)) return null;
 	if (!Array.isArray(r.rects) || !r.rects.every((x) => !!x && typeof x === 'object' && Array.isArray((x as QuickRect).corners) && (x as QuickRect).corners.length === 4 && (x as QuickRect).corners.every(isPoint))) return null;
 	if (!r.session || typeof r.session !== 'object') return null;

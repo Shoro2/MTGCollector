@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { leadingDarkRunEnd, trailingDarkRunStart, cropWindowsFromProfiles, fixedCropWindows, darkThreshold } from './crops';
+import { leadingDarkRunEnd, trailingDarkRunStart, cropWindowsFromProfiles, fixedCropWindows, darkThreshold, stripCropWindows } from './crops';
 
 const W = 488, H = 680;
 
@@ -82,6 +82,31 @@ describe('cropWindowsFromProfiles', () => {
 		const win = cropWindowsFromProfiles(profile(23, 6), profile(23, 6), cols(17), W, H, false);
 		expect(win.bottomY + win.bottomH).toBeLessThanOrEqual(H);
 		expect(win.nameX + win.nameW).toBeLessThanOrEqual(W);
+	});
+});
+
+describe('stripCropWindows', () => {
+	it('ends both windows before the covering card of a strip', () => {
+		// a third of the card is visible: the next card's left edge sits at x = 163
+		const visibleX = Math.round(W / 3);
+		const win = stripCropWindows(profile(23, 24), cols(17), W, H, visibleX, false);
+		expect(win.source).toBe('profile');
+		expect(win.nameX + win.nameW).toBeLessThanOrEqual(visibleX - Math.round(W * 0.015));
+		expect(win.bottomX + win.bottomW).toBeLessThanOrEqual(visibleX - Math.round(W * 0.015));
+		// the rows are anchored on the visible part's profile like on a whole card
+		expect(win.nameY).toBe(Math.round(23 + H * 0.004));
+		expect(win.bottomY).toBeLessThanOrEqual(653);
+	});
+	it('leaves the windows of a mostly visible card as they are', () => {
+		const win = stripCropWindows(profile(23, 24), cols(17), W, H, W, false);
+		const whole = cropWindowsFromProfiles(profile(23, 24), profile(23, 24), cols(17), W, H, false);
+		expect(win.nameW).toBe(whole.nameW);
+		expect(win.bottomW).toBe(whole.bottomW);
+	});
+	it('never returns an empty window for a sliver', () => {
+		const win = stripCropWindows(profile(23, 24), cols(17), W, H, 20, false);
+		expect(win.nameW).toBeGreaterThan(0);
+		expect(win.bottomW).toBeGreaterThan(0);
 	});
 });
 

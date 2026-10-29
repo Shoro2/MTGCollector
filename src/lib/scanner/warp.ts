@@ -2,8 +2,16 @@
 import { orderCornersForCard } from './geometry';
 import { artBoxOnWarp, hashArtPixels } from './phash';
 
-export function expandedCardCorners(points: Array<[number, number]>, expand = true): Array<[number, number]> {
-	const q = orderCornersForCard(points);
+/**
+ * The corners the perspective warp maps to the card: ordered top-left,
+ * top-right, bottom-right, bottom-left (orderCornersForCard) and expanded by
+ * 5% of the card's size around its centre. `keepOrder` trusts the given order
+ * instead: the "rows" scan mode knows which end of a card is its top from the
+ * comb of overlapping cards (overlap.ts), while orderCornersForCard has to
+ * guess between a card and its 180-degree rotation.
+ */
+export function expandedCardCorners(points: Array<[number, number]>, expand = true, keepOrder = false): Array<[number, number]> {
+	const q = keepOrder ? points.map(([x, y]) => [x, y] as [number, number]) : orderCornersForCard(points);
 	if (!expand) return q;
 	const ex = Math.hypot(q[1][0] - q[0][0], q[1][1] - q[0][1]) * 0.05;
 	const ey = Math.hypot(q[3][0] - q[0][0], q[3][1] - q[0][1]) * 0.05;

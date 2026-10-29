@@ -569,6 +569,110 @@ card, the footer or the name's single printing picks the printing. The
 black card that is never found at 1920x1080 (the fake camera's frame, where
 the card is half as tall as on the phone) is the known dark-mat limitation.
 
+## Overlapping rows (2026-10-29)
+
+The "Overlapping rows" mode of `/scan` (CLAUDE.md §6.4) reads rows of fanned
+cards: every card lies on top of the previous one, shifted right, so only the
+left strip of a covered card shows (the start of its name and the collector
+corner). No real photos of such layouts exist yet (the owner sends some
+later), so the mode was built and measured on synthetic scenes with ground
+truth:
+
+```bash
+# 17 scenes, 450 cards; names, sets and numbers from seed-cards.json, so the seeded :5174 server knows them.
+# OPENCV_JS is only needed for the perspective scene (rows-persp-2x14).
+OPENCV_JS=static/vendor/opencv.cjs node scripts/scanner-harness/make-overlap-scenes.mjs overlap-scenes/
+
+# Detection only, in Node (segments + row model, the code the page runs): overlay PNGs and scores
+OPENCV_JS=static/vendor/opencv.cjs npx tsx scripts/scanner-harness/overlap-detect-experiment.mjs --truth overlap-scenes/overlap-scenes.json --out overlap-out overlap-scenes/*.jpg
+
+# End to end through the page (detection, strip crops, OCR, prefix search, fusion), against the seeded catalogue
+HARNESS_URL=http://localhost:5174 node scripts/scanner-harness/harness.mjs --mode rows --expect overlap-scenes/overlap-scenes.json --out rows.json overlap-scenes/*.jpg
+```
+
+Node needs OpenCV.js under a `.cjs` name (copy `static/vendor/opencv.js`),
+because the repository's `package.json` says `"type": "module"`. The scenes
+cover a light table, paper, the dark woven mat and black cloth; tilted, arced,
+irregularly spaced, touching and 20-degree rows; the whole photo turned by 90,
+180 and 270 degrees; perspective with blur; a lamp reflection; a dim, blurred
+dark-mat photo with half of the artworks near black; three rows of fifteen
+with only 22 % of every card visible; a row of fifteen next to a row of four.
+
+> **Restart the seeded dev server after seeding it.** The set list
+> (`setsCache`, one hour) is filled on the first request; a server started
+> while `seed-test-db.mjs` was still writing keeps an empty list, every set
+> code is "unknown" to the fusion (`setKnown: false` in `POST /scan`), and the
+> measurement is wrong without any error. Check with
+> `curl -s -X POST -H 'Content-Type: application/json' -d '{"prefixSets":[{"text":"Cathar","setCode":"MID"}]}' http://localhost:5174/scan`
+> (`"setKnown":true`).
+
+**Detection** (`overlap-detect-experiment.mjs`, 2026-10-29): 444 of 450 cards
+found, 5 extra, rotation right in 17 of 17 scenes, corner error 2.1 % of the
+card height on average (p90 4.2 %), visible fraction off by 1.1 percentage
+points, 650 ms per photo. Misses: four of the 45 cards of `rows-tight-3x15`
+(22 % visible), one each in `rows-darkmat-2x15` and `rows-irregular-2x14`.
+In the browser `rows-persp-2x14` came out with 34 cards for 28 (6 extra; one
+in Node).
+
+**End to end** (seeded catalogue, 62 names in 7 sets, `harness.mjs --mode
+rows`, 161.7 s for the 17 photos):
+
+| Scene | Cards | Confirmed right | One tap | Wrong |
+|---|---|---|---|---|
+| rows-light-2x12 | 24 | 24 | 0 | 0 |
+| rows-glare-2x13 | 26 | 26 | 0 | 0 |
+| rows-rot90-2x13 | 26 | 26 | 0 | 0 |
+| rows-rot180-2x12 | 24 | 24 | 0 | 0 |
+| rows-darkart-black-2x15 | 30 | 30 | 0 | 0 |
+| rows-mixed-15-4 | 19 | 19 | 0 | 0 |
+| rows-wide-1x8 | 8 | 8 | 0 | 0 |
+| rows-arc-2x15 | 30 | 29 | 1 | 0 |
+| rows-tilt20-2x12 | 24 | 23 | 1 | 0 |
+| rows-touching-2x12 | 24 | 23 | 1 | 0 |
+| rows-rot270-2x12 | 24 | 22 | 1 | 0 |
+| rows-black-3x10 | 30 | 26 | 1 | 0 |
+| rows-darkmat-2x15 | 30 | 26 | 3 | 0 |
+| rows-irregular-2x14 | 28 | 23 | 3 | 0 |
+| rows-tight-3x15 | 45 | 33 | 6 | 0 |
+| rows-persp-2x14 | 28 | 18 | 0 | 0 |
+| rows-dim-darkmat-2x15 | 30 | 9 | 2 | 0 |
+| **Total** | **450** | **389** (identity and printing) | **19** | **0** |
+
+How the numbers moved while the rules were built (same scenes):
+
+| Run | Confirmed right | One tap | Wrong | Changed before the run |
+|---|---|---|---|---|
+| 1 | 380 | 9 | 0 | first complete pipeline |
+| 2 | 372 | 12 | **2** | a leading junk token of one or two characters ("l Punk", "fl Rotter": the covering card's edge read as a letter) is dropped from the prefix and no longer counts toward the seven letters |
+| 3 | 375 | 11 | 0 | `PREFIX_FIT` 0.6 and `PREFIX_CONTRADICT` 0.5 for truncated names (name-prefix.ts) |
+| 4 | **389** | 19 | 0 | none in the code: the server's set list was filled (see the note above), so the name start inside the set the footer shows (step 2s) and strong footer readings work |
+
+The two wrong cards of run 2 were one footer misread: M10 #104 (a distractor
+printing of the seed) for Giant Growth's #184. The prefix scorer picks the
+best prefix length for every name, so "l Giant Grc" reached 0.45 against
+"Distractor M10 #104", above the 0.4 at which the other modes let a name
+"fit" a footer hit. Over the 707 name reads of these scenes and the 62 seed
+names, 21.5 % of the pairs with a different card score 0.4 or more and 3.4 %
+0.6 or more, hence the higher thresholds of run 3 (regression test in
+`name-prefix.test.ts`). The confirmations run 2 lost ("i Armage", "jj Seven")
+had counted the junk letter toward the seven.
+
+What remains: the dim, blurred dark-mat photo (the name strips of dark cards
+are barely legible; 9 of 30), the perspective photo (6 extra cards in the
+browser, the strips of the far row are a few pixels wide), and the tight
+layout (22 % visible: the name start has three or four letters and the
+collector number is often cut). Each card of a row that is not settled offers
+its candidates or keeps the manual search.
+
+**What these numbers do not show.** The seeded catalogue holds 62 names; the
+full catalogue holds about 37,000, so many more names start the same way and
+a prefix is ambiguous far more often. The rules are built for that (seven
+letters, 0.8, a margin of 0.15 to the next name; five letters only inside one
+set), but the full-catalogue rate is not measured: this cloud session cannot
+download Scryfall's bulk data. Synthetic cards are cleaner than a phone photo
+(even light, flat cards, no sleeves). Both measurements are owed: the
+full catalogue on the dev PC and the owner's real photos.
+
 ## Offline mode (2026-10-29)
 
 `offline-check.mjs` drives the opt-in offline scanner (CLAUDE.md §6.5) against
