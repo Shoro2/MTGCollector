@@ -16,6 +16,14 @@ describe('FEEDBACK_CUES', () => {
 		expect(buzzMs('capture')).toBeLessThan(buzzMs('unresolved'));
 	});
 
+	it('gives a saved offline capture its own cue: one mid tone, neither the rising pair nor the low tone', () => {
+		const q = FEEDBACK_CUES.queued.tones;
+		expect(q).toHaveLength(1);
+		expect(q[0].hz).toBeGreaterThan(FEEDBACK_CUES.unresolved.tones[0].hz);
+		expect(q[0].hz).toBeLessThan(FEEDBACK_CUES.capture.tones[0].hz);
+		expect(FEEDBACK_CUES.capture.tones[0].ms).toBeLessThan(q[0].ms);
+	});
+
 	it('tells "identified" from "unresolved" by ear: rising two-tone versus one low tone', () => {
 		const ok = FEEDBACK_CUES.identified.tones, bad = FEEDBACK_CUES.unresolved.tones;
 		expect(ok).toHaveLength(2);

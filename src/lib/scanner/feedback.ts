@@ -2,7 +2,8 @@
  * Audible and haptic cues for the live scanner, so a card can be scanned
  * without looking at the screen: a short tick when a frame is captured (the
  * card may be taken away), then a rising two-tone when the card was
- * identified or a low tone when it was not (scan it again).
+ * identified or a low tone when it was not (scan it again). Offline, a capture
+ * that was saved for later gets its own single mid tone.
  *
  * Sound is WebAudio (no asset to load, works offline); vibration is
  * `navigator.vibrate`, which iOS Safari does not have — there the sound is the
@@ -11,7 +12,7 @@
  * never break a scan.
  */
 
-export type FeedbackCue = 'capture' | 'identified' | 'unresolved';
+export type FeedbackCue = 'capture' | 'identified' | 'unresolved' | 'queued';
 
 export type CuePattern = {
 	/** `navigator.vibrate` pattern in ms (vibrate, pause, vibrate, ...). */
@@ -23,7 +24,9 @@ export type CuePattern = {
 export const FEEDBACK_CUES: Record<FeedbackCue, CuePattern> = {
 	capture: { vibrate: [35], tones: [{ hz: 880, ms: 70 }] },
 	identified: { vibrate: [25, 50, 25], tones: [{ hz: 660, ms: 80 }, { hz: 990, ms: 110 }] },
-	unresolved: { vibrate: [120], tones: [{ hz: 330, ms: 180 }] }
+	unresolved: { vibrate: [120], tones: [{ hz: 330, ms: 180 }] },
+	/** Offline: the capture is stored and will be identified later; the next card can come. */
+	queued: { vibrate: [25, 50, 25], tones: [{ hz: 660, ms: 140 }] }
 };
 
 export type FeedbackPrefs = { sound: boolean; vibration: boolean };

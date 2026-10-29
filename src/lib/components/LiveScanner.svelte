@@ -52,7 +52,7 @@
 	let vibrationAvailable = $state(false);
 	let audioState = $state<AudioState>('suspended');
 	let captureSequence = 0;
-	let receipt = $state<{ id: number; state: 'processing' | 'confirmed' | 'review' | 'failed'; detail: string } | null>(null);
+	let receipt = $state<{ id: number; state: 'processing' | 'confirmed' | 'review' | 'failed' | 'queued'; detail: string } | null>(null);
 	const processing = $derived(busy || receipt?.state === 'processing');
 	const feedback = createScanFeedback(() => feedbackPrefs, {
 		log: (message) => log?.(`capture #${receipt?.id ?? 0}: ${message}`),
@@ -81,6 +81,14 @@
 		receipt = { id: captureId, state: failed ? 'failed' : established ? 'confirmed' : 'review', detail };
 		log?.(`capture #${captureId} ${receipt.state}: ${detail}`);
 		void feedback.play(established && !failed ? 'identified' : 'unresolved');
+	}
+	/** Called by the page when a capture was saved for later (offline) instead of identified. */
+	export function notifyQueued(captureId: number, detail: string) {
+		if (receipt?.id !== captureId || receipt.state !== 'processing') return;
+		capturedIdentity = null;
+		receipt = { id: captureId, state: 'queued', detail };
+		log?.(`capture #${captureId} queued: ${detail}`);
+		void feedback.play('queued');
 	}
 	let errorTitle = $state('');
 	let errorMsg = $state('');
@@ -758,7 +766,7 @@
 
 	<div aria-live="polite" aria-atomic="true" data-capture-receipt={receipt?.id ?? 0} data-capture-state={receipt?.state ?? 'none'} class="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm break-words">
 		{#if receipt}
-			<p class="font-medium">Capture #{receipt.id} · {receipt.state === 'processing' ? 'Identifying…' : receipt.state === 'confirmed' ? 'Printing confirmed' : receipt.state === 'failed' ? 'Scan failed' : 'Review needed'}</p>
+			<p class="font-medium">Capture #{receipt.id} · {receipt.state === 'processing' ? 'Identifying…' : receipt.state === 'confirmed' ? 'Printing confirmed' : receipt.state === 'failed' ? 'Scan failed' : receipt.state === 'queued' ? 'Saved for later' : 'Review needed'}</p>
 			<p class="text-[var(--color-text-muted)]">{receipt.detail}</p>
 		{:else}
 			<p>No captures to review. Each new capture will be numbered here.</p>

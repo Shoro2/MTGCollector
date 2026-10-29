@@ -568,3 +568,38 @@ printing is settled in 24 of 27 (15 before): the German name identifies the
 card, the footer or the name's single printing picks the printing. The
 black card that is never found at 1920x1080 (the fake camera's frame, where
 the card is half as tall as on the phone) is the known dark-mat limitation.
+
+## Offline mode (2026-10-29)
+
+`offline-check.mjs` drives the opt-in offline scanner (CLAUDE.md §6.5) against
+a production build. It starts the server itself and **stops it for the offline
+phase**: Playwright's `context.setOffline()` switches the page offline but not
+the service worker's own requests, so a check that only calls `setOffline()`
+passes while the worker still fetches everything from the network.
+
+```bash
+node scripts/scanner-harness/vendor-assets.mjs        # same-origin OpenCV (the CDNs are blocked in cloud sessions)
+npm run build                                          # after vendor-assets: static/ is copied into the build
+node scripts/scanner-harness/make-synthetic.mjs /tmp/off/fixtures
+node scripts/scanner-harness/make-still-y4m.mjs /tmp/off/fixtures/synth-single.jpg /tmp/off/single.y4m
+cat > /tmp/off/start.sh <<'SH'
+export MTG_DB_PATH=/tmp/off/db/mtg.db DISABLE_PRICE_UPDATES=1 PUBLIC_SCANNER_ASSETS_URL=/vendor \
+  ORIGIN=http://localhost:4188 PORT=4188 HOST=127.0.0.1 GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=y
+exec node build/index.js
+SH
+chmod +x /tmp/off/start.sh && mkdir -p /tmp/off/db
+/tmp/off/start.sh &                                    # once, to create the schema; then seed and stop it
+curl -s -H 'Accept: text/html' -o /dev/null http://localhost:4188/scan
+MTG_DB_PATH=/tmp/off/db/mtg.db node scripts/scanner-harness/seed-test-db.mjs && kill %1
+HARNESS_URL=http://localhost:4188 OFFLINE_CHECK_SERVER=/tmp/off/start.sh \
+  node scripts/scanner-harness/offline-check.mjs /tmp/off/single.y4m /tmp/off/fixtures/synth-single.jpg /tmp/off/offline
+```
+
+Result on 2026-10-29 (cloud session, Chromium 1243): 29 / 29. The site stored
+10.9 MB after "Make available offline"; offline, the detection worker started
+from the cache (`detector: Web Worker`), the live capture and the upload were
+saved, and back online both were identified as Lightning Bolt M10 #146
+(confirmed / confirmed). A scan whose lookups failed with the server gone (the
+browser still "online") was saved and identified with "Identify now". Not
+covered: OpenCV from `docs.opencv.org` as an opaque response, Safari, Firefox,
+a real phone.

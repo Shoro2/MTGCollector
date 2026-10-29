@@ -23,6 +23,11 @@ const config = {
 		// form of the same setting.
 		csrf: {
 			trustedOrigins: []
+		},
+		// The offline scanner's service worker (src/service-worker.ts) is installed
+		// only when a visitor turns offline mode on at /scan, never for everybody.
+		serviceWorker: {
+			register: false
 		}
 	}
 };
