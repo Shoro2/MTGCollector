@@ -86,7 +86,7 @@ try {
 	check(await page.getByText('Unique Printings', { exact: true }).isVisible(), 'unique count is labelled as printings');
 	check(await page.getByText('English reference', { exact: true }).count() > 0, 'reference prices are labelled on foreign cards');
 	check(await page.getByText('market value compared with', { exact: false }).isVisible(), 'profit states the matching market value and purchase cost');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'prices fit the mobile viewport');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'prices fit the mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'prices-mobile.png'), fullPage: true });
 	await page.getByRole('button', { name: 'Profit', exact: true }).click();
 	const freeRow = page.locator('a', { has: page.getByText('Free Copy', { exact: true }) });
@@ -122,7 +122,7 @@ try {
 	await page.getByText('Cleaned up 1 expired sessions', { exact: true }).waitFor();
 	await page.waitForFunction(() => [...document.querySelectorAll('tr')].some(row => row.cells[0]?.textContent === 'sessions' && row.cells[1]?.textContent === '1'));
 	check(true, 'session cleanup refreshes the displayed counts');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'admin fits the mobile viewport');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'admin fits the mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'admin-mobile.png'), fullPage: true });
 
 	await page.route('**/api/prices/data', route => route.fulfill({ json: { ...data, missingPriceCount: 10,

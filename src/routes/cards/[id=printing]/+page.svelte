@@ -245,7 +245,7 @@
 		</div>
 
 		<!-- Card Details -->
-		<section class="space-y-5">
+		<section class="min-w-0 space-y-5">
 			<div>
 				<p class="eyebrow">{(card.set_code as string).toUpperCase()} #{card.collector_number}</p>
 				<h1 class="mt-1 text-3xl font-semibold text-[var(--color-text-strong)]">{card.name}</h1>

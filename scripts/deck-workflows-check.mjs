@@ -54,6 +54,9 @@ for (const [n, oracle, name, rarity, type, cost, cmc, colors, text, price] of [
 ]) {
 	insertRules.run(uuid(n), oracle, name, String(n), rarity, type, cost, cmc, colors, colors, text, legal(), price);
 }
+// A long double-faced name: rows must truncate it instead of widening the page on a phone.
+insertRules.run(uuid(15), 'esika', 'Esika, God of the Tree // The Prismatic Bridge', '15', 'mythic', 'Legendary Creature — God', '{1}{G}{G}', 3, '["G"]', '["G"]',
+	'Vigilance', legal(), 2);
 // A land has no colors; its frame comes from the mana it makes (its color identity).
 insertRules.run(uuid(14), 'fountain', 'Hallowed Fountain', '14', 'rare', 'Land — Plains Island', null, 0, '[]', '["U","W"]',
 	'({T}: Add {W} or {U}.)\nAs Hallowed Fountain enters, you may pay 2 life. If you don\'t, it enters tapped.', legal(), 8);
@@ -79,7 +82,19 @@ function check(condition, label) { assert.ok(condition, label); checks++; consol
 // the red cards are outside it, the blue one is not.
 const problemsText = (text) => !/cannot share|Cannot be a commander|At most two/.test(text) &&
 	/Outside the commander's color identity: (?=.*Boros Reckoner)(?=.*Lightning Helix)(?!.*Counterspell)/.test(text);
-const fits = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+// clientWidth, not innerWidth: a mobile browser zooms out to wider content, so innerWidth grows with it.
+const fits = (page) => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+// Phone pages are checked at several common widths, not only the context's 390 px (a long card
+// name widened the deck view to 417 px on every phone until 2026-10-29).
+const fitsPhones = async (page) => {
+	let ok = true;
+	for (const width of [320, 360, 390]) {
+		await page.setViewportSize({ width, height: 844 });
+		await page.waitForTimeout(100);
+		ok &&= await fits(page);
+	}
+	return ok;
+};
 const owned = (page, name) => page.locator(`[data-group] li[data-row="${name}"] [data-owned]`).first().getAttribute('data-owned');
 
 try {
@@ -142,7 +157,7 @@ try {
 	check(await page.locator('li[data-row="Black Lotus"]').getByLabel(/Problem/).count() === 1, 'an illegal card is marked in its row');
 	check(await page.locator('[data-group="sideboard"] li[data-row="Lightning Bolt"]').getByLabel(/Problem/).count() === 0, 'a commander sideboard is not marked, the rules skip it');
 	await page.screenshot({ path: resolve(dir, 'deck-mobile.png'), fullPage: true });
-	check(await fits(page), 'deck view fits mobile width');
+	check(await fitsPhones(page), 'deck view fits mobile width');
 	check(await page.locator('[data-add-partner]').count() === 0, 'a commander without Partner gets no partner field');
 	check(await page.locator('li[data-row="Sol Ring"]').first().getAttribute('data-frame') === 'colorless' &&
 		await page.locator('li[data-row="Mountain"]').first().getAttribute('data-frame') === 'r' &&
@@ -265,7 +280,7 @@ try {
 	const row = page.locator('tbody tr', { hasText: 'Krenko Goblins' });
 	check(await row.count() === 1 && (await row.innerText()).includes('Krenko, Mob Boss'), 'the deck list shows the deck and its commander');
 	await page.screenshot({ path: resolve(dir, 'decks-mobile.png'), fullPage: true });
-	check(await fits(page), 'deck list fits mobile width');
+	check(await fitsPhones(page), 'deck list fits mobile width');
 
 	const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 	await desktop.addCookies([{ name: 'session', value: tokens.other, url: origin }]);
@@ -367,7 +382,7 @@ try {
 	await visitor.waitForURL(/format=modern/);
 	check(await visitor.locator('[data-public-total="0"]').count() === 1, 'the public list filters by format');
 	await visitor.screenshot({ path: resolve(dir, 'public-decks-mobile.png'), fullPage: true });
-	check(await fits(visitor), 'the public list fits mobile width');
+	check(await fitsPhones(visitor), 'the public list fits mobile width');
 
 	// Three accounts report the deck: it is hidden without anybody acting.
 	await other.goto(origin + `/decks/${duo.id}`);
@@ -399,11 +414,13 @@ try {
 	await big.locator('[data-reported-decks]').getByText('No reports.').waitFor();
 	check(!db.prepare('SELECT hidden_at FROM decks WHERE id=?').get(duo.id).hidden_at && !db.prepare('SELECT 1 FROM deck_reports WHERE deck_id=?').get(duo.id), 'restoring shows the deck again and forgets the reports');
 
+	db.prepare("INSERT INTO deck_cards(deck_id,card_id,board,quantity) VALUES (?,?,'main',1)").run(duo.id, uuid(15));
 	const phoneDuo = await ownerContext.newPage();
 	await phoneDuo.goto(origin + `/decks/${duo.id}`);
 	await phoneDuo.screenshot({ path: resolve(dir, 'partners-mobile.png'), fullPage: true });
-	check(await fits(phoneDuo), 'the framed deck view fits mobile width');
+	check(await fitsPhones(phoneDuo), 'the framed deck view fits mobile width, a long card name included');
 	await phoneDuo.close();
+	db.prepare('DELETE FROM deck_cards WHERE deck_id=? AND card_id=?').run(duo.id, uuid(15));
 
 	await page.goto(origin + `/decks/${deck.id}`);
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();

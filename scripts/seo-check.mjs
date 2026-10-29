@@ -134,7 +134,7 @@ try {
 	check((await page.locator('meta[name="description"]').getAttribute('content')).startsWith("Teferi's Protection (Creature): 2 printings from €12.50 with price history."), 'card snippet states printings and the lowest price');
 	check(await page.getByRole('heading', { level: 1 }).innerText() === "Teferi's Protection", 'card page heading is the card name');
 	check(await page.locator(`a[href="/cards/${printingId(82)}"]`).count() === 1 && await page.locator(`a[href="/cards/${printingId(83)}"]`).count() === 1, 'card page links every printing');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'card page fits a mobile viewport');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'card page fits a mobile viewport');
 	const legality = page.locator('section[aria-label="Format legality"]');
 	check(await legality.locator('li').count() === 7 && (await legality.locator('li').first().innerText()).includes('Standard'), 'card page lists every format in a fixed order');
 	check((await legality.locator('li.status-banned').innerText()).includes('Duel Commander') && (await legality.locator('li.status-banned').innerText()).includes('Banned')
@@ -179,7 +179,7 @@ try {
 	check(await moves.getByRole('heading').innerText() === 'Price moves from October 1 to October 9', 'price moves name the span between the two price updates');
 	check(await moves.locator('a[href="/cards/teferis-protection"]', { hasText: '▲ 50.0%' }).count() === 1, 'a rising card links its card page');
 	check(await moves.locator('.move-row').count() === 2 && (await moves.innerText()).includes('▼ 20.0%'), 'a falling card is listed, the trend price outlier is not');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'home page fits a mobile viewport');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'home page fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'home-mobile.png'), fullPage: true });
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.screenshot({ path: resolve(dir, 'home-desktop.png'), fullPage: true });
@@ -200,7 +200,7 @@ try {
 		'portfolio tracker JSON-LD describes the page and its breadcrumb, no offer or FAQ markup');
 	check(await page.getByRole('link', { name: 'Start tracking' }).first().getAttribute('href') === '/login', 'portfolio tracker sends visitors to sign in');
 	check((await page.locator('main').innerText()).includes('Example data'), 'the dashboard preview is labelled as example data');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'portfolio tracker page fits a mobile viewport');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'portfolio tracker page fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'portfolio-tracker-mobile.png'), fullPage: true });
 	await page.goto(origin + '/login');
 	const loginText = await page.locator('main').innerText();
@@ -210,7 +210,7 @@ try {
 	await page.goto(origin + '/scan');
 	const description = await page.locator('meta[name="description"]').getAttribute('content');
 	check(description.includes('German') && !description.includes('foil detection'), 'scanner snippet describes supported use without guaranteed foil recognition');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'scanner introduction fits a mobile viewport');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'scanner introduction fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'scan-mobile.png'), fullPage: true });
 	await context.close();
 
@@ -231,6 +231,42 @@ try {
 	check(true, 'the mobile menu leads visitors to the portfolio tracker');
 	check(errors.length === 0, 'client pagination has no runtime errors');
 	await client.close();
+
+	// No sideways scrolling on any phone: every public page, and /scan in each of its four modes,
+	// at common phone widths upright and turned (the scanner's mode switch overflowed below 375 px,
+	// a Galaxy S25 at 360 px could scroll 9 px sideways, 2026-10-29).
+	const phoneSizes = [[320, 640], [360, 780], [375, 667], [390, 844], [412, 915], [430, 932], [568, 320], [915, 412]];
+	const phone = await browser.newContext({ viewport: { width: 360, height: 780 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+	await phone.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+	const narrow = await phone.newPage();
+	const overflowingSizes = async () => {
+		const failed = [];
+		for (const [width, height] of phoneSizes) {
+			await narrow.setViewportSize({ width, height });
+			// Charts re-measure on the next frames; a turned phone must not keep scrolling afterwards.
+			await narrow.waitForTimeout(150);
+			const scroll = await narrow.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+			if (scroll[0] > scroll[1]) failed.push(`${width}x${height}: ${scroll[0]} > ${scroll[1]}`);
+		}
+		return failed;
+	};
+	for (const path of ['/', '/cards', '/cards/teferis-protection', `/cards/${printingId(82)}`, '/portfolio-tracker', '/decks', '/login', '/contact', '/impressum', '/datenschutz']) {
+		await narrow.goto(origin + path);
+		const failed = await overflowingSizes();
+		check(failed.length === 0, `${path} never scrolls sideways at phone widths${failed.length ? ` (${failed.join(', ')})` : ''}`);
+	}
+	await narrow.goto(origin + '/scan');
+	await narrow.waitForLoadState('networkidle');
+	for (const mode of ['Single card', 'Multiple cards', 'Overlapping rows', 'Live camera']) {
+		await narrow.setViewportSize({ width: 360, height: 780 });
+		await narrow.getByRole('button', { name: mode, exact: true }).click();
+		check(await narrow.getByRole('button', { name: mode, exact: true }).getAttribute('aria-pressed') === 'true', `scanner mode switch marks ${mode} as chosen`);
+		const failed = await overflowingSizes();
+		check(failed.length === 0, `/scan in ${mode} mode never scrolls sideways at phone widths${failed.length ? ` (${failed.join(', ')})` : ''}`);
+	}
+	await narrow.setViewportSize({ width: 320, height: 640 });
+	await narrow.screenshot({ path: resolve(dir, 'scan-320.png') });
+	await phone.close();
 
 	// Every third party the browser contacts must be named in the privacy policy, in both languages.
 	// A new external host fails here until the policy and this list name it.

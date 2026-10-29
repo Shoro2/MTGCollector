@@ -313,7 +313,7 @@
 			{/if}
 		</div>
 
-		<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
+		<div class="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
 			<div class="columns-1 gap-5 md:columns-2">
 				{#each groups as g (g.key)}
 					<section class="mb-5 break-inside-avoid" data-group={g.key}>

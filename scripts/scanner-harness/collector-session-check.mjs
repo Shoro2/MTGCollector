@@ -101,7 +101,7 @@ try {
 	check(writes[0].language === 'de' && writes[0].foil === true && writes[0].condition === 'lightly_played' && writes[0].location === 'Box A',
 		'save uses captured settings even after the session settings changed');
 	await page.screenshot({ path: resolve(dir, 'scan-review-mobile.png'), fullPage: true });
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'scan review fits mobile width');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'scan review fits mobile width');
 	await scan('synth-single.jpg');
 	await card.getByRole('button', { name: 'Add', exact: true }).click();
 	await card.getByText('Added!', { exact: true }).waitFor();
