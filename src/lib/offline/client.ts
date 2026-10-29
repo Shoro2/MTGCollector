@@ -37,6 +37,33 @@ export async function offlineEnabled(): Promise<boolean> {
 	}
 }
 
+/** The scanner page and the warm URLs not (yet) in the worker's caches. */
+async function missingCopies(warmUrls: string[]): Promise<string[]> {
+	const own = location.origin;
+	const missing: string[] = [];
+	for (const url of [SCANNER_PAGE, ...warmUrls]) {
+		if (!(await caches.match(new URL(url, own).href, { ignoreVary: true }))) missing.push(url);
+	}
+	return missing;
+}
+
+export type OfflineState = 'off' | 'ready' | 'incomplete';
+
+/**
+ * 'ready' only when the worker is registered and every file the offline
+ * scanner needs is stored; 'incomplete' when the worker is there but a file is
+ * missing (a turn-on that failed before 2026-10-29 left the worker behind, or
+ * the browser evicted a cache).
+ */
+export async function offlineState(warmUrls: string[]): Promise<OfflineState> {
+	if (!(await offlineEnabled())) return 'off';
+	try {
+		return (await missingCopies(warmUrls)).length === 0 ? 'ready' : 'incomplete';
+	} catch {
+		return 'incomplete';
+	}
+}
+
 function waitForControl(): Promise<void> {
 	if (navigator.serviceWorker.controller) return Promise.resolve();
 	return new Promise((resolve, reject) => {
@@ -49,9 +76,28 @@ function waitForControl(): Promise<void> {
  * Turn offline mode on. `warmUrls` are the scanner files to store beyond the
  * build (the OpenCV.js URL, the detection worker with its version query).
  * `dev` registers the worker as a module, as Vite serves it in development.
+ * A failure turns offline mode off again, so the page never reports "ready"
+ * with the card detector missing.
  */
 export async function enableOffline(warmUrls: string[], dev = false): Promise<void> {
 	if (!offlineSupported()) throw new Error('This browser cannot keep pages offline.');
+	try {
+		await storeScanner(warmUrls, dev);
+	} catch (err) {
+		try { await disableOffline(); } catch { /* the original error matters more */ }
+		throw err;
+	}
+	// Ask the browser not to evict the stored scanner under storage pressure (it may say no).
+	try { await navigator.storage?.persist?.(); } catch { /* optional */ }
+}
+
+/** Where a file comes from, for error messages: "/scan", "docs.opencv.org/4.9.0/opencv.js". */
+function label(url: string): string {
+	const u = new URL(url, location.origin);
+	return u.origin === location.origin ? u.pathname : `${u.host}${u.pathname}`;
+}
+
+async function storeScanner(warmUrls: string[], dev: boolean): Promise<void> {
 	await navigator.serviceWorker.register(SW_URL, { scope: '/', type: dev ? 'module' : 'classic' });
 	await navigator.serviceWorker.ready;
 	await waitForControl();
@@ -63,20 +109,24 @@ export async function enableOffline(warmUrls: string[], dev = false): Promise<vo
 		const init: RequestInit = !sameOrigin ? { mode: 'no-cors', credentials: 'omit' }
 			: url === SCANNER_PAGE ? { credentials: 'same-origin', headers: { Accept: 'text/html' } }
 			: { credentials: 'same-origin' };
-		const res = await fetch(url, init);
-		if (sameOrigin && !res.ok) throw new Error(`Could not store ${new URL(url, own).pathname} (${res.status}).`);
+		let res: Response;
+		try {
+			res = await fetch(url, init);
+		} catch (err) {
+			// Browsers say only "NetworkError when attempting to fetch resource." / "Failed to fetch"; name the file.
+			throw new Error(`Could not download ${label(url)} (${(err as Error).message || 'network error'}).`);
+		}
+		if (sameOrigin && !res.ok) throw new Error(`Could not store ${label(url)} (${res.status}).`);
 		await res.arrayBuffer(); // the worker stores a copy; reading ours completes the download
 	}
 	// The worker writes its copies in the background; report "ready" only once they are there.
 	const deadline = Date.now() + STORE_TIMEOUT_MS;
-	for (const url of [SCANNER_PAGE, ...warmUrls]) {
-		while (!(await caches.match(new URL(url, own).href, { ignoreVary: true }))) {
-			if (Date.now() > deadline) throw new Error(`${new URL(url, own).pathname} could not be stored (is the storage full?).`);
-			await new Promise((r) => setTimeout(r, 100));
-		}
+	for (;;) {
+		const missing = await missingCopies(warmUrls);
+		if (missing.length === 0) return;
+		if (Date.now() > deadline) throw new Error(`${label(missing[0])} could not be stored (is the storage full?).`);
+		await new Promise((r) => setTimeout(r, 100));
 	}
-	// Ask the browser not to evict the stored scanner under storage pressure (it may say no).
-	try { await navigator.storage?.persist?.(); } catch { /* optional */ }
 }
 
 /** Turn offline mode off: unregister the worker and delete its caches. */

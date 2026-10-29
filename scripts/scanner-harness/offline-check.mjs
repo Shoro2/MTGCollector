@@ -15,7 +15,8 @@
 // synthetic card), `photo.jpg` is uploaded (make-synthetic.mjs).
 //
 // Walks through: no service worker before opting in -> "Make available
-// offline" stores the page, the chunks, OpenCV and the detection worker ->
+// offline" stores the page, the chunks, OpenCV and the detection worker (a
+// failing turn-on is rolled back, a worker without OpenCV.js reads "Not ready") ->
 // offline, /scan still opens and other pages show the offline page -> a live
 // capture and an upload are saved, not identified -> back online, both are
 // identified by the normal pipeline and leave the queue -> "Turn off" removes
@@ -76,6 +77,48 @@ try {
 	expect((await page.locator('link[rel="manifest"]').count()) === 1, 'the page links the web app manifest');
 	const offlineMode = page.locator('[data-offline-mode]');
 	expect((await offlineMode.getAttribute('data-offline-mode')) === 'off', 'offline mode starts off');
+
+	// ---- the CSP lets the page fetch the CDN copy of OpenCV.js it stores ----
+	// This run uses /vendor, so the cross-origin path is not exercised; a fetch()
+	// with mode no-cors is governed by connect-src, and without docs.opencv.org
+	// there Firefox refused it on the owner's phone (2026-10-29).
+	const csp = (await fetch(`${base}/scan`, { headers: { Accept: 'text/html' } })).headers.get('content-security-policy') ?? '';
+	const connect = (csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('connect-src ')) ?? '').split(/\s+/);
+	expect(['https://docs.opencv.org', 'https://cdn.jsdelivr.net'].every((h) => connect.includes(h)), 'connect-src allows the OpenCV.js CDNs offline mode stores');
+
+	// ---- a turn-on that fails is rolled back, never reported as ready ----
+	{
+		const failing = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'allow' });
+		// The page loads OpenCV.js with a script tag; only offline mode's fetch() of it fails, as under the old CSP.
+		await failing.addInitScript(() => {
+			const real = window.fetch.bind(window);
+			window.fetch = (input, init) => (String(input instanceof Request ? input.url : input).endsWith('/opencv.js')
+				? Promise.reject(new TypeError('NetworkError when attempting to fetch resource.'))
+				: real(input, init));
+		});
+		const p = await failing.newPage();
+		p.on('pageerror', (e) => errors.push(e.message));
+		await p.goto(`${base}/scan`, { waitUntil: 'networkidle' });
+		await p.locator('[data-offline-mode] summary').click();
+		await p.getByRole('button', { name: 'Make available offline' }).click();
+		await p.getByRole('alert').filter({ hasText: /opencv\.js/ }).waitFor({ timeout: 60000 });
+		const alertText = (await p.getByRole('alert').innerText()).trim();
+		expect(/Could not download .*opencv\.js/.test(alertText), `the error names the file (${alertText})`);
+		await p.waitForFunction(() => document.querySelector('[data-offline-mode]')?.getAttribute('data-offline-mode') === 'off', null, { timeout: 15000 });
+		expect(!(await p.getByText(/Ready offline/).isVisible()), 'a failed turn-on does not say "Ready offline"');
+		expect((await p.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)) === 0, 'and leaves no service worker behind');
+		expect(!(await p.evaluate(() => caches.keys())).some((k) => k.startsWith('mtg-offline-')), 'and no caches');
+		// A worker left behind by such a failure before the fix: the panel says it is not complete.
+		await p.evaluate(async () => { await navigator.serviceWorker.register('/service-worker.js', { scope: '/' }); await navigator.serviceWorker.ready; });
+		await p.reload({ waitUntil: 'networkidle' });
+		await p.waitForFunction(() => document.querySelector('[data-offline-mode]')?.getAttribute('data-offline-mode') === 'incomplete', null, { timeout: 15000 });
+		await p.locator('[data-offline-mode] summary').click();
+		expect(await p.getByText(/Not ready offline/).isVisible(), 'a worker without OpenCV.js stored shows "Not ready offline"');
+		await p.getByRole('button', { name: 'Turn off offline mode' }).click();
+		await p.waitForFunction(() => document.querySelector('[data-offline-mode]')?.getAttribute('data-offline-mode') === 'off', null, { timeout: 15000 });
+		expect((await p.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)) === 0, '"Turn off" removes the incomplete worker');
+		await failing.close();
+	}
 
 	// ---- turn it on ----
 	await offlineMode.locator('summary').click();
