@@ -66,8 +66,9 @@ describe('cardInSleeve on measured profiles', () => {
 		expect(c!.loose).toEqual(['top', 'left', 'right']);
 		// The card's top edge was at 6.6 % of the warp; the new window puts it at the ordinary 3 %.
 		expect((c!.edges.top! * H - c!.y) / c!.h).toBeCloseTo(SLEEVE.margin, 5);
-		expect(c!.w / c!.h).toBeGreaterThan(0.69);
-		expect(c!.w / c!.h).toBeLessThan(0.72);
+		// The bottom has no band (the card rests on the sleeve's seam): its edge follows from the width.
+		expect(c!.w / c!.h).toBeCloseTo(63 / 88, 5);
+		expect(c!.y + c!.h * (1 - SLEEVE.margin)).toBeLessThan(H * (1 - c!.edges.bottom!));
 		expect(c!.w).toBeLessThan(W);
 		expect(c!.h).toBeLessThan(H);
 	});
@@ -79,6 +80,15 @@ describe('cardInSleeve on measured profiles', () => {
 		expect(correction(MEASURED.unsleeved2)).toBeNull();
 		expect(correction(MEASURED.onCard)).toBeNull();
 		expect(correction(MEASURED.gridCell)).toBeNull(); // only the top shows a band: a shifted cell, not a sleeve
+	});
+	it('needs a band on a horizontal and on a vertical side', () => {
+		// A card photographed at an angle: the table shows left and right of the quad, not above or below it.
+		const p = MEASURED.deadlyRollick;
+		const tilted: Profiles = {
+			gray: { ...p.gray, rowsTop: MEASURED.unsleeved.gray.rowsTop },
+			sat: { ...p.sat, rowsTop: MEASURED.unsleeved.sat.rowsTop }
+		};
+		expect(correction(tilted)).toBeNull();
 	});
 });
 

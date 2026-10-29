@@ -45,8 +45,10 @@ export const SLEEVE = {
 	opposite: 0.015,
 	/** Where the card's edge sits in an ordinary warp: the new window puts it there. */
 	margin: 0.03,
-	/** Sides that must show a sleeve band before the warp is moved onto the card. */
-	minSides: 2,
+	/** The card's proportions, 63 x 88 mm. */
+	cardAspect: 63 / 88,
+	/** How far (fraction of the height) the card's derived edge may lie beyond the first dark row. */
+	overshoot: 0.01,
 	/** The card found must have card proportions (63 x 88 mm is 0.716). */
 	aspectMin: 0.66,
 	aspectMax: 0.77
@@ -112,7 +114,11 @@ export function cardInSleeve(rows: ProfilePair, cols: ProfilePair, W: number, H:
 	const opposite = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' } as const;
 	const isLoose = (e: number | null) => e !== null && e >= SLEEVE.looseFrom && e <= SLEEVE.looseTo;
 	const loose = (['top', 'bottom', 'left', 'right'] as const).filter((s) => isLoose(edges[s]));
-	if (loose.length < SLEEVE.minSides) return null;
+	// A band on a horizontal and on a vertical side: a quad with a band on the
+	// left and the right only was a card photographed at an angle (the owner's
+	// tilted grid, 2026-10-29), not a sleeve.
+	const has = (s: 'top' | 'bottom' | 'left' | 'right') => loose.includes(s);
+	if (!(has('top') || has('bottom')) || !(has('left') || has('right'))) return null;
 	// A card shifted out of the warp on the other side is a misplaced quad, not a sleeve.
 	for (const s of loose) {
 		const o = edges[opposite[s]];
@@ -125,9 +131,27 @@ export function cardInSleeve(rows: ProfilePair, cols: ProfilePair, W: number, H:
 		return e !== null && e < SLEEVE.looseFrom ? e : isLoose(e) ? (e as number) : SLEEVE.margin;
 	};
 	const left = edge('left') * W, right = (1 - edge('right')) * W;
-	const top = edge('top') * H, bottom = (1 - edge('bottom')) * H;
-	const cw = right - left, ch = bottom - top;
-	if (cw <= 0 || ch <= 0) return null;
+	const cw = right - left;
+	if (cw <= 0) return null;
+	let top = edge('top') * H, bottom = (1 - edge('bottom')) * H;
+	if (!(has('top') && has('bottom'))) {
+		// The card rests on the sleeve's bottom seam (or its top), and the first
+		// dark row there is the seam, not the card: the measured cards came out
+		// 1-2 % too tall and the collector line sat at the top of its window.
+		// The edge with a band is the card's; the other follows from the width.
+		const ch = cw / SLEEVE.cardAspect;
+		if (has('top')) {
+			const derived = top + ch;
+			if (derived > bottom + SLEEVE.overshoot * H) return null;
+			bottom = derived;
+		} else {
+			const derived = bottom - ch;
+			if (derived < top - SLEEVE.overshoot * H) return null;
+			top = derived;
+		}
+	}
+	const ch = bottom - top;
+	if (ch <= 0) return null;
 	const aspect = cw / ch;
 	if (aspect < SLEEVE.aspectMin || aspect > SLEEVE.aspectMax) return null;
 	// The new window shows the card with the ordinary margin around it.
