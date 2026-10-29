@@ -110,6 +110,15 @@ a {
 	text-underline-offset: 3px;
 }
 
+/* Tailwind's preflight sets margin: 0 on every element, which drops the browser's
+   margin: auto for modal dialogs and pins them to the top left corner. Inside the base
+   layer, so a margin utility on a dialog still wins. */
+@layer base {
+	dialog:modal {
+		margin: auto;
+	}
+}
+
 :focus-visible {
 	outline: 2px solid rgba(111, 178, 255, 0.85);
 	outline-offset: 2px;
@@ -277,6 +286,13 @@ tbody tr:hover {
 .btn-danger:hover {
 	background: rgba(240, 104, 109, 0.1);
 	border-color: rgba(240, 104, 109, 0.65);
+}
+
+/* A disabled button must look disabled: the deck dialog's Create stayed bright blue while it
+   waited for the captcha (2026-10-29). */
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .control {

@@ -91,8 +91,14 @@ const verifier = createServer((req, res) => {
 });
 await new Promise(r => verifier.listen(0, '127.0.0.1', r));
 const verifyUrl = `http://127.0.0.1:${verifier.address().port}/siteverify`;
-// The stand-in widget: a button that answers with a fresh token for the widget's action.
-const FAKE_TURNSTILE = `window.turnstile = (() => {
+// The stand-in widget: a button that answers with a fresh token for the widget's action. Like
+// Cloudflare's api.js it sets window.turnstile only after its own load event and then calls the
+// function named by ?onload= (a loader that waited for the load event alone failed on the real
+// script, 2026-10-29).
+const FAKE_TURNSTILE = `(() => {
+const onload = new URL(document.currentScript.src).searchParams.get('onload');
+setTimeout(() => {
+window.turnstile = (() => {
 	let n = 0; const widgets = {};
 	return {
 		render(el, o) {
@@ -106,6 +112,9 @@ const FAKE_TURNSTILE = `window.turnstile = (() => {
 		reset(id) { widgets[id].button.textContent = 'Verify you are human'; },
 		remove(id) { widgets[id]?.button.remove(); delete widgets[id]; }
 	};
+})();
+if (onload) window[onload]();
+}, 50);
 })();`;
 const fakeTurnstile = (context) => context.route('https://challenges.cloudflare.com/**', route =>
 	route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_TURNSTILE }));
@@ -167,6 +176,8 @@ try {
 	await page.locator('dialog [data-fake-turnstile]').waitFor();
 	check(await page.locator('dialog [data-deck-captcha] [data-fake-turnstile]').count() === 1 && await page.getByRole('button', { name: 'Create', exact: true }).isDisabled(),
 		'a public deck shows the captcha and waits for it');
+	check(await page.getByRole('button', { name: 'Create', exact: true }).evaluate(b => Number(getComputedStyle(b).opacity)) < 1,
+		'the waiting Create button looks disabled');
 	await page.getByText('Unlisted', { exact: true }).click();
 	check(await page.locator('dialog [data-deck-captcha]').count() === 0, 'an unlisted deck needs no captcha');
 	await page.getByLabel('Author name (optional)').fill('Goblin  Tamer');
@@ -348,6 +359,9 @@ try {
 	big.on('pageerror', error => errors.push(error.message));
 	await big.goto(origin + '/decks');
 	await big.getByRole('button', { name: 'New deck', exact: true }).click();
+	// Tailwind's preflight used to drop the dialog's margin: auto and pin it to the top left corner.
+	const box = await big.locator('dialog').boundingBox();
+	check(box && Math.abs(box.x + box.width / 2 - 640) < 4 && box.y > 8, `the create dialog is centred (x ${Math.round(box?.x ?? -1)}, y ${Math.round(box?.y ?? -1)}, width ${Math.round(box?.width ?? -1)})`);
 	await big.getByLabel('Name', { exact: true }).fill('Thrasios and Tymna');
 	check(await big.locator('[data-partner-field]').count() === 0, 'the partner field waits for a commander that can take one');
 	await big.getByRole('combobox', { name: 'Commander' }).fill('Thrasios');
