@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canLead, canPair, checkDeck, copyLimit, deckFormat, DECK_FORMATS, type RuleCard } from './deck-formats';
+import { canHavePartner, canLead, canPair, checkDeck, copyLimit, deckFormat, DECK_FORMATS, type RuleCard } from './deck-formats';
 import type { Board } from './deck';
 
 const legal = (formats: string[], status = 'legal') => Object.fromEntries(formats.map((f) => [f, status]));
@@ -44,6 +44,18 @@ describe('copy limits and leaders', () => {
 		expect(canPair(companion, partner('Tymna'))).toBe(false);
 		const survivor = (name: string) => ({ name, type_line: 'Legendary Creature', oracle_text: 'Partner—Survivors (You can have two commanders if both have this ability.)' });
 		expect(canPair(survivor('A'), survivor('B'))).toBe(true);
+	});
+	it('knows which commanders can take a second card', () => {
+		const legend = (oracle_text: string, type_line = 'Legendary Creature — Human') => ({ type_line, oracle_text });
+		expect(canHavePartner(legend('Flying\nPartner (You can have two commanders if both have partner.)'))).toBe(true);
+		expect(canHavePartner(legend('Partner with Toothy, Imaginary Friend (When this creature enters, ...)'))).toBe(true);
+		expect(canHavePartner(legend('Partner—Survivors (You can have two commanders if both have this ability.)'))).toBe(true);
+		expect(canHavePartner(legend('Friends forever (You can have two commanders if both have friends forever.)'))).toBe(true);
+		expect(canHavePartner(legend('Choose a Background (You can have a Background as a second commander.)'))).toBe(true);
+		expect(canHavePartner(legend("Doctor's companion (You can have two commanders if the other is the Doctor.)"))).toBe(true);
+		expect(canHavePartner(legend('', 'Legendary Creature — Time Lord Doctor'))).toBe(true);
+		expect(canHavePartner(legend('Whenever a creature you control with partner attacks, draw a card.'))).toBe(false);
+		expect(canHavePartner(legend(''))).toBe(false);
 	});
 });
 

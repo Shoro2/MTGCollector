@@ -38,6 +38,25 @@ function cleanName(name: string): string {
 	return text;
 }
 
+const LINK = /^(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[/?#]\S*)?$/i;
+
+/**
+ * When the pasted text is only a link to a deck site, how to get its text list instead.
+ * Decks are never fetched from those sites: Moxfield's terms forbid it without an agreed
+ * User-Agent, and the owner chose copy help over asking for one (2026-10-29).
+ */
+export function deckLinkHelp(text: string): string | null {
+	const host = LINK.exec(text.trim())?.[1]?.toLowerCase();
+	if (!host || !host.includes('.') || /\s/.test(text.trim())) return null;
+	if (host === 'moxfield.com' || host.endsWith('.moxfield.com')) {
+		return 'Moxfield links cannot be read. Open the deck on Moxfield, choose More, then Export, copy the text list (with or without set codes) and paste it here.';
+	}
+	if (host === 'archidekt.com' || host.endsWith('.archidekt.com')) {
+		return 'Archidekt links cannot be read. Open the deck on Archidekt, choose Export, copy the text and paste it here.';
+	}
+	return 'Paste the text of the deck list, not a link. Deck sites offer it under Export.';
+}
+
 /**
  * Parses a pasted or uploaded deck list. Sections come from headers ("Commander",
  * "Deck", "Sideboard", "Maybeboard", Moxfield's "SIDEBOARD:"), an "SB:" prefix or an
@@ -47,6 +66,8 @@ function cleanName(name: string): string {
  */
 export function parseDeckList(text: string): { entries: DeckLine[]; issues: DeckLineIssue[]; implicitSideboard: boolean } {
 	if (text.length > MAX_LIST_CHARS) throw new Error('The list is too long (maximum 200,000 characters).');
+	const link = deckLinkHelp(text);
+	if (link) throw new Error(link);
 	const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
 	if (lines.filter((l) => l.trim()).length > MAX_LIST_LINES) throw new Error(`Import at most ${MAX_LIST_LINES} lines at a time.`);
 	const hasHeaders = lines.some((l) => header(l.trim()) !== undefined);

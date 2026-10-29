@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import DeckLineIssues from './DeckLineIssues.svelte';
+	import { deckLinkHelp } from '$lib/deck-text';
 
 	/** Paste or upload a list into an existing deck: add the cards or replace the deck. */
 	let { deckId, onclose, onimported }: { deckId: string; onclose: () => void; onimported: () => Promise<void> } = $props();
@@ -8,6 +9,8 @@
 	let dialog: HTMLDialogElement;
 	onMount(() => dialog.showModal());
 	let text = $state('');
+	// A pasted deck link gets an explanation of where the site's text export is.
+	const linkHelp = $derived(deckLinkHelp(text));
 	let mode = $state<'add' | 'replace'>('add');
 	let confirmReplace = $state(false);
 	let busy = $state(false);
@@ -68,6 +71,7 @@
 					<span class="text-[var(--color-text-muted)]">Card list</span>
 					<textarea bind:value={text} rows="10" placeholder={'1 Sol Ring (C21) 263\n4 Lightning Bolt\n\nSideboard\n2 Pyroblast'} class="control mt-1 block w-full px-3 py-2 font-mono text-xs"></textarea>
 				</label>
+				{#if linkHelp}<p class="rounded-lg border border-[var(--color-accent-muted)] p-3 text-sm" role="status" data-link-help>{linkHelp}</p>{/if}
 				<label class="block text-sm">
 					<span class="text-[var(--color-text-muted)]">Or read a file</span>
 					<input type="file" accept=".txt,.dec,text/plain" onchange={readFile} class="mt-1 block w-full text-sm" />
@@ -88,7 +92,7 @@
 			</fieldset>
 			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 			<div class="flex justify-end">
-				<button type="submit" disabled={busy || !text.trim() || (mode === 'replace' && !confirmReplace)} class="btn btn-primary">{busy ? 'Importing…' : 'Import'}</button>
+				<button type="submit" disabled={busy || !text.trim() || !!linkHelp || (mode === 'replace' && !confirmReplace)} class="btn btn-primary">{busy ? 'Importing…' : 'Import'}</button>
 			</div>
 		</form>
 	{/if}

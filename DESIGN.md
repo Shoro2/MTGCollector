@@ -13,6 +13,7 @@ Global tokens live in `src/app.css`.
 - Semantics: `--color-success`, `--color-danger`, `--color-warning`, `--color-info`.
 - MTG color identity: use original letter pips with `--pip-w`, `--pip-u`, `--pip-b`, `--pip-r`, `--pip-g`, `--pip-c`.
 - Rarity: use dots/badges with `--rarity-common`, `--rarity-uncommon`, `--rarity-rare`, `--rarity-mythic`.
+- Card frames (deck rows): `--frame-gold` (three or more colors) and `--frame-colorless` (grey); single colors and both halves of a two-color frame reuse the `--pip-*` tokens.
 
 Numbers and prices should use the `tabular`, `numeric`, `price`, or `kpi-value` classes so columns do not visually drift.
 
@@ -24,7 +25,9 @@ Numbers and prices should use the `tabular`, `numeric`, `price`, or `kpi-value` 
 - `btn`, `btn-primary`, `btn-danger`: reusable button styles.
 - `control`: inputs and selects.
 - `chip`, `set-code`, `foil-chip`: compact metadata.
-- `ManaCost.svelte`: renders original letter-based mana pips. Do not use emoji, Mana font, Keyrune, or official symbol art.
+- `ManaCost.svelte`: renders original letter-based mana pips. Do not use emoji, Mana font, Keyrune, or official symbol art. A hybrid or Phyrexian symbol (`R/W`, `2/W`, `G/P`) drops the slash and splits its ring between the two colors (`mana-pip-hybrid`).
+- `deck-card` with `frame-w|u|b|r|g|dual|multi|colorless`: a deck list row tinted in the card's color (a 4 px stripe, a tinted border and a fading background). One color tints the row; two colors split it half and half (`frame-dual`, `--frame-a` / `--frame-b` inline: a stripe in each color on the left and right, each half of the background in its color); three or more are gold; colorless cards, artifacts included, are grey. A land takes the colors of the mana it makes (its color identity), so a Mountain is red. Original tints only, never frame art. `cardFrame()` in `src/lib/deck.ts` picks the kind (owner rule 2026-10-29).
+- `bracket-chip` (`DeckBracket.svelte`): the Commander Bracket after a deck's name ("Bracket 3 Upgraded", compact "B3" in lists).
 - `ColorPips.svelte`: renders color identity pips.
 - `card-shell` and `card-placeholder`: card result tiles with reserved image space.
 

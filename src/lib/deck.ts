@@ -19,6 +19,16 @@ export const VISIBILITIES = ['private', 'unlisted', 'public'] as const;
 export type Visibility = (typeof VISIBILITIES)[number];
 export const VISIBILITY_LABELS: Record<Visibility, string> = { private: 'Private', unlisted: 'Unlisted', public: 'Public' };
 
+/**
+ * Commander Brackets (Wizards of the Coast, 2025): the power level a deck's owner states,
+ * so a table can agree on what to expect. The app stores what the owner chooses; it does
+ * not estimate a bracket.
+ */
+export const BRACKETS = [1, 2, 3, 4, 5] as const;
+export type Bracket = (typeof BRACKETS)[number];
+export const BRACKET_LABELS: Record<Bracket, string> = { 1: 'Exhibition', 2: 'Core', 3: 'Upgraded', 4: 'Optimized', 5: 'cEDH' };
+export const isBracket = (value: unknown): value is Bracket => BRACKETS.includes(value as Bracket);
+
 /** Deck ids are random, so an unlisted deck cannot be found by guessing (72 bits, base64url). */
 export const DECK_ID_PATTERN = /^[A-Za-z0-9_-]{16}$/;
 export const isDeckId = (value: string) => DECK_ID_PATTERN.test(value);
@@ -65,7 +75,8 @@ export function unitPriceEur(row: PriceRow, usdToEur: number): number | null {
 
 export type Owned = { real: number; proxy: number };
 export type OwnershipState = 'owned' | 'proxy' | 'partial' | 'missing';
-export type Ownership = { real: number; proxy: number; missing: number; state: OwnershipState };
+/** `printing`: at least one real copy is the deck entry's own printing (not only another one). */
+export type Ownership = { real: number; proxy: number; missing: number; state: OwnershipState; printing: boolean };
 
 /** Collection key of a card: any printing of the same card counts (oracle id, else the name). */
 export function ownershipKey(card: { oracle_id: string | null; name: string }): string {
@@ -77,11 +88,12 @@ const BOARD_ORDER = new Map(BOARDS.map((b, i) => [b, i]));
 /**
  * Hands the viewer's copies to the deck rows in board order (commander, main, sideboard,
  * maybeboard), real copies before proxies, so a card that appears twice is not counted
- * as owned twice.
+ * as owned twice. `printings` holds the printing ids the viewer has real copies of.
  */
-export function allocateOwnership<T extends { id: number; board: Board; quantity: number; key: string }>(
+export function allocateOwnership<T extends { id: number; board: Board; quantity: number; key: string; card_id?: string }>(
 	rows: T[],
-	owned: Map<string, Owned>
+	owned: Map<string, Owned>,
+	printings: Set<string> = new Set()
 ): Map<number, Ownership> {
 	const left = new Map([...owned].map(([key, value]) => [key, { ...value }]));
 	const result = new Map<number, Ownership>();
@@ -95,7 +107,7 @@ export function allocateOwnership<T extends { id: number; board: Board; quantity
 		left.set(row.key, pool);
 		const missing = row.quantity - real - proxy;
 		const state: OwnershipState = real === row.quantity ? 'owned' : missing === 0 ? 'proxy' : real + proxy > 0 ? 'partial' : 'missing';
-		result.set(row.id, { real, proxy, missing, state });
+		result.set(row.id, { real, proxy, missing, state, printing: real > 0 && row.card_id !== undefined && printings.has(row.card_id) });
 	}
 	return result;
 }
@@ -157,11 +169,54 @@ export function deckColors(rows: { board: Board; color_identity: string[] | null
 	return WUBRG.filter((c) => colors.has(c));
 }
 
-/** A card the deck editor's search suggests, with its default printing. */
-export type CardSuggestion = { id: string; name: string; type_line: string | null; mana_cost: string | null; set_code: string; image_uri: string | null };
+/**
+ * A card the deck editor's search suggests, with its default printing. `partner` is set
+ * when the card can share the command zone with a second card (canHavePartner()).
+ */
+export type CardSuggestion = {
+	id: string; name: string; type_line: string | null; mana_cost: string | null; set_code: string; image_uri: string | null; partner: boolean;
+};
+
+export type FrameKind = 'w' | 'u' | 'b' | 'r' | 'g' | 'dual' | 'multi' | 'colorless';
+export type CardFrame = { kind: FrameKind; colors: string[] };
+
+/** Colors in a mana cost, in WUBRG order: {G}, {W/U}, {2/R} and {B/P} all count. */
+export function manaColors(cost: string | null | undefined): string[] {
+	const found = new Set<string>();
+	for (const [, symbol] of (cost ?? '').matchAll(/\{([^}]+)\}/g)) for (const part of symbol.split('/')) if (WUBRG.includes(part)) found.add(part);
+	return WUBRG.filter((c) => found.has(c));
+}
+
+/**
+ * The frame of a deck list row (owner rule 2026-10-29): one color in its own color, two
+ * colors split half and half, three or more gold, colorless grey. `colors` are the card's
+ * colors (Scryfall's `colors`); without them (double-faced cards keep them on the faces)
+ * the front face's mana cost decides. A land has no color of its own, so it takes the
+ * colors of the mana it makes, its color identity: a Mountain is red, Stomping Ground red
+ * and green, Command Tower grey.
+ */
+export function cardFrame(card: { colors: string[] | null; mana_cost: string | null; type_line: string | null; color_identity?: string[] | null }): CardFrame {
+	let own = card.colors ?? manaColors(card.mana_cost);
+	if (!own.length && /\bLand\b/.test(frontType(card.type_line))) own = card.color_identity ?? [];
+	const colors = WUBRG.filter((c) => own.includes(c));
+	if (colors.length === 1) return { kind: colors[0].toLowerCase() as FrameKind, colors };
+	if (colors.length === 2) return { kind: 'dual', colors };
+	if (colors.length > 2) return { kind: 'multi', colors };
+	return { kind: 'colorless', colors };
+}
 
 export type GroupBy = 'type' | 'cmc' | 'none';
-export type SortBy = 'name' | 'cmc' | 'price';
+export type SortBy = 'name' | 'cmc' | 'price' | 'owned';
+
+/**
+ * Sort order by what the viewer holds: this printing, another printing of the card, some
+ * real copies, only proxies, nothing.
+ */
+export function ownershipRank(own: Ownership | null | undefined): number {
+	if (!own) return 5;
+	if (own.state === 'owned') return own.printing ? 0 : 1;
+	return own.state === 'partial' ? 2 : own.state === 'proxy' ? 3 : 4;
+}
 export type GroupRow = { id: number; board: Board; quantity: number; name: string; type_line: string | null; cmc: number | null };
 export type DeckGroup<T> = { key: string; label: string; count: number; rows: T[] };
 
@@ -169,9 +224,12 @@ export type DeckGroup<T> = { key: string; label: string; count: number; rows: T[
  * Columns of the deck view: the command zone first, the main deck by card type (or mana
  * value), then sideboard and maybeboard as one group each. Empty groups are left out.
  */
-export function groupDeck<T extends GroupRow>(rows: T[], by: GroupBy, sort: SortBy, price: (row: T) => number | null): DeckGroup<T>[] {
+export function groupDeck<T extends GroupRow>(
+	rows: T[], by: GroupBy, sort: SortBy, price: (row: T) => number | null, owned: (row: T) => number = () => 0
+): DeckGroup<T>[] {
 	const compare = (a: T, b: T) => {
 		const byName = a.name.localeCompare(b.name);
+		if (sort === 'owned') return owned(a) - owned(b) || byName;
 		if (sort === 'cmc') return (a.cmc ?? 0) - (b.cmc ?? 0) || byName;
 		if (sort === 'price') return (price(b) ?? -1) - (price(a) ?? -1) || byName;
 		return byName;

@@ -3,7 +3,7 @@ import { sqlite } from '$lib/server/db';
 import { deleteDeck, updateDeck } from '$lib/server/decks';
 import { deckAction, readBody } from '$lib/server/deck-http';
 
-/** Rename, change format, visibility or description. */
+/** Rename, change format, visibility, description or bracket. */
 export async function PATCH({ request, locals, params }) {
 	const user = locals.user;
 	if (!user) throw error(401, 'Not authenticated');

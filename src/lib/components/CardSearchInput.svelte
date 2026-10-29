@@ -12,6 +12,7 @@
 		format = '',
 		commander = false,
 		legal = false,
+		partnerOf = '',
 		clearOnSelect = true,
 		disabled = false,
 		onselect
@@ -21,6 +22,8 @@
 		format?: string;
 		commander?: boolean;
 		legal?: boolean;
+		/** A commander's card id: suggest only cards that may share the command zone with it. */
+		partnerOf?: string;
 		clearOnSelect?: boolean;
 		disabled?: boolean;
 		onselect: (card: CardSuggestion) => void;
@@ -48,6 +51,7 @@
 		if (format) params.set('format', format);
 		if (commander) params.set('commander', '1');
 		if (legal) params.set('legal', '1');
+		if (partnerOf) params.set('partner', partnerOf);
 		try {
 			const response = await fetch(`/api/decks/search?${params}`);
 			const data = response.ok ? await response.json() : { cards: [] };

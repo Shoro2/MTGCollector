@@ -2,10 +2,11 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { DECK_FORMATS } from '$lib/deck-formats';
-	import { VISIBILITIES, VISIBILITY_LABELS, type Visibility } from '$lib/deck';
+	import { VISIBILITIES, VISIBILITY_LABELS, type Bracket, type Visibility } from '$lib/deck';
+	import BracketSelect from './BracketSelect.svelte';
 
-	type Deck = { id: string; name: string; format: string; visibility: Visibility; description: string };
-	/** Name, format, visibility and description of a deck, and deleting it. */
+	type Deck = { id: string; name: string; format: string; visibility: Visibility; description: string; bracket: Bracket | null };
+	/** Name, format, visibility, bracket and description of a deck, and deleting it. */
 	let { deck, hint = '', onclose, onsaved }: { deck: Deck; hint?: string; onclose: () => void; onsaved: () => Promise<void> } = $props();
 
 	let dialog: HTMLDialogElement;
@@ -13,12 +14,15 @@
 	let format = $state('commander');
 	let visibility = $state<Visibility>('private');
 	let description = $state('');
+	let bracket = $state<Bracket | null>(null);
+	// Brackets belong to the commander formats; another format keeps the stored value untouched.
+	const commanderFormat = $derived(DECK_FORMATS.find((f) => f.key === format)?.kind === 'commander');
 	let confirmDelete = $state(false);
 	let busy = $state(false);
 	let message = $state('');
 
 	onMount(() => {
-		({ name, format, visibility, description } = deck);
+		({ name, format, visibility, description, bracket } = deck);
 		dialog.showModal();
 	});
 
@@ -44,7 +48,7 @@
 
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
-		if (await request('PATCH', { name, format, visibility, description })) {
+		if (await request('PATCH', { name, format, visibility, description, ...(commanderFormat ? { bracket } : {}) })) {
 			await onsaved();
 			dialog.close();
 		}
@@ -82,6 +86,7 @@
 					{#each DECK_FORMATS as f (f.key)}<option value={f.key}>{f.label}</option>{/each}
 				</select>
 			</label>
+			{#if commanderFormat}<BracketSelect bind:value={bracket} />{/if}
 			<fieldset>
 				<legend class="text-sm text-[var(--color-text-muted)]">Visibility</legend>
 				<div class="mt-1 flex flex-wrap gap-2">

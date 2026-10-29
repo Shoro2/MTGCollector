@@ -35,6 +35,8 @@
 	--rarity-uncommon: #b6c2d2;
 	--rarity-rare: #d9a94b;
 	--rarity-mythic: #e7613a;
+	--frame-gold: #d6b04c;
+	--frame-colorless: #b3aea5;
 	--shadow-raised: 0 10px 30px rgba(0, 0, 0, 0.24);
 	--shadow-overlay: 0 24px 70px rgba(0, 0, 0, 0.45);
 	--radius-sm: 6px;
@@ -343,6 +345,11 @@ tbody tr:hover {
 	line-height: 1;
 }
 
+.mana-pip-hybrid {
+	font-size: 0.5rem;
+	letter-spacing: -0.03em;
+}
+
 .mana-pip-generic {
 	border-style: solid;
 	color: #9aa6b5;
@@ -466,6 +473,80 @@ tbody tr:hover {
 .dense-row {
 	min-height: var(--row-height-dense);
 	border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/*
+ * Deck list rows framed in the card's color (original tints, no frame art): a stripe on
+ * the left, a tinted border and a fading background. Two colors split the row half and
+ * half (--frame-a, --frame-b inline), three or more are gold, colorless is grey.
+ */
+.deck-card {
+	--frame: var(--frame-colorless);
+	position: relative;
+	min-height: 2.25rem;
+	border: 1px solid color-mix(in srgb, var(--frame) 34%, transparent);
+	border-radius: var(--radius-sm);
+	padding-left: 0.6rem;
+	background: linear-gradient(90deg, color-mix(in srgb, var(--frame) 20%, transparent), color-mix(in srgb, var(--frame) 5%, transparent) 70%);
+}
+
+.deck-card::before {
+	position: absolute;
+	top: -1px;
+	bottom: -1px;
+	left: -1px;
+	width: 4px;
+	border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+	background: var(--frame);
+	content: "";
+}
+
+.deck-card:hover,
+.deck-card:focus-within {
+	border-color: color-mix(in srgb, var(--frame) 60%, transparent);
+	background: linear-gradient(90deg, color-mix(in srgb, var(--frame) 30%, transparent), color-mix(in srgb, var(--frame) 10%, transparent) 70%);
+}
+
+.frame-w { --frame: var(--pip-w); }
+.frame-u { --frame: var(--pip-u); }
+.frame-b { --frame: var(--pip-b); }
+.frame-r { --frame: var(--pip-r); }
+.frame-g { --frame: var(--pip-g); }
+.frame-multi { --frame: var(--frame-gold); }
+.frame-colorless { --frame: var(--frame-colorless); }
+
+.frame-dual {
+	--frame: color-mix(in srgb, var(--frame-a) 50%, var(--frame-b));
+	padding-right: 0.25rem;
+	background: linear-gradient(90deg,
+		color-mix(in srgb, var(--frame-a) 22%, transparent), color-mix(in srgb, var(--frame-a) 8%, transparent) 50%,
+		color-mix(in srgb, var(--frame-b) 8%, transparent) 50%, color-mix(in srgb, var(--frame-b) 22%, transparent));
+}
+
+.frame-dual::before { background: var(--frame-a); }
+
+.frame-dual::after {
+	position: absolute;
+	top: -1px;
+	right: -1px;
+	bottom: -1px;
+	width: 4px;
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+	background: var(--frame-b);
+	content: "";
+}
+
+.frame-dual:hover,
+.frame-dual:focus-within {
+	background: linear-gradient(90deg,
+		color-mix(in srgb, var(--frame-a) 32%, transparent), color-mix(in srgb, var(--frame-a) 12%, transparent) 50%,
+		color-mix(in srgb, var(--frame-b) 12%, transparent) 50%, color-mix(in srgb, var(--frame-b) 32%, transparent));
+}
+
+.bracket-chip {
+	border-color: rgba(111, 178, 255, 0.4);
+	color: var(--color-primary);
+	font-family: var(--font-data);
 }
 
 .skeleton {

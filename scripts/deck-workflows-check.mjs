@@ -1,7 +1,9 @@
 // Build first. Decks end to end on a fresh synthetic database, never the application database:
 // create with a pasted list, type groups, ownership against the viewer's collection, totals and
 // format checks, editing, adding, importing, exporting, sharing by link, copying, privacy and
-// deleting, on a phone-sized and a desktop-sized browser.
+// deleting, partner commanders, brackets, color frames, the deck-link help, the link filter,
+// the public deck list, reports, ownership sorting and the printing preview, on a phone-sized
+// and a desktop-sized browser.
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -16,8 +18,9 @@ mkdirSync(dir, { recursive: true });
 const dbPath = resolve(dir, 'mtg.db');
 const db = new Database(dbPath);
 db.exec(SCHEMA_SQL);
-const tokens = { owner: randomBytes(32).toString('hex'), other: randomBytes(32).toString('hex') };
-db.exec(`INSERT INTO users(id,google_id,email,name) VALUES ('owner','owner','fixture@example.invalid','Fixture Owner'),('other','other','other@example.invalid','Other Player')`);
+const tokens = Object.fromEntries(['owner', 'other', 'third', 'fourth'].map(user => [user, randomBytes(32).toString('hex')]));
+db.exec(`INSERT INTO users(id,google_id,email,name) VALUES ('owner','owner','fixture@example.invalid','Fixture Owner'),('other','other','other@example.invalid','Other Player'),
+	('third','third','third@example.invalid','Third Player'),('fourth','fourth','fourth@example.invalid','Fourth Player')`);
 for (const [user, token] of Object.entries(tokens)) {
 	db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(token, user, new Date(Date.now() + 86400000).toISOString());
 }
@@ -31,13 +34,31 @@ const CARDS = [
 	[3, 'bolt', 'Lightning Bolt', 'tst', '3', 'common', 'Instant', '{R}', 1, '["R"]', legal(), 2, '2024-01-01'],
 	[4, 'bolt', 'Lightning Bolt', 'lea', '161', 'common', 'Instant', '{R}', 1, '["R"]', legal(), 300, '1993-08-05'],
 	[5, 'counter', 'Counterspell', 'tst', '5', 'common', 'Instant', '{U}{U}', 2, '["U"]', legal(), 1, '2024-01-01'],
-	[6, 'mountain', 'Mountain', 'tst', '6', 'common', 'Basic Land — Mountain', null, 0, '[]', legal(), 0.1, '2024-01-01'],
+	[6, 'mountain', 'Mountain', 'tst', '6', 'common', 'Basic Land — Mountain', null, 0, '["R"]', legal(), 0.1, '2024-01-01'],
 	[7, 'guide', 'Goblin Guide', 'tst', '7', 'rare', 'Creature — Goblin Scout', '{R}', 1, '["R"]', legal(), 4, '2024-01-01'],
 	[8, 'lotus', 'Black Lotus', 'lea', '232', 'rare', 'Artifact', '{0}', 0, '[]', legal({ commander: 'banned', legacy: 'banned', vintage: 'restricted' }), null, '1993-08-05']
 ];
 for (const [n, oracle, name, set, number, rarity, type, cost, cmc, identity, legalities, price, released] of CARDS) {
 	insert.run(uuid(n), oracle, name, set, set === 'lea' ? 'Limited Edition Alpha' : 'Test Set', number, rarity, type, cost, cmc, identity, legalities, price, released);
 }
+// Partners, a hybrid, two-color and three-color cards carry Scryfall's colors and rules text.
+const insertRules = db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,mana_cost,cmc,colors,color_identity,oracle_text,legalities,price_eur,layout,released_at,is_paper)
+	VALUES (?,?,?,'tst','Test Set',?,?,?,?,?,?,?,?,?,?,'normal','2024-01-01',1)`);
+const PARTNER = 'Partner (You can have two commanders if both have partner.)';
+for (const [n, oracle, name, rarity, type, cost, cmc, colors, text, price] of [
+	[9, 'thrasios', 'Thrasios, Triton Hero', 'rare', 'Legendary Creature — Merfolk Wizard', '{G}{U}', 2, '["G","U"]', `{4}: Scry 1. Then reveal the top card of your library.\n${PARTNER}`, 2],
+	[10, 'tymna', 'Tymna the Weaver', 'mythic', 'Legendary Creature — Human Cleric', '{1}{W}{B}', 3, '["B","W"]', `Lifelink\n${PARTNER}`, 5],
+	[11, 'reckoner', 'Boros Reckoner', 'rare', 'Creature — Minotaur Wizard', '{R/W}{R/W}{R/W}', 3, '["R","W"]', 'Whenever Boros Reckoner is dealt damage, it deals that much damage to any target.', 0.5],
+	[12, 'helix', 'Lightning Helix', 'uncommon', 'Instant', '{R}{W}', 2, '["R","W"]', 'Lightning Helix deals 3 damage to any target and you gain 3 life.', 0.4],
+	[13, 'esper', 'Esper Charm', 'uncommon', 'Instant', '{W}{U}{B}', 3, '["B","U","W"]', 'Choose one — Destroy target enchantment; or draw two cards; or target player discards two cards.', 0.3]
+]) {
+	insertRules.run(uuid(n), oracle, name, String(n), rarity, type, cost, cmc, colors, colors, text, legal(), price);
+}
+// A land has no colors; its frame comes from the mana it makes (its color identity).
+insertRules.run(uuid(14), 'fountain', 'Hallowed Fountain', '14', 'rare', 'Land — Plains Island', null, 0, '[]', '["U","W"]',
+	'({T}: Add {W} or {U}.)\nAs Hallowed Fountain enters, you may pay 2 life. If you don\'t, it enters tapped.', legal(), 8);
+// Card images for the printing preview, served by the app itself.
+db.prepare("UPDATE cards SET image_uri = '/favicon.ico?' || collector_number WHERE oracle_id = 'bolt'").run();
 db.exec("INSERT INTO cards_fts(cards_fts) VALUES('rebuild')");
 // The owner has Sol Ring, two Lightning Bolts of another printing and ten proxy Mountains;
 // the other player has a Counterspell.
@@ -49,11 +70,15 @@ db.exec(`INSERT INTO collection_cards(user_id,card_id,quantity,condition,languag
 
 const port = Number(process.env.DECK_UX_PORT || 5194), origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['build/index.js'], { windowsHide: true,
-	env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, MTG_DB_PATH: dbPath, DISABLE_PRICE_UPDATES: '1' },
+	env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, MTG_DB_PATH: dbPath, DISABLE_PRICE_UPDATES: '1', ADMIN_EMAIL: 'fixture@example.invalid' },
 	stdio: ['ignore', 'pipe', 'pipe'] });
 let output = '', browser, checks = 0;
 server.stdout.on('data', data => output += data); server.stderr.on('data', data => output += data);
 function check(condition, label) { assert.ok(condition, label); checks++; console.log('PASS ' + label); }
+// Two partners pass the command-zone rules, and their colors together make the identity:
+// the red cards are outside it, the blue one is not.
+const problemsText = (text) => !/cannot share|Cannot be a commander|At most two/.test(text) &&
+	/Outside the commander's color identity: (?=.*Boros Reckoner)(?=.*Lightning Helix)(?!.*Counterspell)/.test(text);
 const fits = (page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
 const owned = (page, name) => page.locator(`[data-group] li[data-row="${name}"] [data-owned]`).first().getAttribute('data-owned');
 
@@ -63,7 +88,7 @@ try {
 		try { if ((await fetch(origin + '/api/health')).ok) break; } catch {}
 		await new Promise(r => setTimeout(r, 200));
 	}
-	check(db.prepare("SELECT 1 FROM _schema_migrations WHERE id='0027_decks'").get(), 'migration 0027 creates the deck tables');
+	check(['0027_decks', '0028_deck_bracket', '0029_deck_reports'].every(id => db.prepare('SELECT 1 FROM _schema_migrations WHERE id=?').get(id)), 'migrations 0027 to 0029 create the deck tables');
 
 	browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
 	const phone = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
@@ -111,12 +136,18 @@ try {
 	const problems = await page.locator('[data-problems]').innerText();
 	check(['Black Lotus', 'Counterspell', 'Lightning Bolt', '100'].every(word => problems.includes(word)), 'the format check names bans, colors, copies and deck size');
 	check(await owned(page, 'Sol Ring') === 'owned' && await owned(page, 'Mountain') === 'proxy' && await owned(page, 'Counterspell') === 'missing', 'ownership marks: owned, proxy, missing');
+	check(await page.locator('li[data-row="Sol Ring"] [data-owned]').getAttribute('data-printing') === 'this', 'owning the very printing is marked as such');
 	check(await owned(page, 'Lightning Bolt') === 'partial' &&
 		await page.locator('[data-group="sideboard"] li[data-row="Lightning Bolt"] [data-owned]').getAttribute('data-owned') === 'missing', 'a card owned twice covers the main deck before the sideboard');
 	check(await page.locator('li[data-row="Black Lotus"]').getByLabel(/Problem/).count() === 1, 'an illegal card is marked in its row');
 	check(await page.locator('[data-group="sideboard"] li[data-row="Lightning Bolt"]').getByLabel(/Problem/).count() === 0, 'a commander sideboard is not marked, the rules skip it');
 	await page.screenshot({ path: resolve(dir, 'deck-mobile.png'), fullPage: true });
 	check(await fits(page), 'deck view fits mobile width');
+	check(await page.locator('[data-add-partner]').count() === 0, 'a commander without Partner gets no partner field');
+	check(await page.locator('li[data-row="Sol Ring"]').first().getAttribute('data-frame') === 'colorless' &&
+		await page.locator('li[data-row="Mountain"]').first().getAttribute('data-frame') === 'r' &&
+		await page.locator('li[data-row="Counterspell"]').first().getAttribute('data-frame') === 'u' &&
+		await page.locator('li[data-row="Krenko, Mob Boss"]').first().getAttribute('data-frame') === 'r', 'rows are framed by color: a colorless artifact grey, a Mountain red, blue, red');
 
 	await page.getByLabel('Group by').selectOption('cmc');
 	await page.waitForURL('**?group=cmc');
@@ -130,6 +161,22 @@ try {
 	await page.locator('dialog').waitFor({ state: 'detached' });
 	check(db.prepare("SELECT quantity FROM deck_cards WHERE deck_id=? AND board='main' AND card_id=?").get(deck.id, uuid(3)).quantity === 1, 'editing a row changes its quantity');
 	check(!(await page.locator('[data-problems]').innerText()).includes('Lightning Bolt'), 'the copy problem disappears after the edit');
+	const bolt = page.locator('[data-group="Instant"] li[data-row="Lightning Bolt"] [data-owned]');
+	check(await bolt.getAttribute('data-owned') === 'owned' && await bolt.getAttribute('data-printing') === 'other' && (await bolt.innerText()).includes('≈'), 'a copy of another printing is marked as other printing');
+	await page.getByLabel('Group by').selectOption('none');
+	await page.getByLabel('Sort by').selectOption('owned');
+	await page.waitForURL(/sort=owned/);
+	const ownedOrder = await page.locator('[data-group="main"] li[data-row]').evaluateAll(els => els.map(el => el.getAttribute('data-row')));
+	check(JSON.stringify(ownedOrder) === JSON.stringify(['Sol Ring', 'Lightning Bolt', 'Mountain', 'Black Lotus', 'Counterspell', 'Goblin Guide']), `sorting by ownership: printing, other printing, proxy, missing (${ownedOrder})`);
+	await page.goto(origin + `/decks/${deck.id}`);
+	await page.getByRole('button', { name: 'Edit Lightning Bolt' }).first().click();
+	await page.locator(`[data-printings] label[data-printing="${uuid(4)}"]`).hover();
+	check(await page.locator(`img[data-printing-preview="${uuid(4)}"]`).count() === 1, 'pointing at a printing shows its image');
+	await page.screenshot({ path: resolve(dir, 'printing-preview-mobile.png') });
+	await page.mouse.move(0, 0);
+	check(await page.locator(`img[data-printing-preview="${uuid(3)}"]`).count() === 1, 'without a pointer the chosen printing is shown');
+	await page.keyboard.press('Escape');
+	await page.locator('dialog').waitFor({ state: 'detached' });
 	await page.getByLabel('Board for new cards').selectOption('maybeboard');
 	await page.getByRole('combobox', { name: 'Add a card' }).fill('goblin gu');
 	await page.getByRole('option', { name: /Goblin Guide/ }).click();
@@ -168,7 +215,8 @@ try {
 	check(await visitor.locator('[data-owned]').count() === 0 && await visitor.getByRole('link', { name: 'Sign in to copy' }).count() === 1, 'a visitor gets no ownership marks and a sign-in link to copy');
 	check(await visitor.getByRole('button', { name: 'Settings', exact: true }).count() === 0 && await visitor.getByRole('button', { name: /^Edit / }).count() === 0, 'a visitor cannot edit the deck');
 	await visitor.goto(origin + '/decks');
-	check(visitor.url().endsWith('/login'), 'the deck list requires sign-in');
+	check(visitor.url().endsWith('/decks') && await visitor.getByRole('heading', { level: 1 }).innerText() === 'Public decks' &&
+		await visitor.locator('[data-public-total="0"]').count() === 1, 'a visitor gets the public deck list, without unlisted decks');
 	check((await visitorContext.request.get(origin + '/api/decks/search?q=sol')).status() === 401, 'the card search API requires sign-in');
 
 	// Another player sees the deck against their own collection and copies it.
@@ -226,6 +274,136 @@ try {
 	await wide.goto(origin + `/decks/${copy.id}`);
 	await wide.screenshot({ path: resolve(dir, 'deck-desktop.png'), fullPage: true });
 	check(await fits(wide) && await wide.getByRole('img', { name: /Mana curve/ }).count() === 1, 'desktop deck view shows the mana curve');
+
+	// Partner commanders and a bracket, on a desktop-sized browser.
+	const ownerWide = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	await ownerWide.addCookies([{ name: 'session', value: tokens.owner, url: origin }]);
+	const big = await ownerWide.newPage();
+	big.on('pageerror', error => errors.push(error.message));
+	await big.goto(origin + '/decks');
+	await big.getByRole('button', { name: 'New deck', exact: true }).click();
+	await big.getByLabel('Name', { exact: true }).fill('Thrasios and Tymna');
+	check(await big.locator('[data-partner-field]').count() === 0, 'the partner field waits for a commander that can take one');
+	await big.getByRole('combobox', { name: 'Commander' }).fill('Thrasios');
+	await big.getByRole('option', { name: /Thrasios, Triton Hero/ }).click();
+	// "th" matches Thrasios and "Tymna the Weaver"; the commander itself is never offered.
+	await big.getByRole('combobox', { name: 'Partner (optional)' }).fill('th');
+	const suggestions = big.getByRole('listbox', { name: 'Partner (optional) suggestions' }).getByRole('option');
+	await suggestions.first().waitFor();
+	const partners = await suggestions.allInnerTexts();
+	check(partners.length === 1 && partners[0].includes('Tymna the Weaver'), `only cards that may pair are offered as partner (${partners.map(t => t.split('\n')[0]).join(' | ')})`);
+	await big.getByRole('option', { name: /Tymna the Weaver/ }).click();
+	await big.getByLabel('Bracket', { exact: true }).selectOption('3');
+	await big.getByText('Paste in list', { exact: true }).click();
+	await big.getByLabel('Card list', { exact: true }).fill('https://moxfield.com/decks/AbCdEf123');
+	check((await big.locator('[data-link-help]').innerText()).includes('choose More, then Export') &&
+		await big.getByRole('button', { name: 'Create', exact: true }).isDisabled(), 'a pasted Moxfield link explains where its text export is');
+	await big.getByLabel('Card list', { exact: true }).fill('1 Sol Ring\n1 Counterspell\n1 Boros Reckoner\n1 Lightning Helix\n1 Esper Charm\n1 Hallowed Fountain\n5 Mountain');
+	await big.getByRole('button', { name: 'Create', exact: true }).click();
+	// A list without problems opens the new deck right away.
+	await big.waitForURL(/\/decks\/[A-Za-z0-9_-]{16}$/);
+	const duo = db.prepare("SELECT * FROM decks WHERE user_id='owner' AND name='Thrasios and Tymna'").get();
+	check(duo.bracket === 3, 'the bracket is stored');
+	check(JSON.stringify(db.prepare("SELECT card_id FROM deck_cards WHERE deck_id=? AND board='commander' ORDER BY id").all(duo.id).map(r => r.card_id)) === JSON.stringify([uuid(9), uuid(10)]), 'both partners are in the command zone');
+	check(big.url().endsWith(`/decks/${duo.id}`), 'the new deck opens');
+	check(await big.locator('h1 [data-bracket="3"]').innerText().then(t => t.includes('Bracket 3') && t.includes('Upgraded')), 'the bracket follows the name');
+	check(await big.locator('[data-group="commander"] li').count() === 2 && await big.locator('[data-add-partner]').count() === 0, 'two commanders are listed and no third is offered');
+	const frames = Object.fromEntries(await big.locator('[data-group] li[data-row]').evaluateAll(els => els.map(el => [el.getAttribute('data-row'), el.getAttribute('data-frame')])));
+	check(frames['Thrasios, Triton Hero'] === 'dual' && frames['Lightning Helix'] === 'dual' && frames['Boros Reckoner'] === 'dual' && frames['Hallowed Fountain'] === 'dual' &&
+		frames['Esper Charm'] === 'multi' && frames['Mountain'] === 'r' && frames['Counterspell'] === 'u', `two colors split, three gold, lands by their mana (${JSON.stringify(frames)})`);
+	check(await big.locator('li[data-row="Lightning Helix"]').evaluate(el => {
+		const left = getComputedStyle(el, '::before').backgroundColor, right = getComputedStyle(el, '::after').backgroundColor;
+		return left !== right && left !== 'rgba(0, 0, 0, 0)' && right !== 'rgba(0, 0, 0, 0)';
+	}), 'a two-color row has a stripe in each color');
+	check(await big.locator('[data-group] li[data-row] a').evaluateAll(els => els.every(a => a.scrollWidth <= a.clientWidth + 1)), 'card names fit their rows on a desktop');
+	check(await big.evaluate(() => getComputedStyle(document.querySelector('[data-group]').parentElement).columnCount) === '2', 'the list uses two columns next to the preview');
+	check(problemsText(await big.locator('[data-problems]').innerText().catch(() => '')), 'two partners pass the command-zone check and share one color identity');
+	await big.screenshot({ path: resolve(dir, 'partners-desktop.png'), fullPage: true });
+	await big.getByRole('button', { name: 'Settings', exact: true }).click();
+	await big.getByLabel('Bracket', { exact: true }).selectOption('4');
+	await big.getByRole('button', { name: 'Save', exact: true }).click();
+	await big.locator('dialog').waitFor({ state: 'detached' });
+	check(db.prepare('SELECT bracket FROM decks WHERE id=?').get(duo.id).bracket === 4 && await big.locator('h1 [data-bracket="4"]').count() === 1, 'settings change the bracket');
+	// Links are refused, then the deck goes public with a plain description.
+	await big.getByRole('button', { name: 'Settings', exact: true }).click();
+	await big.getByText('Public', { exact: true }).click();
+	await big.getByLabel('Description', { exact: true }).fill('Cheap singles at cardshop.com');
+	await big.getByRole('button', { name: 'Save', exact: true }).click();
+	await big.getByRole('alert').filter({ hasText: 'Links, web addresses and e-mail addresses are not allowed' }).waitFor();
+	check(db.prepare('SELECT visibility FROM decks WHERE id=?').get(duo.id).visibility === 'private', 'a description with a link is not saved');
+	await big.getByLabel('Description', { exact: true }).fill('Draw cards, gain life.');
+	await big.getByRole('button', { name: 'Save', exact: true }).click();
+	await big.locator('dialog').waitFor({ state: 'detached' });
+	check(db.prepare('SELECT visibility, description FROM decks WHERE id=?').get(duo.id).description === 'Draw cards, gain life.', 'the deck is public with a plain description');
+	await big.getByRole('button', { name: 'Import', exact: true }).click();
+	await big.getByLabel('Card list', { exact: true }).fill('moxfield.com/decks/AbCdEf123');
+	check(await big.locator('dialog [data-link-help]').count() === 1 && await big.locator('dialog').getByRole('button', { name: 'Import', exact: true }).isDisabled(), 'the import dialog explains a Moxfield link too');
+	await big.keyboard.press('Escape');
+	await big.locator('dialog').waitFor({ state: 'detached' });
+
+	// A deck with one Partner commander offers the second one on its page.
+	const solo = await (await ownerWide.request.post(origin + '/api/decks', { data: { name: 'Thrasios alone', format: 'commander', visibility: 'private', commanderId: uuid(9) } })).json();
+	await big.goto(origin + `/decks/${solo.id}`);
+	await big.getByRole('combobox', { name: /Add a partner for Thrasios/ }).fill('tymna');
+	await big.getByRole('listbox').getByRole('option').first().waitFor();
+	await big.getByRole('option', { name: /Tymna the Weaver/ }).click();
+	await big.getByRole('status').filter({ hasText: 'Tymna the Weaver joins the command zone.' }).waitFor();
+	check(await big.locator('[data-group="commander"] li').count() === 2 && await big.locator('[data-add-partner]').count() === 0, 'the partner field adds the second commander and goes away');
+	await big.goto(origin + '/decks');
+	const duoRow = big.locator('tbody tr', { hasText: 'Thrasios and Tymna' });
+	check((await duoRow.innerText()).includes('Thrasios, Triton Hero & Tymna the Weaver') && await duoRow.locator('[data-bracket="4"]').innerText() === 'B4', 'the deck list names both commanders and the bracket');
+	check(await big.getByRole('link', { name: 'Public decks', exact: true }).count() === 1, 'signed-in players switch between their decks and the public ones');
+
+	// The public list, for visitors too, without the owner.
+	await visitor.goto(origin + '/decks');
+	const publicRow = visitor.locator('[data-public-decks] tbody tr', { hasText: 'Thrasios and Tymna' });
+	check(await publicRow.count() === 1 && (await publicRow.innerText()).includes('Thrasios, Triton Hero & Tymna the Weaver') && await publicRow.locator('[data-bracket="4"]').count() === 1, 'the public list shows the deck, its commanders and bracket');
+	check(!(await visitor.content()).includes('Fixture Owner') && await visitor.locator('[data-public-decks] tbody tr').count() === 1, 'the public list never names the owner and leaves private decks out');
+	await visitor.getByLabel('Search public decks').fill('tymna');
+	await visitor.getByRole('button', { name: 'Search', exact: true }).click();
+	await visitor.waitForURL(/q=tymna/);
+	check(await visitor.locator('[data-public-total="1"]').count() === 1, 'the public list searches commanders');
+	await visitor.getByLabel('Format', { exact: true }).selectOption('modern');
+	await visitor.waitForURL(/format=modern/);
+	check(await visitor.locator('[data-public-total="0"]').count() === 1, 'the public list filters by format');
+	await visitor.screenshot({ path: resolve(dir, 'public-decks-mobile.png'), fullPage: true });
+	check(await fits(visitor), 'the public list fits mobile width');
+
+	// Three accounts report the deck: it is hidden without anybody acting.
+	await other.goto(origin + `/decks/${duo.id}`);
+	await other.getByRole('button', { name: 'Report', exact: true }).click();
+	await other.getByText('Spam or advertising', { exact: true }).click();
+	await other.getByRole('button', { name: 'Send report', exact: true }).click();
+	await other.getByRole('status').filter({ hasText: 'Your report is saved.' }).waitFor();
+	await other.getByRole('button', { name: 'Done', exact: true }).click();
+	check(await other.getByRole('button', { name: 'Reported', exact: true }).isDisabled(), 'a player reports a deck once');
+	for (const user of ['third', 'fourth']) {
+		const context = await browser.newContext();
+		await context.addCookies([{ name: 'session', value: tokens[user], url: origin }]);
+		const response = await context.request.post(origin + `/api/decks/${duo.id}/report`, { data: { reason: 'spam' } });
+		check(response.ok() && (await response.json()).hidden === (user === 'fourth'), `report by ${user} is stored`);
+		await context.close();
+	}
+	check(db.prepare('SELECT hidden_at FROM decks WHERE id=?').get(duo.id).hidden_at, 'three reports hide the deck');
+	await visitor.goto(origin + '/decks');
+	check(await visitor.locator('[data-public-total="0"]').count() === 1, 'a hidden deck leaves the public list');
+	await visitor.goto(origin + `/decks/${duo.id}`);
+	check(!(await visitor.content()).includes('Draw cards, gain life.') && await visitor.locator('[data-hidden-note]').count() === 1, 'others no longer see its description');
+	await big.goto(origin + `/decks/${duo.id}`);
+	check((await big.content()).includes('Draw cards, gain life.') && (await big.locator('[data-hidden-note]').innerText()).includes('Several players reported this deck'), 'the owner still sees it and is told why');
+	check((await ownerWide.request.post(origin + `/api/decks/${duo.id}/report`, { data: { reason: 'spam' } })).status() === 400, 'an owner cannot report their own deck');
+	await big.goto(origin + '/admin');
+	const reportedRow = big.locator('[data-reported-decks] tr', { hasText: 'Thrasios and Tymna' });
+	check((await reportedRow.innerText()).includes('hidden'), 'the admin sees the hidden deck');
+	await reportedRow.getByRole('button', { name: 'Restore', exact: true }).click();
+	await big.locator('[data-reported-decks]').getByText('No reports.').waitFor();
+	check(!db.prepare('SELECT hidden_at FROM decks WHERE id=?').get(duo.id).hidden_at && !db.prepare('SELECT 1 FROM deck_reports WHERE deck_id=?').get(duo.id), 'restoring shows the deck again and forgets the reports');
+
+	const phoneDuo = await ownerContext.newPage();
+	await phoneDuo.goto(origin + `/decks/${duo.id}`);
+	await phoneDuo.screenshot({ path: resolve(dir, 'partners-mobile.png'), fullPage: true });
+	check(await fits(phoneDuo), 'the framed deck view fits mobile width');
+	await phoneDuo.close();
 
 	await page.goto(origin + `/decks/${deck.id}`);
 	await page.getByRole('button', { name: 'Settings', exact: true }).click();

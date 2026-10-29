@@ -9,18 +9,21 @@
 	import DeckSettings from '$lib/components/DeckSettings.svelte';
 	import DeckImport from '$lib/components/DeckImport.svelte';
 	import DeckExport from '$lib/components/DeckExport.svelte';
-	import { BOARDS, BOARD_LABELS, VISIBILITY_LABELS, groupDeck, timeAgo, type Board, type CardSuggestion, type GroupBy, type SortBy } from '$lib/deck';
+	import DeckBracket from '$lib/components/DeckBracket.svelte';
+	import DeckReport from '$lib/components/DeckReport.svelte';
+	import { BOARDS, BOARD_LABELS, VISIBILITY_LABELS, groupDeck, ownershipRank, timeAgo, type Board, type CardSuggestion, type GroupBy, type SortBy } from '$lib/deck';
 	import { formatPrice } from '$lib/utils';
 
 	let { data }: { data: PageData } = $props();
 	type Row = PageData['rows'][number];
 
 	const GROUPS: Record<GroupBy, string> = { type: 'Card type', cmc: 'Mana value', none: 'None' };
-	const SORTS: Record<SortBy, string> = { name: 'Name', cmc: 'Mana value', price: 'Price' };
+	// "Owned" compares the deck with the viewer's collection, so only signed-in viewers get it.
+	const SORTS = $derived<Partial<Record<SortBy, string>>>({ name: 'Name', cmc: 'Mana value', price: 'Price', ...(data.signedIn ? { owned: 'Owned' } : {}) });
 	const param = (key: string) => page.url.searchParams.get(key) ?? '';
 	const group = $derived((param('group') in GROUPS ? param('group') : 'type') as GroupBy);
 	const sort = $derived((param('sort') in SORTS ? param('sort') : 'name') as SortBy);
-	const groups = $derived(groupDeck(data.rows, group, sort, (r) => r.unit));
+	const groups = $derived(groupDeck(data.rows, group, sort, (r) => r.unit, (r) => ownershipRank(r.owned)));
 
 	const deck = $derived(data.deck);
 	const lead = $derived(data.rows.find((r) => r.board === 'commander') ?? data.rows.find((r) => r.board === 'main') ?? null);
@@ -44,6 +47,7 @@
 	let settings = $state<{ hint: string } | null>(null);
 	let importing = $state(false);
 	let exporting = $state(false);
+	let reporting = $state(false);
 	let addBoard = $state<Board>('main');
 	let status = $state('');
 	let failure = $state('');
@@ -84,6 +88,17 @@
 		}
 	}
 
+	async function addPartner(card: CardSuggestion) {
+		if (await post(`/api/decks/${deck.id}/cards`, { cardId: card.id, board: 'commander' })) {
+			await refresh();
+			status = `${card.name} joins the command zone.`;
+		}
+	}
+
+	// A two-color card splits its frame between both colors; every other frame is a single class.
+	const frameStyle = (row: Row) =>
+		row.frame.kind === 'dual' ? `--frame-a: var(--pip-${row.frame.colors[0].toLowerCase()}); --frame-b: var(--pip-${row.frame.colors[1].toLowerCase()})` : undefined;
+
 	async function copyDeck() {
 		const result = await post(`/api/decks/${deck.id}/copy`);
 		if (result) await goto(`/decks/${result.id}`);
@@ -105,13 +120,14 @@
 	}
 
 	const OWNERSHIP_TITLES = {
-		owned: 'In your collection',
+		owned: 'In your collection, this printing included',
 		proxy: 'In your collection as proxies',
 		partial: 'Partly in your collection',
 		missing: 'Not in your collection'
 	} as const;
 	function ownershipTitle(row: Row) {
 		const own = row.owned!;
+		if (own.state === 'owned' && !own.printing) return 'In your collection as another printing';
 		if (own.state !== 'partial') return OWNERSHIP_TITLES[own.state];
 		return `You have ${own.real} real${own.proxy ? ` and ${own.proxy} proxy` : ''} of ${row.quantity}`;
 	}
@@ -136,13 +152,23 @@
 			<p class="eyebrow">{data.check.formatLabel} deck</p>
 			<h1 class="mt-1 break-words text-[22px] font-semibold text-[var(--color-text-strong)]">
 				{deck.name}
+				{#if data.check.kind === 'commander'}<DeckBracket bracket={deck.bracket} />{/if}
 				{#if data.isOwner}<span class="chip ml-1 min-h-0 px-1.5 py-0 align-middle text-[0.62rem] uppercase">{VISIBILITY_LABELS[deck.visibility]}</span>{/if}
 			</h1>
 			<p class="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
 				<ColorPips colors={data.colors} includeColorless />
 				<span title={new Date(deck.updated_at).toLocaleString()}>Updated {timeAgo(deck.updated_at)}</span>
 			</p>
-			{#if deck.description}<p class="mt-3 whitespace-pre-line text-sm">{deck.description}</p>{/if}
+			{#if deck.description}<p class="mt-3 whitespace-pre-line break-words text-sm">{deck.description}</p>{/if}
+			{#if deck.hidden}
+				<p class="mt-3 rounded-lg border border-[var(--color-accent-muted)] p-3 text-sm" data-hidden-note>
+					{#if data.isOwner}
+						Several players reported this deck. Its description is hidden from them, and it is not in the public deck list.
+					{:else}
+						This deck's description is hidden after reports from several players.
+					{/if}
+				</p>
+			{/if}
 		</div>
 		<div class="flex flex-wrap gap-2 sm:max-w-[45%] sm:justify-end">
 			{#if data.isOwner}
@@ -158,6 +184,11 @@
 					<a href="/login" class="btn btn-primary">Sign in to copy</a>
 				{/if}
 				<button type="button" onclick={() => (exporting = true)} class="btn">Export</button>
+				{#if data.signedIn}
+					<button type="button" onclick={() => (reporting = true)} disabled={data.reported} class="btn" title={data.reported ? 'You reported this deck' : undefined}>
+						{data.reported ? 'Reported' : 'Report'}
+					</button>
+				{/if}
 			{/if}
 		</div>
 	</div>
@@ -234,6 +265,23 @@
 		</div>
 	{/if}
 
+	{#if data.partnerOf}
+		<div class="toolbar flex-wrap items-end" data-add-partner>
+			<div class="min-w-[min(100%,18rem)] flex-1">
+				<CardSearchInput
+					label="Add a partner for {data.partnerOf.name}"
+					placeholder="Second commander…"
+					format={deck.format}
+					partnerOf={data.partnerOf.cardId}
+					clearOnSelect
+					disabled={busy}
+					onselect={addPartner}
+				/>
+			</div>
+			<p class="text-xs text-[var(--color-text-muted)] sm:max-w-[16rem]">Only cards that can share the command zone with it are offered.</p>
+		</div>
+	{/if}
+
 	{#if data.rows.length === 0}
 		<div class="panel p-8 text-center text-[var(--color-text-muted)]">
 			{#if data.isOwner}
@@ -260,36 +308,39 @@
 			</label>
 			{#if data.signedIn}
 				<span class="ml-auto text-xs">
-					<span class="text-[var(--color-success)]">✓</span> owned · <span class="text-[var(--color-accent-muted)]">P</span> proxy · <span class="text-[var(--color-text-faint)]">○</span> missing
+					<span class="text-[var(--color-success)]">✓</span> owned · <span class="font-semibold text-[var(--color-success)]">≈</span> other printing · <span class="text-[var(--color-accent-muted)]">P</span> proxy · <span class="text-[var(--color-text-faint)]">○</span> missing
 				</span>
 			{/if}
 		</div>
 
 		<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_15rem]">
-			<div class="columns-1 gap-5 md:columns-2 2xl:columns-3">
+			<div class="columns-1 gap-5 md:columns-2">
 				{#each groups as g (g.key)}
 					<section class="mb-5 break-inside-avoid" data-group={g.key}>
 						<h2 class="flex items-baseline justify-between border-b border-[var(--color-border)] pb-1 text-sm font-semibold">
 							<span>{g.label} <span class="tabular font-normal text-[var(--color-text-muted)]">({g.count})</span></span>
 						</h2>
-						<ul class="mt-1">
+						<ul class="mt-2 space-y-1">
 							{#each g.rows as row (row.id)}
 								<li
-									class="dense-row flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-[var(--color-surface-hover)]"
+									class="deck-card frame-{row.frame.kind} flex items-center gap-2 py-1 pr-1 text-sm"
+									style={frameStyle(row)}
 									data-row={row.name}
+									data-frame={row.frame.kind}
 									onpointerenter={() => (hovered = row)}
 									onfocusin={() => (hovered = row)}
 								>
-									<span class="tabular w-6 shrink-0 text-right text-[var(--color-text-muted)]">{row.quantity}</span>
-									<a href="/cards/{row.card_id}" class="min-w-0 flex-1 truncate hover:text-[var(--color-primary)]" title="{row.name} · {row.set_code.toUpperCase()} #{row.collector_number}">{row.name}</a>
+									<span class="tabular w-5 shrink-0 text-right font-semibold text-[var(--color-text-strong)]">{row.quantity}</span>
+									<a href="/cards/{row.card_id}" class="min-w-0 flex-1 truncate font-medium text-[var(--color-text-strong)] hover:text-[var(--color-primary)]" title="{row.name} · {row.set_code.toUpperCase()} #{row.collector_number}">{row.name}</a>
 									{#if checked(row) && problemCards.has(row.name)}
 										<span class="shrink-0 font-bold text-[var(--color-danger)]" title={problemCards.get(row.name)} aria-label="Problem: {problemCards.get(row.name)}">!</span>
 									{/if}
 									{#if row.foil}<span class="foil-chip shrink-0">Foil</span>{/if}
-									<ManaCost cost={row.mana_cost} class="hidden shrink-0 sm:inline-flex" />
+									<span class="hidden shrink-0 sm:inline-flex"><ManaCost cost={row.mana_cost} /></span>
 									{#if row.owned}
-										<span class="w-7 shrink-0 text-center text-xs" data-owned={row.owned.state} title={ownershipTitle(row)} aria-label={ownershipTitle(row)}>
-											{#if row.owned.state === 'owned'}<span class="text-[var(--color-success)]">✓</span>
+										<span class="w-7 shrink-0 text-center text-xs" data-owned={row.owned.state} data-printing={row.owned.printing ? 'this' : 'other'} title={ownershipTitle(row)} aria-label={ownershipTitle(row)}>
+											{#if row.owned.state === 'owned' && row.owned.printing}<span class="text-[var(--color-success)]">✓</span>
+											{:else if row.owned.state === 'owned'}<span class="font-semibold text-[var(--color-success)]">≈</span>
 											{:else if row.owned.state === 'proxy'}<span class="font-semibold text-[var(--color-accent-muted)]">P</span>
 											{:else if row.owned.state === 'partial'}<span class="tabular text-[var(--color-accent-muted)]">{row.owned.real + row.owned.proxy}/{row.quantity}</span>
 											{:else}<span class="text-[var(--color-text-faint)]">○</span>{/if}
@@ -341,4 +392,7 @@
 {/if}
 {#if exporting}
 	<DeckExport deckId={deck.id} onclose={() => (exporting = false)} />
+{/if}
+{#if reporting}
+	<DeckReport deckId={deck.id} onclose={() => (reporting = false)} onreported={refresh} />
 {/if}

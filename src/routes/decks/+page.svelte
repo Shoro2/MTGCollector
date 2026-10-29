@@ -3,7 +3,9 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import ColorPips from '$lib/components/ColorPips.svelte';
+	import DeckBracket from '$lib/components/DeckBracket.svelte';
 	import DeckCreate from '$lib/components/DeckCreate.svelte';
+	import PublicDeckList from '$lib/components/PublicDeckList.svelte';
 	import { deckFormat } from '$lib/deck-formats';
 	import { VISIBILITY_LABELS, timeAgo } from '$lib/deck';
 	import { formatPrice } from '$lib/utils';
@@ -57,12 +59,30 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Deck building</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Your decks</h1>
+			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">{data.view === 'public' ? 'Public decks' : 'Your decks'}</h1>
 		</div>
-		<button type="button" onclick={() => (creating = true)} class="btn btn-primary">New deck</button>
+		{#if data.signedIn}
+			<button type="button" onclick={() => (creating = true)} class="btn btn-primary">New deck</button>
+		{:else}
+			<a href="/login" class="btn btn-primary">Sign in to build decks</a>
+		{/if}
 	</div>
 
-	{#if data.decks.length === 0}
+	{#if data.signedIn}
+		<nav class="flex gap-1 border-b border-[var(--color-border)] text-sm" aria-label="Deck lists">
+			{#each [['mine', 'Your decks', '/decks'], ['public', 'Public decks', '/decks?view=public']] as [key, label, href] (key)}
+				<a
+					{href}
+					aria-current={data.view === key ? 'page' : undefined}
+					class="-mb-px border-b-2 px-3 py-2 {data.view === key ? 'border-[var(--color-primary)] text-[var(--color-text-strong)]' : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+				>{label}</a>
+			{/each}
+		</nav>
+	{/if}
+
+	{#if data.public}
+		<PublicDeckList list={data.public} />
+	{:else if data.decks.length === 0}
 		<div class="panel p-8 text-center">
 			<p class="text-[var(--color-text-muted)]">You have no decks yet.</p>
 			<p class="mt-1 text-sm text-[var(--color-text-muted)]">Create one from scratch or paste a list from Moxfield, MTG Arena or MTGO.</p>
@@ -103,6 +123,7 @@
 						<tr class="border-b border-[var(--color-border-subtle)] last:border-0">
 							<td class="px-4 py-3">
 								<a href="/decks/{deck.id}" class="font-medium text-[var(--color-text)] hover:text-[var(--color-primary)]">{deck.name}</a>
+								{#if deckFormat(deck.format).kind === 'commander'}<DeckBracket bracket={deck.bracket} compact />{/if}
 								{#if deck.visibility !== 'private'}
 									<span class="chip ml-1 min-h-0 px-1.5 py-0 text-[0.62rem] uppercase">{VISIBILITY_LABELS[deck.visibility]}</span>
 								{/if}
