@@ -47,11 +47,11 @@ export function cheapestPrice(printings: PrintingSummary[]): { text: string; foi
 }
 
 // Search results cut titles and snippets to the device width: keep the facts within these.
-const TITLE_MAX = 60;
-const DESCRIPTION_MAX = 155;
+export const TITLE_MAX = 60;
+export const DESCRIPTION_MAX = 155;
 
 /** Cut at a word boundary and end with an ellipsis, within `max` characters. */
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
 	if (text.length <= max) return text;
 	const head = text.slice(0, max - 1);
 	const whole = /\s/.test(text[max - 1]) ? head : head.replace(/\s+\S*$/, '');

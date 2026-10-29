@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { SCHEMA_SQL } from './schema-sql';
 import {
-	DECKS_SQL, DeckError, PUBLISH_LIMIT, PUBLISH_WINDOW_MS, REPORTS_TO_HIDE, addDeckAuthor, addDeckPublications, assertCanPublish, publishAllowance, publishBlocked, addDeckBracket, addDeckCard, addDeckReports, lastAuthorName, ownDeckVisibility, hasReported, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
+	DECKS_SQL, DeckError, PUBLISH_LIMIT, PUBLISH_WINDOW_MS, REPORTS_TO_HIDE, addDeckAuthor, addDeckPublications, assertCanPublish, publishAllowance, publishBlocked, addDeckBracket, addDeckCard, addDeckReports, lastAuthorName, ownDeckVisibility, hasReported, indexableDecks, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
 	listDecks, ownedCards, readableDeck, removeDeckCard, searchDeckCards, updateDeck, updateDeckCard
 } from './decks';
 
@@ -312,6 +312,23 @@ describe('creating, sharing and copying decks', () => {
 		expect(reportedDecks(db)).toEqual([]);
 		expect(publicDecks(db, {}, 1).total).toBe(1);
 		db.prepare("DELETE FROM users WHERE id = 'c'").run();
+		db.close();
+	});
+
+	it('offers search engines only public decks of a real size that are not hidden', () => {
+		const db = fixture();
+		const big = createDeck(db, 'a', { name: 'Mountains', format: 'casual', list: '39 Mountain\n1 Lightning Bolt\n5 War Horn', visibility: 'public' }).id;
+		createDeck(db, 'a', { name: 'Small', format: 'casual', list: '38 Mountain\n1 Lightning Bolt\n\nSideboard\n15 Lightning Bolt', visibility: 'public' });
+		createDeck(db, 'a', { name: 'Unlisted', format: 'casual', list: '60 Mountain', visibility: 'unlisted' });
+		createDeck(db, 'a', { name: 'Private', format: 'casual', list: '60 Mountain' });
+		const commander = createDeck(db, 'b', { name: 'Krenko', format: 'commander', commanderId: 'krenko', list: '39 Mountain', visibility: 'public' }).id;
+		expect(indexableDecks(db).map((d) => d.id).sort()).toEqual([big, commander].sort());
+		expect(indexableDecks(db)[0].updated_at).toMatch(/^\d{4}-\d\d-\d\dT/);
+		for (const user of ['b', 'c', 'd']) reportDeck(db, user, big, 'spam');
+		expect(indexableDecks(db).map((d) => d.id)).toEqual([commander]);
+		restoreDeck(db, big);
+		updateDeck(db, 'a', big, { visibility: 'unlisted' });
+		expect(indexableDecks(db).map((d) => d.id)).toEqual([commander]);
 		db.close();
 	});
 

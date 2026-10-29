@@ -18,6 +18,7 @@ import { parseDeckList, type DeckLine, type DeckLineIssue } from '../deck-text';
 import { slugifyCardName } from '../card-slug';
 import type { PrintingSummary } from '../card-page';
 import { cardSlugIndex } from './card-slugs';
+import { INDEX_MIN_CARDS } from '../deck-seo';
 
 /** Tables of migration 0027_decks; tests create them the same way. */
 export const DECKS_SQL = `
@@ -697,6 +698,18 @@ export function publicDecks(db: Database, query: { q?: string; format?: string; 
 			WHERE dc.deck_id IN (SELECT value FROM json_each(?)) ORDER BY dc.id`).all(JSON.stringify(heads.map((d) => d.id))) as SummaryRow[])
 		: [];
 	return { decks: summarize(heads, rows, usdToEur), total, page, pages, q, format, sort };
+}
+
+/**
+ * Decks search engines may index (deckIndexable() in deck-seo.ts, here in SQL): public, not
+ * hidden after reports, at least INDEX_MIN_CARDS cards in command zone and main deck. Oldest
+ * first, so a new deck only extends the last sitemap part.
+ */
+export function indexableDecks(db: Database): { id: string; updated_at: string }[] {
+	return db.prepare(`SELECT d.id, d.updated_at FROM decks d
+		WHERE d.visibility = 'public' AND d.hidden_at IS NULL
+			AND (SELECT COALESCE(SUM(quantity), 0) FROM deck_cards WHERE deck_id = d.id AND board IN ('commander', 'main')) >= ?
+		ORDER BY d.created_at, d.id`).all(INDEX_MIN_CARDS) as { id: string; updated_at: string }[];
 }
 
 /**

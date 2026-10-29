@@ -51,8 +51,15 @@
 </script>
 
 <svelte:head>
-	<title>Decks | MTG Collector</title>
-	<meta name="robots" content="noindex, nofollow" />
+	{#if data.seo}
+		<title>Public MTG decks: Commander, Modern and more</title>
+		<meta name="description" content="Magic: The Gathering decks players share on MTG Collector, with card lists, prices, mana curves and format checks. Search by deck, author or commander." />
+		<link rel="canonical" href={data.seo.canonical} />
+		{#if data.seo.noindex}<meta name="robots" content="noindex, follow" />{/if}
+	{:else}
+		<title>Your decks | MTG Collector</title>
+		<meta name="robots" content="noindex, nofollow" />
+	{/if}
 </svelte:head>
 
 <div class="space-y-5">
