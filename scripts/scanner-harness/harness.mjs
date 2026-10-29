@@ -1,5 +1,5 @@
 // Drive /scan with image files and report what the pipeline identified.
-// usage: node harness.mjs [--mode single|multiple] [--expect expectations.json]
+// usage: node harness.mjs [--mode single|multiple|rows] [--expect expectations.json]
 //                         [--baseline baseline.json] [--write-baseline baseline.json]
 //                         [--out results.json] file...
 //
@@ -18,6 +18,8 @@
 // `--baseline` compares identity/printing (must not drop) and wrongIdentity/
 // wrongPrinting (must not rise) per photo and exits 1 on a regression;
 // `--write-baseline` stores the current metrics.
+// `--expect` also takes the ground truth of make-overlap-scenes.mjs
+// (overlap-scenes.json, an array of scenes with their cards) for `--mode rows`.
 import { chromium } from 'playwright';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -32,7 +34,11 @@ for (let i = 0; i < args.length; i++) {
 	else if (args[i] === '--write-baseline') writeBaselinePath = args[++i];
 	else files.push(args[i]);
 }
-const expectations = expectPath ? JSON.parse(readFileSync(expectPath, 'utf8')) : {};
+const expectationsRaw = expectPath ? JSON.parse(readFileSync(expectPath, 'utf8')) : {};
+// overlap-scenes.json: [{ file, cards: [{ name, set, number, ... }] }] -> { file: [{ name, set, number }] }
+const expectations = Array.isArray(expectationsRaw)
+	? Object.fromEntries(expectationsRaw.map((s) => [s.file, s.cards.map((c) => ({ name: c.name, set: c.set, number: c.number }))]))
+	: expectationsRaw;
 const baseline = baselinePath ? JSON.parse(readFileSync(baselinePath, 'utf8')) : null;
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined });
 const context = await browser.newContext({ viewport: { width: 1200, height: 900 } });
@@ -45,7 +51,7 @@ for (const file of files) {
 	page.on('pageerror', (e) => errors.push(e.message));
 	page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 	await page.goto(`${process.env.HARNESS_URL ?? 'http://localhost:5173'}/scan`, { waitUntil: 'networkidle' });
-	await page.getByRole('button', { name: mode === 'single' ? 'Single card' : 'Multiple cards' }).click();
+	await page.getByRole('button', { name: mode === 'single' ? 'Single card' : mode === 'rows' ? 'Overlapping rows' : 'Multiple cards' }).click();
 	const t0 = Date.now();
 	await page.setInputFiles('input[type=file]', file);
 	await page.waitForFunction(() => /Done!|No cards detected|Error:/.test(document.body.innerText), null, { timeout: 900000 });
