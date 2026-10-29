@@ -288,6 +288,13 @@ tbody tr:hover {
 	border-color: rgba(240, 104, 109, 0.65);
 }
 
+/* A disabled button must look disabled: the deck dialog's Create stayed bright blue while it
+   waited for the captcha (2026-10-29). */
+.btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
 .control {
 	min-height: var(--control-height);
 	border: 1px solid var(--color-border);
