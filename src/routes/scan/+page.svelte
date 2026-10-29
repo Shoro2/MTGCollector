@@ -134,6 +134,12 @@
 	// src/lib/scanner/overlap.ts); 'live' streams the device camera and
 	// auto-captures when the scene stabilizes (multi-card).
 	type ScanMode = 'single' | 'multiple' | 'rows' | 'live';
+	const SCAN_MODES: { id: ScanMode; label: string }[] = [
+		{ id: 'single', label: 'Single card' },
+		{ id: 'multiple', label: 'Multiple cards' },
+		{ id: 'rows', label: 'Overlapping rows' },
+		{ id: 'live', label: 'Live camera' }
+	];
 	let scanMode = $state<ScanMode>('single');
 	/** Size of the photo the outlines in `detectedCards` refer to (the result overlay). */
 	let photoSize = $state<{ width: number; height: number } | null>(null);
@@ -2408,6 +2414,24 @@
 	<meta property="og:url" content="https://mtg-collector.com/scan" />
 </svelte:head>
 
+<!-- Mode switch. The four buttons do not fit beside the label on a narrow phone (312 px of
+     buttons, 9 px of sideways scroll at 360 px), so below the sm breakpoint they share the
+     full width as a 2 x 2 grid; the "Mode:" label stays for screen readers only. -->
+{#snippet modeSwitch()}
+	<div class="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
+		<span id="scan-mode-label" class="sr-only text-xs text-[var(--color-text-muted)] sm:not-sr-only sm:shrink-0">Mode:</span>
+		<div role="group" aria-labelledby="scan-mode-label"
+			class="grid min-w-0 flex-1 grid-cols-2 gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 sm:inline-flex sm:flex-none">
+			{#each SCAN_MODES as mode (mode.id)}
+				<button type="button" aria-pressed={scanMode === mode.id} onclick={() => (scanMode = mode.id)}
+					class="rounded-md px-2 py-1 text-xs transition-colors sm:px-3 {scanMode === mode.id
+						? 'bg-[var(--color-primary)] text-white'
+						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}">{mode.label}</button>
+			{/each}
+		</div>
+	</div>
+{/snippet}
+
 <div class="space-y-5">
 	<div class="page-heading">
 		<div>
@@ -2427,18 +2451,8 @@
 	<ScanOffline {online} queued={queuedCount} failed={queuedFailed} processing={processingQueue} onProcess={() => void processQueue()} onDiscard={() => void discardQueue()} />
 	{#if addError}<p role="alert" class="text-red-400">{addError}</p>{/if}
 	{#if scanMode === 'live'}
-		<div class="flex items-center gap-2">
-			<span class="text-xs text-[var(--color-text-muted)]">Mode:</span>
-			<div class="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
-				<button type="button" onclick={() => (scanMode = 'single')}
-					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Single card</button>
-				<button type="button" onclick={() => (scanMode = 'multiple')}
-					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Multiple cards</button>
-				<button type="button" onclick={() => (scanMode = 'rows')}
-					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Overlapping rows</button>
-				<button type="button" onclick={() => (scanMode = 'live')}
-					class="px-3 py-1 text-xs rounded-md transition-colors bg-[var(--color-primary)] text-white">Live camera</button>
-			</div>
+		<div class="flex flex-wrap items-center gap-2">
+			{@render modeSwitch()}
 			{#if detectedCards.length > 0}
 				<button type="button" onclick={reset} disabled={scanning}
 					class="ml-auto text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline disabled:opacity-50">
@@ -2457,44 +2471,8 @@
 			<p class="text-xs text-[var(--color-text-muted)] mt-1">{scanMode === 'rows' ? 'Up to two or three rows of overlapping cards in one image' : 'Detects multiple cards in one image'}</p>
 			<input type="file" accept="image/*" capture="environment" onchange={onFileSelect} disabled={processingQueue} class="hidden" />
 		</label>
-		<div class="flex items-center gap-2 mt-3">
-			<span class="text-xs text-[var(--color-text-muted)]">Mode:</span>
-			<div class="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
-				<button
-					type="button"
-					onclick={() => (scanMode = 'single')}
-					class="px-3 py-1 text-xs rounded-md transition-colors {scanMode === 'single'
-						? 'bg-[var(--color-primary)] text-white'
-						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-				>
-					Single card
-				</button>
-				<button
-					type="button"
-					onclick={() => (scanMode = 'multiple')}
-					class="px-3 py-1 text-xs rounded-md transition-colors {scanMode === 'multiple'
-						? 'bg-[var(--color-primary)] text-white'
-						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-				>
-					Multiple cards
-				</button>
-				<button
-					type="button"
-					onclick={() => (scanMode = 'rows')}
-					class="px-3 py-1 text-xs rounded-md transition-colors {scanMode === 'rows'
-						? 'bg-[var(--color-primary)] text-white'
-						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
-				>
-					Overlapping rows
-				</button>
-				<button
-					type="button"
-					onclick={() => (scanMode = 'live')}
-					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-				>
-					Live camera
-				</button>
-			</div>
+		<div class="mt-3 flex flex-wrap items-center gap-2">
+			{@render modeSwitch()}
 		</div>
 
 		{#if scanMode === 'rows'}

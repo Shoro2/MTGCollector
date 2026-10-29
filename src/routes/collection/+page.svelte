@@ -730,7 +730,7 @@
 
 	<!-- Search & Sort -->
 	<div class="toolbar">
-		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex-1 flex gap-2">
+		<form onsubmit={(e) => { e.preventDefault(); doSearch(); }} class="flex min-w-0 flex-1 gap-2">
 			<input
 				type="text"
 				bind:value={search}
@@ -753,8 +753,8 @@
 
 	<!-- Collection Items -->
 	<div class="flex flex-wrap items-center gap-3">
-		<label>Location
-			<select aria-label="Location" value={data.filters.locationFilter === null ? '' : `location:${data.filters.locationFilter}`} onchange={e => filterLocation(e.currentTarget.value)} class="ml-2 rounded border p-2 bg-[var(--color-bg)] max-w-full">
+		<label class="flex min-w-0 max-w-full items-center gap-2">Location
+			<select aria-label="Location" value={data.filters.locationFilter === null ? '' : `location:${data.filters.locationFilter}`} onchange={e => filterLocation(e.currentTarget.value)} class="min-w-0 max-w-full rounded border p-2 bg-[var(--color-bg)]">
 				<option value="">All locations</option><option value="location:">Unassigned</option>
 				{#each data.locations as value}<option value={`location:${value}`}>{value}</option>{/each}
 			</select>

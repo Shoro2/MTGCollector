@@ -347,7 +347,8 @@
 	.legal-content :global(p) { margin-bottom: 0.75rem; color: var(--color-text-muted); line-height: 1.7; }
 	.legal-content :global(ul) { list-style: disc; padding-left: 1.5rem; margin-bottom: 0.75rem; color: var(--color-text-muted); line-height: 1.7; }
 	.legal-content :global(li) { margin-bottom: 0.5rem; }
-	.legal-content :global(a) { color: var(--color-primary); text-decoration: underline; }
+	/* Long URLs break instead of widening the page on narrow phones (320 px). */
+	.legal-content :global(a) { color: var(--color-primary); text-decoration: underline; overflow-wrap: anywhere; }
 	.legal-content :global(.index) { list-style: none; padding-left: 0; }
 	.legal-content :global(.index li) { margin-bottom: 0.25rem; }
 	.disclaimer {

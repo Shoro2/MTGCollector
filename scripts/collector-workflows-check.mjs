@@ -70,7 +70,7 @@ try {
 	await page.waitForURL('**/collection?location=Box+B');
 	check(await page.getByRole('checkbox', { name: 'Select War Horn' }).count() === 1, 'location filter finds only the matching entry');
 	await page.screenshot({ path: resolve(dir, 'collection-mobile.png'), fullPage: true });
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'collection fits mobile width');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'collection fits mobile width');
 	await page.getByText('War Horn', { exact: true }).first().click();
 	await page.getByLabel('Proxy (not counted in value)', { exact: true }).check();
 	await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -87,7 +87,7 @@ try {
 	await page.waitForURL('**/collection?proxy=only');
 	check(await page.getByRole('checkbox', { name: 'Select War Horn' }).count() === 1, 'proxy filter shows only proxies');
 	await page.screenshot({ path: resolve(dir, 'collection-proxies-mobile.png'), fullPage: true });
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'collection with proxies fits mobile width');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'collection with proxies fits mobile width');
 	const moxfieldRows = (await (await context.request.get(origin + '/collection/export?format=csv')).text()).split('\n');
 	check(moxfieldRows.some(row => row.startsWith('"2","0","War Horn"') && row.includes('"False","True"')) &&
 		moxfieldRows.some(row => row.startsWith('"2","2","War Horn"') && row.includes('"False","False"')), 'Moxfield export marks proxies and keeps them off the tradelist');
@@ -100,7 +100,7 @@ try {
 	const recent = page.locator('section[aria-labelledby="recently-added"]');
 	check(await recent.locator('a', { hasText: 'Proxy, Box B' }).filter({ hasText: 'not valued' }).count() === 1 &&
 		await recent.locator('a', { hasText: 'Box A' }).filter({ hasText: '€5.00' }).count() === 1, 'recently added shows locations, prices and unvalued proxies');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'dashboard fits mobile width');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'dashboard fits mobile width');
 	await page.screenshot({ path: resolve(dir, 'home-dashboard-mobile.png'), fullPage: true });
 	await page.goto(origin + '/collection');
 	const forbidden = await context.request.post(origin + '/collection/bulk', { data: { action: 'edit', ids: [1, 2], changes: { location: 'Wrong' } } });
@@ -127,7 +127,7 @@ try {
 	await page.getByRole('button', { name: 'Export', exact: true }).click();
 	const download = page.getByRole('link', { name: 'Download collection CSV', exact: true });
 	await download.waitFor();
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'export choices fit mobile width');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'export choices fit mobile width');
 	await download.focus(); await page.keyboard.press('Escape');
 	const backup = await (await context.request.get(origin + '/collection/export?format=collector')).body();
 	await page.getByRole('button', { name: 'Import', exact: true }).click();
@@ -180,7 +180,7 @@ try {
 	await page.getByText(/^Scan settings · ORI · DE · foil/).waitFor();
 	await page.getByText(/^Scan settings ·/).click();
 	check(await page.getByLabel('Save to location', { exact: true }).inputValue() === 'Box A', 'scan settings survive reload');
-	check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'scan settings fit mobile width');
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'scan settings fit mobile width');
 	await page.screenshot({ path: resolve(dir, 'scan-settings-mobile.png'), fullPage: true });
 	await page.getByRole('button', { name: 'Reset scan settings', exact: true }).click();
 	check(await page.getByLabel('Set restriction', { exact: true }).inputValue() === '', 'mixed-pile reset removes set restriction');
