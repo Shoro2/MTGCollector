@@ -4,23 +4,38 @@
 		reset: (id: string) => void;
 		remove: (id: string) => void;
 	};
-	const SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+	const READY = 'mtgTurnstileReady';
+	const SCRIPT = `https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=${READY}`;
+	const READY_TIMEOUT_MS = 20_000;
 	let loading: Promise<TurnstileApi> | null = null;
 
-	/** Loads Cloudflare's script once per page; a failed load may be retried by the next widget. */
+	/**
+	 * Loads Cloudflare's script once per page; a failed load may be retried by the next widget.
+	 * api.js sets window.turnstile only after its own load event, so the script's onload is too
+	 * early (the widget never appeared on mtg-collector.com, 2026-10-29); Cloudflare calls the
+	 * function named by ?onload= once the API is ready.
+	 */
 	function loadTurnstile(): Promise<TurnstileApi> {
-		const api = () => (window as unknown as { turnstile?: TurnstileApi }).turnstile;
-		if (api()) return Promise.resolve(api()!);
+		const scope = window as unknown as { turnstile?: TurnstileApi } & Record<string, unknown>;
+		if (scope.turnstile) return Promise.resolve(scope.turnstile);
 		loading ??= new Promise<TurnstileApi>((resolve, reject) => {
 			const script = document.createElement('script');
-			script.src = SCRIPT;
-			script.setAttribute('data-turnstile', '');
-			script.onload = () => (api() ? resolve(api()!) : reject(new Error('Turnstile did not start.')));
-			script.onerror = () => {
+			const fail = (message: string) => {
+				clearTimeout(timer);
+				delete scope[READY];
 				script.remove();
 				loading = null;
-				reject(new Error('Turnstile could not be loaded.'));
+				reject(new Error(message));
 			};
+			const timer = setTimeout(() => fail('Turnstile did not start.'), READY_TIMEOUT_MS);
+			scope[READY] = () => {
+				if (!scope.turnstile) return fail('Turnstile did not start.');
+				clearTimeout(timer);
+				resolve(scope.turnstile);
+			};
+			script.src = SCRIPT;
+			script.setAttribute('data-turnstile', '');
+			script.onerror = () => fail('Turnstile could not be loaded.');
 			document.head.appendChild(script);
 		});
 		return loading;
