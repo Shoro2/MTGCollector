@@ -65,6 +65,29 @@ function pickFraction(text: string, chars: string): FractionMatch | null {
 	return best;
 }
 
+/**
+ * The collector number of a 1998–2014 frame (Exodus to Journey into Nyx),
+ * read from the right half of the bottom strip. Those frames print no set
+ * code, no rarity letter and no language in the footer; the number and the
+ * set total follow the copyright at the bottom right ("™ & © 2009 Wizards of
+ * the Coast, Inc. 146/249"), outside the left-half strip the M15 frame is read
+ * from. (That is the 2003–2014 frame; the older numbered frame centres the
+ * line, which puts the number into the right half too — not yet checked on a
+ * real card.) So only a fraction counts here, and its numerator is not zero-padded:
+ * "38/249" is printed as such. A numerator with fewer digits than the total is
+ * therefore ambiguous (38 or a dropped digit of 138) and stays 'weak'; a
+ * numerator larger than the total is an OCR merge and is dropped.
+ */
+export function parseLegacyCollectorLine(text: string): Pick<CollectorInfo, 'collectorNumber' | 'numberSource'> & { total: string } {
+	const none = { collectorNumber: '', numberSource: 'none' as const, total: '' };
+	const fraction = pickFraction(text, '[\\dOoIilJjBbSsZz]');
+	if (!fraction) return none;
+	const num = fixOcrDigits(fraction.num);
+	const total = fixOcrDigits(fraction.total);
+	if (!num || total.length < 2 || Number(num) === 0 || Number(num) > Number(total)) return none;
+	return { collectorNumber: stripLeadingZeros(num), numberSource: num.length === total.length ? 'fraction' : 'weak', total: stripLeadingZeros(total) };
+}
+
 export interface CollectorInfo {
 	setCode: string;
 	collectorNumber: string;
