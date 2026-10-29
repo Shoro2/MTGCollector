@@ -18,6 +18,7 @@ import type { CollectorInfo } from './parse';
 import { aliasLanguage, bestAlias, nameAliases, nameScore, normalizeName, realWordCount, similarity } from './similarity';
 import { disambiguateReprints, normalizeCollectorNumber } from './pipeline';
 import { hammingDistance } from './phash';
+import { CARD_BACK_SCAN, cardBackDistance } from './card-back';
 import { PREFIX_CONTRADICT, PREFIX_FIT, PREFIX_IDENTIFY, PREFIX_MARGIN, PREFIX_SET_LETTERS, bestPrefixAlias, letterCount, prefixIdentifies, prefixNameScore, stripLeadingToken } from './name-prefix';
 
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
@@ -78,6 +79,8 @@ export type Decision = {
 	finish: Finish;
 	language: string;
 	reasons: string[];
+	/** The scan shows the back of a card (card-back.ts): nothing is identified or offered. */
+	cardBack?: boolean;
 };
 
 /** A name candidate at or above this score identifies the card on its own. */
@@ -312,6 +315,17 @@ export function resolveCard(input: ResolveInput): Decision {
 	const agrees = (row: PrintingRow) => scoreOf(input.nameText, String(row.name)) >= fitMin || (best !== null && best.name === row.name && best.score >= fitMin);
 	const textOf = (c: NameCandidate) => c.text ?? input.nameText;
 	const supported = (c: NameCandidate) => nameSupported(c, input.nameText);
+
+	// The back of a card: its artwork is every card's, so neither the art channel nor a
+	// partial name read from the back's pattern may name a card. Only a name that
+	// identifies on its own or a structural collector number (a front after all) goes on.
+	const backDistance = cardBackDistance(input.artHash, input.artHashAlt);
+	if (backDistance !== null && backDistance <= CARD_BACK_SCAN
+		&& !nameCandidates.some((c) => identifies(c))
+		&& !readings.some((r) => r.collectorNumber !== '' && isStructural(r.numberSource))) {
+		reasons.push(`artwork ${backDistance} bits from the card back, no name or collector number read -> card back, nothing offered`);
+		return { ...done(null, 'unknown', null, [], 'unknown'), cardBack: true };
+	}
 
 	const sameNumber = (r: FooterReading, row: PrintingRow) => r.collectorNumber !== '' && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number));
 	// A number-only hit is plausible unless the printed rarity letter or real
@@ -560,9 +574,15 @@ export function resolveCard(input: ResolveInput): Decision {
 		const printings = printingsOf(best.name);
 		reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${best.pass}), ${printings.length} printing(s)`);
 		const certain = best.score >= NAME_CERTAIN;
+		// A name shorter than SHORT_NAME is read exactly or not at all (nameIdentifies),
+		// but an exact read of three to five letters is still a coincidence often enough:
+		// the binarised name strip of a sideways Snow-Covered Mountain, rotated 180°,
+		// read "egg" and confirmed Egg (multi-card upload, 2026-10-29). It needs the
+		// footer, the artwork or the majority set like an uncertain name (rule 1e).
+		const short = normalizeName(bestAlias(textOf(best), best.name).alias).length < SHORT_NAME;
 		// A truncated name bar is never certain enough to overrule the footer: the
 		// start it shows may begin the footer's card too (rules 1b-1d apply).
-		const careful = !certain || input.nameTruncated === true;
+		const careful = !certain || input.nameTruncated === true || short;
 		if (!careful && printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
 		// The footer corroborates the name when it picks one of its printings. For
 		// an uncertain name an *exact* structural number is required first; the
@@ -627,7 +647,7 @@ export function resolveCard(input: ResolveInput): Decision {
 			// Planeswalker 0.70 for a Nicol Bolas, Planeswalker whose artwork hashed 12 bits
 			// from DDH #42 (multi-card upload, 2026-10-29). Both are offered; the artwork goes
 			// first when the text fits its name too, otherwise the name.
-			if (best.score < NAME_CERTAIN && !artIgnored && artBest && artUnambiguous && artBest.name !== best.name) {
+			if ((best.score < NAME_CERTAIN || short) && !artIgnored && artBest && artUnambiguous && artBest.name !== best.name) {
 				const artFit = scoreOf(textOf(best), artBest.name);
 				const artFirst = artFit >= fitMin;
 				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} vs artwork "${artBest.name}" ${artBest.distance} bits (its name fits the text ${artFit.toFixed(2)}): neither is supported -> likely, ${artFirst ? 'artwork' : 'name'} first`);
@@ -650,6 +670,12 @@ export function resolveCard(input: ResolveInput): Decision {
 			if (runnerUp) {
 				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} (${bestPlain.toFixed(2)} on the whole text) vs "${runnerUp.name}" ${runnerUp.plain.toFixed(2)}: too close to call -> likely`);
 				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, [...printings, ...printingsOf(runnerUp.name)], 'likely');
+			}
+			// 1e. A short name with nothing behind it but the read itself: one tap. The
+			// majority set of a spread counts as support, as it does for an artwork.
+			if (short && !(input.majoritySet && printings.some((p) => String(p.set_code).toLowerCase() === input.majoritySet!.toLowerCase()))) {
+				reasons.push(`name "${best.name}" ${best.score.toFixed(2)} is a short name with no support from the footer, the artwork or the majority set -> likely`);
+				return done(best.name, 'likely', printings.length === 1 ? printings[0] : null, printings, 'likely');
 			}
 			if (printings.length === 1) return done(best.name, 'confirmed', printings[0], printings, 'confirmed');
 		}

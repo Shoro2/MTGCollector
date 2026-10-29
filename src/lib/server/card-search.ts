@@ -2,7 +2,7 @@ import { SCANNABLE_CARD } from './card-availability.js';
 import type { Statement } from 'better-sqlite3';
 import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
-import { bigramsOf, normalizeName, ownAliases, rankNameMatches, setPrintedAliasSource, similarity } from '../scanner/similarity.js';
+import { bigramsOf, normalizeName, normalizedSimilarity, ownAliases, rankNameMatches, setPrintedAliasSource } from '../scanner/similarity.js';
 import { PrintedNameIndex } from './printed-name-index.js';
 import { PREFIX_MIN_LETTERS, letterCount, prefixNameScore, prefixScoreNorm, startShares } from '../scanner/name-prefix.js';
 import { allPrintedNames } from './printed-names.js';
@@ -17,6 +17,12 @@ const SCANNER_FILTER = SCANNABLE_CARD;
 const FUZZY_ROWS = 200;
 /** Distinct names a fuzzy search returns, best similarity first. */
 const FUZZY_NAMES = 20;
+/** The edit-distance scan over every name runs while the best pooled name scores below this (NAME_CERTAIN in resolve.ts). */
+const FUZZY_SCAN_BELOW = 0.8;
+/** How far below the best pooled name the scan still collects names: above the fusion's runner-up margin (NAME_MARGIN, 0.1). */
+const FUZZY_SCAN_MARGIN = 0.15;
+/** Lowest similarity the edit-distance scan returns. */
+const FUZZY_MIN = 0.5;
 /** Printings per returned name in a fuzzy result (the fusion fetches the complete list separately). */
 const ROWS_PER_NAME = 10;
 /**
@@ -213,11 +219,22 @@ function searchEnglishName(cleaned: string, exactOnly = false): SearchResult {
 	// Edit-distance search over every distinct name (and face): several
 	// misread letters inside one word ("wmotorion" for Immolation) defeat the
 	// index-based paths; a scan of ~38k names with a bigram prefilter takes a
-	// few tens of milliseconds.
-	if (ranked.length === 0 || ranked[0].score < 0.6) {
-		const fuzzy = fuzzyNames(cleaned);
+	// few tens of milliseconds. It also runs while the best pooled name is
+	// still uncertain (below NAME_CERTAIN in resolve.ts): the stem path keeps
+	// FUZZY_ROWS rows ordered by bm25 and release date, which for a common stem
+	// are the newest printings, not the closest names. "ams Lighining" pooled
+	// 671 rows for "Ligh"; Chain Lightning (row 494) and Ball Lightning (531)
+	// fell off, so Arc Lightning 0.77 had no runner-up and confirmed a Chain
+	// Lightning (multi-card upload, full catalogue, 2026-10-29).
+	if (ranked.length === 0 || ranked[0].score < FUZZY_SCAN_BELOW) {
+		// Behind an uncertain pooled name only rivals close to it matter (the fusion's
+		// runner-up margin is 0.1), so the scan skips names that cannot get there.
+		const fuzzy = fuzzyNames(cleaned, 10, ranked.length > 0 ? ranked[0].score - FUZZY_SCAN_MARGIN : FUZZY_MIN);
 		if (fuzzy.length > 0) {
-			pool.push(...fuzzy.flatMap((f) => exactStmt().all(f.name, `${f.name} //%`, f.name) as CardRow[]));
+			// fuzzyNames() returns canonical names, so the indexed name lookup is
+			// enough; exactStmt()'s LIKE and face join scan the whole table per name
+			// (10 names took ~0.6 s on the full catalogue).
+			pool.push(...fuzzy.flatMap((f) => printingsByName(f.name).slice(0, ROWS_PER_NAME)));
 			ranked = rankNameMatches(pool, cleaned, FUZZY_NAMES);
 		}
 	}
@@ -231,13 +248,16 @@ let nameIndex: { key: string; entries: NameEntry[] } | null = null;
 export function invalidateNameIndex() { nameIndex = null; }
 
 /**
- * Distinct canonical names with their faces, rebuilt when the card count changes
- * (imports). The printed names of other languages have their own index
- * (PrintedNameIndex), searched on every query in searchByName().
+ * Distinct canonical names with their faces, rebuilt when a card is added
+ * (`MAX(rowid)` changes: the importers run in their own process) or the price
+ * updater invalidates it. A filtered COUNT(*) used to be the key: a scan of
+ * the whole cards table on every fuzzy or prefix search. A standalone
+ * `npm run import-availability` needs a restart, as before. The printed names
+ * of other languages have their own index (PrintedNameIndex), searched on
+ * every query in searchByName().
  */
 function nameEntries(): NameEntry[] {
-	const cardCount = (sqlite.prepare(`SELECT COUNT(*) AS c FROM cards WHERE ${SCANNER_FILTER}`).get() as { c: number }).c;
-	const key = String(cardCount);
+	const key = String((sqlite.prepare('SELECT MAX(rowid) AS m FROM cards').get() as { m: number | null }).m ?? 0);
 	if (nameIndex && nameIndex.key === key) return nameIndex.entries;
 	const entries: NameEntry[] = [];
 	for (const { name } of sqlite.prepare(`SELECT DISTINCT name FROM cards WHERE ${SCANNER_FILTER}`).all() as Array<{ name: string }>) {
@@ -252,20 +272,25 @@ function nameEntries(): NameEntry[] {
 
 /**
  * Canonical names whose normalised form (or a face) is within edit-distance
- * similarity >= 0.5 of the query, best first, at most `limit`. Queries with
- * fewer than six letters are too short for this to mean anything.
+ * similarity >= `min` (at least FUZZY_MIN) of the query, best first, at most
+ * `limit`. Queries with fewer than six letters are too short for this to mean
+ * anything. A name whose length alone keeps it below `min` is skipped before
+ * the edit distance is computed.
  */
-export function fuzzyNames(query: string, limit = 5): Array<{ name: string; score: number }> {
+export function fuzzyNames(query: string, limit = 5, min = FUZZY_MIN): Array<{ name: string; score: number }> {
 	const norm = normalizeName(query);
 	if (norm.replace(/\s/g, '').length < 6) return [];
+	const floor = Math.max(FUZZY_MIN, min);
 	const qb = bigramsOf(norm);
 	const best = new Map<string, number>();
 	for (const e of nameEntries()) {
+		// The edit distance is at least the length difference.
+		if (Math.abs(norm.length - e.norm.length) > (1 - floor) * Math.max(norm.length, e.norm.length)) continue;
 		let inter = 0;
 		for (const b of qb) if (e.bigrams.has(b)) inter++;
 		if ((2 * inter) / (qb.size + e.bigrams.size) < 0.25) continue;
-		const score = similarity(norm, e.norm);
-		if (score >= 0.5 && score > (best.get(e.name) ?? 0)) best.set(e.name, score);
+		const score = normalizedSimilarity(norm, e.norm);
+		if (score >= floor && score > (best.get(e.name) ?? 0)) best.set(e.name, score);
 	}
 	return [...best.entries()].map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score).slice(0, limit);
 }
