@@ -20,6 +20,7 @@
 	import { COARSE_LONG_EDGE, COARSE_PASS, findCardQuads, isInnerBoxOf } from '$lib/scanner/quick-rects';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
 	import { cropWindowsFromProfiles, stripCropWindows } from '$lib/scanner/crops';
+	import { cardInSleeve, rewarpMatrix, type ProfilePair } from '$lib/scanner/sleeve';
 	import { extractSegments } from '$lib/scanner/overlap-cv';
 	import { detectOverlapRows, type StripEdge } from '$lib/scanner/overlap';
 	import { prefixIdentifies, rankPrefixMatches } from '$lib/scanner/name-prefix';
@@ -1189,6 +1190,33 @@
 				return { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl: bottom.url, bottomUrl2, bottomUrlR, bottomCanvas: bottom.canvas };
 			}
 
+			// Gray and saturation means of a warp per row over the central columns
+			// and per column over the central rows: the input of cardInSleeve().
+			function sleeveProfiles(warpedMat: any): [ProfilePair, ProfilePair] {
+				const w = warpedMat.cols as number, h = warpedMat.rows as number;
+				const rgb = new cv.Mat(), hsv = new cv.Mat(), gray = new cv.Mat();
+				cv.cvtColor(warpedMat, rgb, cv.COLOR_RGBA2RGB);
+				cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
+				cv.cvtColor(warpedMat, gray, cv.COLOR_RGBA2GRAY);
+				const channels = new cv.MatVector();
+				cv.split(hsv, channels);
+				const sat = channels.get(1);
+				const means = (mat: any, rect: any, dim: number): number[] => {
+					const roi = mat.roi(rect);
+					const out = new cv.Mat();
+					cv.reduce(roi, out, dim, cv.REDUCE_AVG, cv.CV_32F);
+					const arr = Array.from(out.data32F as Float32Array);
+					roi.delete(); out.delete();
+					return arr;
+				};
+				const rowRect = new cv.Rect(Math.floor(w * 0.15), 0, Math.floor(w * 0.85) - Math.floor(w * 0.15), h);
+				const colRect = new cv.Rect(0, Math.floor(h * 0.2), w, Math.floor(h * 0.8) - Math.floor(h * 0.2));
+				const rows = { gray: means(gray, rowRect, 1), sat: means(sat, rowRect, 1) };
+				const cols = { gray: means(gray, colRect, 0), sat: means(sat, colRect, 0) };
+				sat.delete(); channels.delete(); rgb.delete(); hsv.delete(); gray.delete();
+				return [rows, cols];
+			}
+
 			// Process each detected card
 			const cards: typeof detectedCards = [];
 			// Canvases kept outside $state so Svelte doesn't try to proxy
@@ -1230,9 +1258,23 @@
 				log(`Card ${i + 1}: warp ${cardW}x${cardH} (scale ${warpScale.toFixed(2)}, quad long edge ${quadLong.toFixed(0)} px)`);
 				const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, ordered.flat());
 				const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, cardW, 0, cardW, cardH, 0, cardH]);
-				const M = cv.getPerspectiveTransform(srcPts, dstPts);
+				let M = cv.getPerspectiveTransform(srcPts, dstPts);
 				const warped = new cv.Mat();
 				cv.warpPerspective(src, warped, M, new cv.Size(cardW, cardH));
+				// A card in a sleeve: the quad lies on the sleeve's outline, so the card
+				// sits small and off centre in the warp and every window misses
+				// (src/lib/scanner/sleeve.ts). Warp again straight onto the card.
+				if (!stripInfo && !cardContours[i].synthetic) {
+					const sleeve = cardInSleeve(...sleeveProfiles(warped), cardW, cardH);
+					if (sleeve) {
+						const pct = (v: number | null) => (v === null ? '-' : `${(v * 100).toFixed(1)}%`);
+						log(`Card ${i + 1}: card inside a sleeve (border starts top ${pct(sleeve.edges.top)}, bottom ${pct(sleeve.edges.bottom)}, left ${pct(sleeve.edges.left)}, right ${pct(sleeve.edges.right)}; band on ${sleeve.loose.join(', ')}), warped again onto the card`);
+						const M2 = cv.matFromArray(3, 3, cv.CV_64F, rewarpMatrix(M.data64F as Float64Array, sleeve, cardW, cardH));
+						M.delete();
+						M = M2;
+						cv.warpPerspective(src, warped, M, new cv.Size(cardW, cardH));
+					}
+				}
 
 				// Full-resolution warp for the OCR crops and the upside-down retry;
 				// the result list shows a base-size thumbnail.
