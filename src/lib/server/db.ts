@@ -5,7 +5,7 @@ import { SCHEMA_SQL } from './schema-sql.js';
 import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
-import { DECKS_SQL, addDeckAuthor, addDeckBracket, addDeckReports } from './decks.js';
+import { DECKS_SQL, addDeckAuthor, addDeckPublications, addDeckBracket, addDeckReports } from './decks.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -377,6 +377,11 @@ const MIGRATIONS: Migration[] = [
 		// Google name or e-mail address), appended after hidden_at for the positional dump.
 		id: '0030_deck_author',
 		run: (db) => addDeckAuthor(db)
+	},
+	{
+		// One row per deck made public, for the limit of three public decks per 24 hours.
+		id: '0031_deck_publications',
+		run: (db) => addDeckPublications(db)
 	}
 ];
 

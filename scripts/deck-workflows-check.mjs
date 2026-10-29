@@ -450,6 +450,44 @@ try {
 		'unlisting a deck or editing a public one needs no captcha');
 	check((await api('PATCH', `/api/decks/${quiet.id}`, { author_name: 'me@example.com' })).status() === 400, 'the API refuses an author name with an e-mail address');
 	await api('DELETE', `/api/decks/${ok.id}`); await api('DELETE', `/api/decks/${quiet.id}`);
+
+	// Three public decks per account within 24 hours (the admin above is exempt). The limit is
+	// checked before the captcha, so a refused deck does not spend the player's token.
+	const limited = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+	await fakeTurnstile(limited);
+	await limited.addCookies([{ name: 'session', value: tokens.fourth, url: origin }]);
+	const post = (path, data, method = 'POST') => limited.request.fetch(origin + path, { method, data });
+	const made = [];
+	for (let i = 1; i <= 3; i++) made.push(await (await post('/api/decks', { name: `Public ${i}`, visibility: 'public', captcha: `pass:publish-deck:limit-${i}` })).json());
+	check(made.every((d) => d.success), 'a player makes three decks public');
+	const spentBefore = captchaCount();
+	const fourth = await post('/api/decks', { name: 'Public 4', visibility: 'public', captcha: 'pass:publish-deck:limit-4' });
+	const fourthBody = await fourth.json();
+	check(fourth.status() === 429 && /^You can make at most 3 decks public within 24 hours\. You can make the next one public in 2[34] hours?/.test(fourthBody.message) && captchaCount() === spentBefore,
+		`the fourth public deck within 24 hours is refused before the captcha (${fourth.status()}: ${fourthBody.message})`);
+	await post(`/api/decks/${made[0].id}`, { visibility: 'private' }, 'PATCH');
+	const again = await post(`/api/decks/${made[0].id}`, { visibility: 'public', captcha: 'pass:publish-deck:limit-5' }, 'PATCH');
+	check(again.status() === 429, 'switching a deck to private and back does not get round the limit');
+	await post(`/api/decks/${made[1].id}`, {}, 'DELETE');
+	check((await post('/api/decks', { name: 'After delete', visibility: 'public', captcha: 'pass:publish-deck:limit-6' })).status() === 429, 'deleting a public deck does not give its slot back');
+	check((await post('/api/decks', { name: 'Unlisted one', visibility: 'unlisted' })).ok(), 'private and unlisted decks have no limit');
+	const limitedPage = await limited.newPage();
+	limitedPage.on('pageerror', error => errors.push(error.message));
+	await limitedPage.goto(origin + '/decks');
+	await limitedPage.getByRole('button', { name: 'New deck', exact: true }).click();
+	await limitedPage.getByLabel('Name', { exact: true }).fill('One more');
+	await limitedPage.locator('dialog').getByText('Public', { exact: true }).click();
+	check(/at most 3 decks public/.test(await limitedPage.locator('dialog [data-publish-limit]').innerText()) && await limitedPage.locator('dialog [data-deck-captcha]').count() === 0
+		&& await limitedPage.getByRole('button', { name: 'Create', exact: true }).isDisabled(), 'the create dialog explains the limit instead of showing the captcha');
+	await limitedPage.screenshot({ path: resolve(dir, 'publish-limit-desktop.png') });
+	await limitedPage.locator('dialog').getByText('Unlisted', { exact: true }).click();
+	check(await limitedPage.locator('dialog [data-publish-limit]').count() === 0 && !(await limitedPage.getByRole('button', { name: 'Create', exact: true }).isDisabled()), 'an unlisted deck can still be created');
+	await limitedPage.keyboard.press('Escape');
+	await limitedPage.goto(origin + `/decks/${made[0].id}`);
+	await limitedPage.getByRole('button', { name: 'Settings', exact: true }).click();
+	await limitedPage.locator('dialog').getByText('Public', { exact: true }).click();
+	check(await limitedPage.locator('dialog [data-publish-limit]').count() === 1 && await limitedPage.getByRole('button', { name: 'Save', exact: true }).isDisabled(), 'the settings dialog explains the limit too');
+	await limited.close();
 	await big.getByRole('button', { name: 'Import', exact: true }).click();
 	await big.getByLabel('Card list', { exact: true }).fill('moxfield.com/decks/AbCdEf123');
 	check(await big.locator('dialog [data-link-help]').count() === 1 && await big.locator('dialog').getByRole('button', { name: 'Import', exact: true }).isDisabled(), 'the import dialog explains a Moxfield link too');

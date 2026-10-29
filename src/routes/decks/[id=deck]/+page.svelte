@@ -386,7 +386,7 @@
 	<DeckCardEdit deckId={deck.id} row={editing} onclose={() => (editing = null)} onsaved={refresh} />
 {/if}
 {#if settings}
-	<DeckSettings {deck} hint={settings.hint} captchaSiteKey={data.captchaSiteKey} onclose={() => (settings = null)} onsaved={refresh} />
+	<DeckSettings {deck} hint={settings.hint} captchaSiteKey={data.captchaSiteKey} publishBlocked={data.publishBlocked} onclose={() => (settings = null)} onsaved={refresh} />
 {/if}
 {#if importing}
 	<DeckImport deckId={deck.id} onclose={() => (importing = false)} onimported={refresh} />

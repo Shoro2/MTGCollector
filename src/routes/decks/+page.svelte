@@ -152,5 +152,5 @@
 </div>
 
 {#if creating}
-	<DeckCreate authorName={data.create?.authorName ?? ''} captchaSiteKey={data.create?.captchaSiteKey ?? null} onclose={() => (creating = false)} />
+	<DeckCreate authorName={data.create?.authorName ?? ''} captchaSiteKey={data.create?.captchaSiteKey ?? null} publishBlocked={data.create?.publishBlocked ?? null} onclose={() => (creating = false)} />
 {/if}
