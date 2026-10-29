@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyCells, filterByDimensions, inferGrid, orientedDims, quadBounds, quadCentroid, type Point } from './grid.js';
+import { emptyCells, filterByDimensions, inferGrid, orientedDims, outerLinesWithEvidence, quadBounds, quadCentroid, type Point } from './grid.js';
 
 /** Axis-aligned card quad (TL, TR, BR, BL) around a centre, optionally rotated. */
 function cardQuad(cx: number, cy: number, w: number, h: number, angleDeg = 0): Point[] {
@@ -211,4 +211,66 @@ describe('inferGrid + emptyCells', () => {
 		const withBlob = emptyCells(h, cards, frame, { extrapolate: false });
 		expect(withBlob).toEqual([]);
 	});
+
+	it('finds a whole missing column between two detected ones (binder page, 2026-10-29)', () => {
+		// 3 x 3 pockets, pitch 1.2 card widths; the middle column was never detected, so the
+		// outer columns are 2.4 card widths apart and looked adjacent.
+		const pocketX = 1.2 * CARD_W;
+		const pocketY = 1.15 * CARD_H;
+		const cards = lattice(3, 3, pocketX, pocketY, CARD_W, CARD_H, [80, 100], ['0,1', '1,1', '2,1']);
+		const big = { width: 600, height: 700 };
+		const h = inferGrid(cards, big);
+		expect(h).not.toBeNull();
+		expect([h!.rows, h!.cols]).toEqual([3, 3]);
+		expect(h!.cellHalf.c).toBeCloseTo(CARD_W / pocketX / 2, 2);
+		const cells = emptyCells(h!, cards, big);
+		expect(cells.map((c) => `${c.row},${c.col}`)).toEqual(['0,1', '1,1', '2,1']);
+		expect(quadCentroid(cells[1].corners)[0]).toBeCloseTo(80 + pocketX, 1);
+	});
+
+	it('finds a missing middle column with the clustering too (few cards, no neighbour links)', () => {
+		// Two cards per outer column on rows 0 and 2 only: every neighbour is two cells away.
+		const pocketX = 1.2 * CARD_W;
+		const pocketY = 1.15 * CARD_H;
+		const cards = lattice(3, 3, pocketX, pocketY, CARD_W, CARD_H, [80, 100], ['0,1', '1,0', '1,1', '1,2', '2,1']);
+		cards.push({ corners: cardQuad(80, 100 + pocketY, CARD_W, CARD_H), row: 1, col: 0 });
+		const big = { width: 600, height: 700 };
+		const h = inferGrid(cards, big);
+		expect(h).not.toBeNull();
+		expect([h!.rows, h!.cols]).toEqual([3, 3]);
+		expect(emptyCells(h!, cards, big).map((c) => `${c.row},${c.col}`).sort()).toEqual(['0,1', '1,1', '1,2', '2,1']);
+	});
+
+	it('keeps a wide but regular column spacing as it is', () => {
+		// 1.5 card widths between columns, rows touching: not a whole multiple, nothing in between.
+		const cards = lattice(3, 3, 1.5 * CARD_W, 1.05 * CARD_H, CARD_W, CARD_H, [80, 100]);
+		const h = inferGrid(cards, { width: 600, height: 600 });
+		expect([h!.rows, h!.cols]).toEqual([3, 3]);
+		expect(emptyCells(h!, cards, { width: 600, height: 600 })).toEqual([]);
+	});
+
+	it('tries an outer row only where a dropped candidate (a pocket outline) shows the spread goes on', () => {
+		// Rows 1 and 2 of a 3 x 3 binder page were detected; the top row only as pocket outlines,
+		// 20% larger than a card, which the dimension filter dropped.
+		const pocketX = 1.2 * CARD_W;
+		const pocketY = 1.15 * CARD_H;
+		const page = { width: 500, height: 600 };
+		const all = lattice(3, 3, pocketX, pocketY, CARD_W, CARD_H, [70, 90]);
+		const cards = all.filter((c) => c.row > 0);
+		const h = inferGrid(cards, page)!;
+		expect([h.rows, h.cols]).toEqual([2, 3]);
+		const pocket = { corners: cardQuad(70 + 2 * pocketX, 90, CARD_W * 1.2, CARD_H * 1.15) };
+		expect(emptyCells(h, cards, page)).toEqual([]);
+		const outer = outerLinesWithEvidence(h, [pocket]);
+		expect([...outer.rows]).toEqual([-1]);
+		expect([...outer.cols]).toEqual([]);
+		const cells = emptyCells(h, cards, page, { evidence: [pocket] });
+		expect(cells.map((c) => `${c.row},${c.col}`)).toEqual(['-1,0', '-1,1', '-1,2']);
+		expect(quadCentroid(cells[0].corners)[1]).toBeCloseTo(90, 1);
+		// A dropped candidate inside the extent, or far outside it, opens no outer row.
+		const inside = { corners: cardQuad(70 + pocketX, 90 + pocketY, 2 * CARD_W, CARD_H) };
+		const far = { corners: cardQuad(70, 90 + 4 * pocketY, CARD_W, CARD_H) };
+		expect(emptyCells(h, cards, page, { evidence: [inside, far] })).toEqual([]);
+	});
 });
+

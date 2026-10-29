@@ -229,6 +229,37 @@ export function cluster1D(values: number[], threshold: number): number[][] {
 
 type Indexing = { label: 'links' | 'clusters'; comp: number[]; col: number[]; row: number[]; main: number };
 
+/** A pitch at least this many times the other axis's pitch (both in card sizes) spans a whole undetected row or column. */
+const PITCH_MULTIPLE_MIN = 1.7;
+/** Cards cannot sit closer than this (in card sizes); a shorter step came from a partial or stray detection. */
+const PITCH_PLAUSIBLE_MIN = 0.8;
+
+/**
+ * The pitch of one axis, corrected when it is about a whole multiple of the
+ * other axis's pitch (both measured in card sizes): then a row or column in
+ * between was never detected. Cards are spaced about alike in both directions
+ * (touching on a table, the pockets of a binder page). On a binder page of
+ * 2026-10-29 the middle column of 3 x 3 pockets was missing entirely, the two
+ * outer columns looked adjacent, and the grid had no gap to fill.
+ */
+function balancedPitch(pitch: number, other: number): number {
+	if (!(other >= PITCH_PLAUSIBLE_MIN) || !(pitch >= other * PITCH_MULTIPLE_MIN)) return pitch;
+	return pitch / Math.round(pitch / other);
+}
+
+/** The smallest plausible step (the pitch; larger ones are whole multiples of it), or the smallest of all when none is plausible. */
+function smallestStep(steps: number[]): number {
+	const plausible = steps.filter((s) => s >= PITCH_PLAUSIBLE_MIN);
+	return Math.min(...(plausible.length ? plausible : steps));
+}
+
+/** Lattice index of every group from the steps between neighbouring group centres (in card sizes): a step of k pitches skips k - 1 indices. */
+function stepIndices(steps: number[], pitch: number): number[] {
+	const idx = [0];
+	for (const step of steps) idx.push(idx[idx.length - 1] + Math.max(1, Math.round(step / pitch)));
+	return idx;
+}
+
 /**
  * Index the cards by clustering their centres into rows (by y) and columns
  * (by x). Blind to rotation and perspective, but it works for a sparse
@@ -242,10 +273,21 @@ function clusterIndices(centres: Point[], bounds: Box[]): Indexing | null {
 	const rowGroups = cluster1D(centres.map((p) => p[1]), medH * 0.4);
 	const colGroups = cluster1D(centres.map((p) => p[0]), medW * 0.4);
 	if (rowGroups.length < 2 || colGroups.length < 2) return null;
+	// Groups come out in ascending order; a step of two pitches between neighbouring groups is a row or column nobody detected.
+	const groupSteps = (groups: number[][], axis: 0 | 1, size: number) => {
+		const means = groups.map((g) => g.reduce((sum, i) => sum + centres[i][axis], 0) / g.length);
+		return means.slice(1).map((m, k) => (m - means[k]) / size);
+	};
+	const stepsR = groupSteps(rowGroups, 1, medH);
+	const stepsC = groupSteps(colGroups, 0, medW);
+	const pitchR = smallestStep(stepsR);
+	const pitchC = smallestStep(stepsC);
+	const rowIdx = stepIndices(stepsR, balancedPitch(pitchR, pitchC));
+	const colIdx = stepIndices(stepsC, balancedPitch(pitchC, pitchR));
 	const row = new Array<number>(centres.length).fill(0);
 	const col = new Array<number>(centres.length).fill(0);
-	rowGroups.forEach((g, ri) => g.forEach((i) => (row[i] = ri)));
-	colGroups.forEach((g, ci) => g.forEach((i) => (col[i] = ci)));
+	rowGroups.forEach((g, ri) => g.forEach((i) => (row[i] = rowIdx[ri])));
+	colGroups.forEach((g, ci) => g.forEach((i) => (col[i] = colIdx[ci])));
 	return { label: 'clusters', comp: centres.map(() => 0), col, row, main: 0 };
 }
 
@@ -299,8 +341,10 @@ function latticeIndices(centres: Point[], bounds: Box[]): Indexing {
 		const seed = plausible.length ? Math.min(...plausible) : median(ratios);
 		return median(ratios.map((r) => r / Math.max(1, Math.round(r / seed))));
 	};
-	const pitchC = pitchOf(rightOf);
-	const pitchR = pitchOf(belowOf);
+	const linkPitchC = pitchOf(rightOf);
+	const linkPitchR = pitchOf(belowOf);
+	const pitchC = balancedPitch(linkPitchC, linkPitchR);
+	const pitchR = balancedPitch(linkPitchR, linkPitchC);
 	const links: Link[] = [];
 	rightOf.forEach((l, i) => {
 		if (l) links.push({ from: i, to: l.j, dc: Math.max(1, Math.round(l.ratio / pitchC)), dr: 0 });
@@ -604,18 +648,43 @@ function overlapArea(a: Box, b: Box): number {
 }
 
 /**
+ * The rows and columns just outside the detected extent that a rejected
+ * candidate sits in. The dimension filter drops what is not one card: two
+ * merged cards, or the outline of a binder pocket, 15-25% larger than the card
+ * in it. Such a candidate is no card, but it shows that the spread goes on
+ * there; texture alone never does (a textured mat passes the contrast check).
+ * On two binder pages of 2026-10-29 the whole top row had only pocket
+ * outlines and was lost.
+ */
+export function outerLinesWithEvidence(h: GridHypothesis, evidence: Array<{ corners: Point[] }>): { rows: Set<number>; cols: Set<number> } {
+	const rows = new Set<number>();
+	const cols = new Set<number>();
+	for (const e of evidence) {
+		const g = invertProject(h.project, quadCentroid(e.corners), [(h.cols - 1) / 2, (h.rows - 1) / 2]);
+		if (!g) continue;
+		const c = Math.round(g[0]);
+		const r = Math.round(g[1]);
+		if (c < -1 || c > h.cols || r < -1 || r > h.rows) continue;
+		if (r === -1 || r === h.rows) rows.add(r);
+		if (c === -1 || c === h.cols) cols.add(c);
+	}
+	return { rows, cols };
+}
+
+/**
  * Unoccupied cells of the lattice, one row/column beyond the detected extent
- * when `extrapolate` is set, as perspective-correct quads (TL, TR, BR, BL in
- * grid orientation). Cells that leave the frame by more than `marginFrac` of
- * their own size or overlap a detected card by more than `maxOverlap` of
- * their area are left out. The caller decides per cell whether there is
- * evidence of a card inside it.
+ * when `extrapolate` is set (or, with `evidence`, only the outer rows and
+ * columns a rejected candidate sits in: `outerLinesWithEvidence()`), as
+ * perspective-correct quads (TL, TR, BR, BL in grid orientation). Cells that
+ * leave the frame by more than `marginFrac` of their own size or overlap a
+ * detected card by more than `maxOverlap` of their area are left out. The
+ * caller decides per cell whether there is evidence of a card inside it.
  */
 export function emptyCells(
 	h: GridHypothesis,
 	cards: Array<{ corners: Point[] }>,
 	frame: { width: number; height: number },
-	opts: { extrapolate?: boolean; marginFrac?: number; maxOverlap?: number } = {}
+	opts: { extrapolate?: boolean; marginFrac?: number; maxOverlap?: number; evidence?: Array<{ corners: Point[] }> } = {}
 ): GridCell[] {
 	// Contrast alone cannot distinguish an outer card from a textured mat.
 	// Fill interior gaps by default; callers testing extrapolation must opt in.
@@ -623,13 +692,13 @@ export function emptyCells(
 	const marginFrac = opts.marginFrac ?? 0.05;
 	const maxOverlap = opts.maxOverlap ?? 0.3;
 	const cardBounds = cards.map((c) => quadBounds(c.corners));
+	const outer = opts.evidence ? outerLinesWithEvidence(h, opts.evidence) : { rows: new Set<number>(), cols: new Set<number>() };
+	const rowAllowed = (r: number) => extrapolate || (r >= 0 && r < h.rows) || outer.rows.has(r);
+	const colAllowed = (c: number) => extrapolate || (c >= 0 && c < h.cols) || outer.cols.has(c);
 	const cells: GridCell[] = [];
-	const r0 = extrapolate ? -1 : 0;
-	const r1 = extrapolate ? h.rows : h.rows - 1;
-	const c0 = extrapolate ? -1 : 0;
-	const c1 = extrapolate ? h.cols : h.cols - 1;
-	for (let r = r0; r <= r1; r++) {
-		for (let c = c0; c <= c1; c++) {
+	for (let r = -1; r <= h.rows; r++) {
+		for (let c = -1; c <= h.cols; c++) {
+			if (!rowAllowed(r) || !colAllowed(c)) continue;
 			if (h.occupied.has(`${r},${c}`)) continue;
 			const corners: Point[] = [
 				h.project(c - h.cellHalf.c, r - h.cellHalf.r),

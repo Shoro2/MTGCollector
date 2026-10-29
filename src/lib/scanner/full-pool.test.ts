@@ -424,12 +424,18 @@ describe('resolveCard — cards printed in another language (phone, 2026-09-18)'
 		expect(d.identity).toMatchObject({ name: 'Kothophed, Soul Hoarder', state: 'confirmed' });
 		expect(d.printing).toMatchObject({ row: kothophed, state: 'confirmed' });
 		expect(d.language).toBe('DE');
-		// the same readings on an English card: the name veto stays
+		// the same readings on an English card: a name text with a real word still vetoes them ...
 		const en = resolveCard(de({
-			nameCandidates: [{ name: 'Sunfire Torch', score: 0.54, pass: 'raw-line gray' }], nameText: 'SNF Ee TC',
+			nameCandidates: [{ name: 'Sunfire Torch', score: 0.54, pass: 'raw-line gray' }], nameText: 'Sunfre Tch',
 			footer: footer.map((r) => ({ ...r, language: 'EN' }))
 		}));
 		expect(en.identity.state).not.toBe('confirmed');
+		// ... the junk read does not (no real word: nameSupported, 2026-10-29)
+		const junk = resolveCard(de({
+			nameCandidates: [{ name: 'Sunfire Torch', score: 0.54, pass: 'raw-line gray' }], nameText: 'SNF Ee TC',
+			footer: footer.map((r) => ({ ...r, language: 'EN' }))
+		}));
+		expect(junk.identity).toMatchObject({ name: 'Kothophed, Soul Hoarder', state: 'confirmed' });
 	});
 
 	it('does not accept an English name the German name bar resembles', () => {
@@ -553,5 +559,108 @@ describe('resolveCard — cards printed in another language (phone, 2026-09-18)'
 		}));
 		expect(d.identity.state).not.toBe('likely');
 		expect(d.reasons.join(' ')).not.toContain('join: name "Endless Atlas"');
+	});
+});
+
+describe('resolveCard — multi-card uploads of so-so internet images (2026-10-29)', () => {
+	const noEscape = row('No Escape', 'war', '63');
+	const toad = row('Twenty-Toed Toad', 'blc', '51');
+	const aerid = row('Aerid Konstrari', 'fra', '121', 'common');
+	const rootOut = row('Root Out', 'mh3', '171');
+	const fireglass = row('Fireglass Mentor', 'blb', '213', 'uncommon');
+	const ball = [row('Ball Lightning', 'p30a', '2', 'rare'), row('Ball Lightning', 'm10', '125', 'rare')];
+	const chain = [row('Chain Lightning', 'leg', '137'), row('Chain Lightning', 'sld', '1250', 'rare')];
+	const bolt = [row('Lightning Bolt', 'clu', '141'), row('Lightning Bolt', 'mm2', '122', 'uncommon')];
+	const lightning = row('Lightning', 'fin', '9', 'rare');
+	const urza = [row('Urza, Planeswalker', 'unf', '83', 'mythic'), row('Urza, Planeswalker', 'sunf', '83', 'mythic')];
+	const nicol = row('Nicol Bolas, Planeswalker', 'ddh', '42', 'mythic');
+	const propaganda = [row('Propaganda', 'tmp', '80', 'uncommon'), row('Propaganda', 'ema', '69', 'uncommon')];
+	const twin = row('Propaganda // Propaganda', 'sld', '1531', 'rare');
+	const elf = row('Elf', 'tlrr', '5');
+	const cards = [noEscape, toad, aerid, rootOut, fireglass, ...ball, ...chain, ...bolt, lightning, ...urza, nicol, ...propaganda, twin, elf];
+	const web = (o: Partial<ResolveInput>) => base({
+		printingsByName: (n) => cards.filter((r) => r.name === n),
+		lookup: (s, n) => cards.filter((r) => r.set_code === s.toLowerCase() && r.collector_number === n.replace(/^0+/, '')),
+		isKnownSet: (s) => ['war', 'blc', 'fra', 'mh3', 'blb', 'p30a', 'm10', 'leg', 'sld', 'clu', 'mm2', 'fin', 'unf', 'sunf', 'ddh', 'tmp', 'ema', 'tlrr'].includes(s.toLowerCase()),
+		...o
+	});
+	const art = (r: ReturnType<typeof row>, distance: number) => ({ row: r, distance });
+	const copyright = reading({ collectorNumber: '3', numberSource: 'weak', text: '9 Ee aC 1992011 Wiaards of' });
+
+	it('does not join a junk read without a real word with a stray digit', () => {
+		// Ajani Vengeant (DDH 2011): "ono ded spe" scored 0.55 against No Escape, and a "3" next to the
+		// copyright line joined it as WAR #63.
+		const d = resolveCard(web({ nameCandidates: [{ name: 'No Escape', score: 0.545, pass: 'rotated raw-line', text: 'ono ded spe' }], nameText: 'ono ded spe', footer: [copyright] }));
+		expect(d.identity.name).not.toBe('No Escape');
+		expect(d.reasons.join(' ')).toContain('stray number only');
+		// the same with the junk read as the candidate's own text while the card's text is another pass's
+		const other = resolveCard(web({ nameCandidates: [{ name: 'Twenty-Toed Toad', score: 0.563, pass: 'rotated', text: 'wen oe oan' }], nameText: 'Swiftfoot Bots', majoritySet: 'blc', footer: [reading({ collectorNumber: '5', numberSource: 'weak', text: 'B BN * N 5 a 1D i i J WE bal' })] }));
+		expect(other.identity.name).not.toBe('Twenty-Toed Toad');
+	});
+
+	it('joins a supported name with a stray digit only inside a set', () => {
+		const footer = [reading({ collectorNumber: '3', numberSource: 'weak', text: 'ee 3 aC' })];
+		const cand = [{ name: 'No Escape', score: 0.5, pass: 'primary', text: 'No Escap' }];
+		expect(resolveCard(web({ nameCandidates: cand, nameText: 'No Escap', footer })).printing.row).toBeNull();
+		const inSet = resolveCard(web({ nameCandidates: cand, nameText: 'No Escap', footer, majoritySet: 'war' }));
+		expect(inSet.identity).toMatchObject({ name: 'No Escape', state: 'likely' });
+		expect(inSet.printing.row).toBe(noEscape);
+	});
+
+	it('still joins a junk read with a structural number', () => {
+		const d = resolveCard(web({ nameCandidates: [{ name: 'No Escape', score: 0.5, pass: 'primary', text: 'ono ded spe' }], nameText: 'ono ded spe', footer: [reading({ setCode: 'war', collectorNumber: '63', numberSource: 'padded', text: 'C 0063 WAR EN' })] }));
+		expect(d.identity.name).toBe('No Escape');
+		expect(d.printing.row).toBe(noEscape);
+	});
+
+	it('lets a strong footer reading stand against a junk read that names another card', () => {
+		// Aerid Konstrari (FRA #121): "er Et ous wt" read Root Out 0.54 and vetoed "D121 CR FRA EN".
+		const footer = [reading({ setCode: 'fra', collectorNumber: '121', numberSource: 'rarity', rarity: 'c', text: 'D121 CR FRA EN Uns Rais' })];
+		const cand = [{ name: 'Root Out', score: 0.539, pass: 'rotated raw-line gray', text: 'er Et ous wt' }];
+		const d = resolveCard(web({ nameCandidates: cand, nameText: 'er Et ous wt', footer }));
+		expect(d.identity).toMatchObject({ name: 'Aerid Konstrari', state: 'confirmed' });
+		expect(d.printing.row).toBe(aerid);
+		// an unsupported 10-bit artwork of another card that the strong reading contradicts is dropped
+		const withArt = resolveCard(web({ nameCandidates: cand, nameText: 'er Et ous wt', footer, artMatches: [art(fireglass, 10)] }));
+		expect(withArt.identity).toMatchObject({ name: 'Aerid Konstrari', state: 'confirmed' });
+		// a read with a real word still vetoes
+		const real = resolveCard(web({ nameCandidates: [{ name: 'Root Out', score: 0.539, pass: 'primary', text: 'Rooted Ot' }], nameText: 'Rooted Ot', footer }));
+		expect(real.reasons.join(' ')).toContain('rejected: name OCR points at "Root Out"');
+	});
+
+	it('lets an artwork and a name text that fits it beat a different name that was not read exactly', () => {
+		// Ball Lightning (P30A #2, 4 bits) read as "ean Lightning": Chain Lightning 0.80, Ball Lightning 0.79.
+		const balls = resolveCard(web({ nameCandidates: [{ name: 'Chain Lightning', score: 0.8, pass: 'rotated binarized', text: 'ean Lightning' }], nameText: 'ean Lightning', artMatches: [art(ball[0], 4)] }));
+		expect(balls.identity).toMatchObject({ name: 'Ball Lightning', state: 'confirmed' });
+		// Lightning Bolt (10 bits): the junk-tolerant prefix read "Lightning" 0.86, Lightning Bolt 0.69.
+		const bolts = resolveCard(web({ nameCandidates: [{ name: 'Lightning', score: 0.862, pass: 'primary', text: 'Lightnin in T ol pr Ca Si' }], nameText: 'Lightnin in T ol pr Ca Si', artMatches: [art(bolt[0], 10), art(bolt[1], 10)] }));
+		expect(bolts.identity).toMatchObject({ name: 'Lightning Bolt', state: 'confirmed' });
+		// an exact read still raises the conflict
+		const exact = resolveCard(web({ nameCandidates: [{ name: 'Chain Lightning', score: 1, pass: 'primary', text: 'Chain Lightning' }], nameText: 'Chain Lightning', artMatches: [art(ball[0], 4)] }));
+		expect(exact.identity.state).toBe('conflict');
+	});
+
+	it('does not confirm an uncertain name against a 12-bit artwork of another card', () => {
+		// Nicol Bolas, Planeswalker (DDH #42, 12 bits) read as "EZ I Plane Swalker g": Urza, Planeswalker 0.70.
+		const d = resolveCard(web({ nameCandidates: [{ name: 'Urza, Planeswalker', score: 0.701, pass: 'primary', text: 'EZ I Plane Swalker g' }], nameText: 'EZ I Plane Swalker g', artMatches: [art(nicol, 12)] }));
+		expect(d.identity).toMatchObject({ name: 'Nicol Bolas, Planeswalker', state: 'likely' });
+		expect(d.printing.candidates.map((r) => r.name)).toEqual(['Nicol Bolas, Planeswalker', 'Urza, Planeswalker', 'Urza, Planeswalker']);
+		// a certain name is not stopped by a 12-bit artwork
+		const certain = resolveCard(web({ nameCandidates: [{ name: 'Urza, Planeswalker', score: 0.9, pass: 'primary', text: 'Urza Planeswalker' }], nameText: 'Urza Planeswalker', artMatches: [art(nicol, 12)] }));
+		expect(certain.identity).toMatchObject({ name: 'Urza, Planeswalker', state: 'confirmed' });
+	});
+
+	it('does not count a twin record of the same card as a runner-up', () => {
+		const d = resolveCard(web({
+			nameCandidates: [{ name: 'Propaganda', score: 0.7, pass: 'paddle', text: 'paganda' }, { name: 'Propaganda // Propaganda', score: 0.7, pass: 'paddle', text: 'paganda' }],
+			nameText: 'paganda'
+		}));
+		expect(d.identity).toMatchObject({ name: 'Propaganda', state: 'confirmed' });
+	});
+
+	it('counts the letters of the text the suggested name was read from', () => {
+		const short = resolveCard(web({ nameCandidates: [{ name: 'Elf', score: 0.67, pass: 'rotated', text: 'El' }], nameText: 'Elaborate Firecannon' }));
+		expect(short.printing.candidates).toEqual([]);
+		expect(short.reasons.join(' ')).toContain('from "El": too few letters');
 	});
 });

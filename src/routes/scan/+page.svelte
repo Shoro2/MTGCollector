@@ -25,7 +25,7 @@
 	import { prefixIdentifies, rankPrefixMatches } from '$lib/scanner/name-prefix';
 	import { isImportable, isSelectedPrinting, scanCounts, scanSummary } from '$lib/scanner/results';
 	import type { QuickRect } from '$lib/scanner/detect';
-	import { emptyCells, filterByDimensions, inferGrid } from '$lib/scanner/grid';
+	import { emptyCells, filterByDimensions, inferGrid, outerLinesWithEvidence } from '$lib/scanner/grid';
 
 	let { data }: { data: PageData } = $props();
 	let loggedIn = $derived(!!data.user);
@@ -162,8 +162,8 @@
 	const NAME_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',-.";
 	const BOTTOM_WHITELIST = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .*#/&';
 
-	/** Record a name-search candidate of a card (every pass, accepted or not) as evidence for the fusion. */
-	function noteNameCandidate(card: { nameCandidates: NameCandidate[] }, best: { name: string; score: number; lang?: string }, pass: string) {
+	/** Record a name-search candidate of a card (every pass, accepted or not) and the text it was scored against as evidence for the fusion. */
+	function noteNameCandidate(card: { nameCandidates: NameCandidate[] }, best: { name: string; score: number; lang?: string }, pass: string, text: string) {
 		if (!best.name || best.score <= 0) return;
 		const existing = card.nameCandidates.find((c) => c.name === best.name);
 		if (existing) {
@@ -171,9 +171,10 @@
 				existing.score = best.score;
 				existing.pass = pass;
 				existing.lang = best.lang;
+				existing.text = text;
 			}
 		} else {
-			card.nameCandidates.push({ name: best.name, score: best.score, pass, lang: best.lang });
+			card.nameCandidates.push({ name: best.name, score: best.score, pass, lang: best.lang, text });
 		}
 	}
 
@@ -563,8 +564,12 @@
 					return inter / union;
 				}
 
-				function addCandidate(approx: any, minAspect = 0.5, maxAspect = 0.9) {
+				function addCandidate(approx: any, minAspect = 0.5, maxAspect = 0.9, maxArea = Infinity) {
 					const rect = cv.boundingRect(approx);
+					// The contour's own area passed the window, but an open contour (an edge line along
+					// the photo's border) encloses almost nothing while its four-point approximation spans
+					// the whole photo; as a container it swallowed every card (binder pages, 2026-10-29).
+					if (cv.contourArea(approx) > maxArea) return;
 					const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
 					// Four points are not yet a card: a phone's manual capture warped bow-ties and
 					// triangles with a fourth point (2026-09-17). Convex, corners of 50-130 degrees,
@@ -610,7 +615,7 @@
 							const approx = new cv.Mat();
 							cv.approxPolyDP(contour, approx, eps * perimeter, true);
 							if (approx.rows === 4) {
-								addCandidate(approx, minAspect, maxAspect);
+								addCandidate(approx, minAspect, maxAspect, maxArea);
 								found = true;
 								approx.delete();
 								break;
@@ -625,7 +630,7 @@
 							if (approx.rows >= 5 && approx.rows <= 8) {
 								const rotRect = cv.minAreaRect(contour);
 								const cornerMat = makeCornerMat(rotRect);
-								addCandidate(cornerMat, minAspect, maxAspect);
+								addCandidate(cornerMat, minAspect, maxAspect, maxArea);
 								cornerMat.delete();
 							}
 							approx.delete();
@@ -844,6 +849,8 @@
 				// touching cards merged into one card-shaped blob; both would OCR
 				// garbage. Drop them; the grid inference below re-creates the cells
 				// from the surviving neighbours.
+				// What the dimension filter drops is no card, but it marks where the spread goes on (grid inference below).
+				let dimDropped: Array<{ corners: Pt[] }> = [];
 				if (scanMode === 'multiple' && cardContours.length >= 4) {
 					const beforeDim = cardContours.length;
 					const { kept, dropped, median: medDims } = filterByDimensions(
@@ -854,6 +861,7 @@
 					// card is typically 20%+ short on one side.
 					log(`Dimension filter: median ${medDims!.short.toFixed(0)}x${medDims!.long.toFixed(0)} (oriented edges, +-15%), ${beforeDim} -> ${cardContours.length}`);
 					for (const d of dropped) log(`  dropped ${d.corners.map(([x, y]) => `(${x},${y})`).join(' ')}`);
+					dimDropped = dropped.map((d) => ({ corners: d.corners }));
 				}
 
 				// === Progressive relaxation if expected card count not met ===
@@ -941,7 +949,9 @@
 					} else {
 						log(`Grid hypothesis: ${grid.rows} rows x ${grid.cols} cols, ${grid.mapping} mapping from ${grid.indexing}, max residual ${(grid.residual * 100).toFixed(0)}% of pitch, ${grid.offGrid} off-grid, card covers ${(grid.cellHalf.c * 2).toFixed(2)} x ${(grid.cellHalf.r * 2).toFixed(2)} of the pitch`);
 						let added = 0;
-						for (const cell of emptyCells(grid, quads, det)) {
+						const outer = outerLinesWithEvidence(grid, dimDropped);
+						if (outer.rows.size || outer.cols.size) log(`Grid: a dropped candidate lies in ${[...[...outer.rows].map((r) => `row ${r}`), ...[...outer.cols].map((c) => `column ${c}`)].join(', ')} outside the detected extent, its cells are tried too`);
+						for (const cell of emptyCells(grid, quads, det, { evidence: dimDropped })) {
 							// Blank paper has almost no contrast, a card has plenty: skip empty cells.
 							const x1 = Math.max(0, Math.round(cell.rect.x));
 							const y1 = Math.max(0, Math.round(cell.rect.y));
@@ -1339,7 +1349,7 @@
 					const best = rankedNames[0] ?? { name: '', score: 0 };
 					log(`Card ${firstIdx + i + 1} ${tag}: best ${card.truncated ? 'prefix ' : ''}match "${best.name}" score=${best.score.toFixed(3)}${card.truncated && rankedNames.length > 1 ? `, next ${rankedNames.slice(1, 3).map((m) => `"${m.name}" ${m.score.toFixed(2)}`).join(', ')}` : ''}`);
 					if (best.score < minScore) return;
-					for (const m of rankedNames) noteNameCandidate(card, m, tag);
+					for (const m of rankedNames) noteNameCandidate(card, m, tag, cleanName);
 					if (!identifiesForCard(card, best, rankedNames, cleanName)) return;
 					card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
 					card.matchType = searchData.matchType;
@@ -1499,7 +1509,7 @@
 					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
 					const rankedNames = rankForCard(card, searchData.results, cleanName);
 					const best = rankedNames[0] ?? { name: '', score: 0 };
-					for (const m of rankedNames) noteNameCandidate(card, m, 'primary');
+					for (const m of rankedNames) noteNameCandidate(card, m, 'primary', cleanName);
 					log(`Card ${cardIdx + 1}: best ${card.truncated ? 'prefix ' : ''}match "${best.name}" score=${best.score.toFixed(3)}${card.truncated && rankedNames.length > 1 ? `, next ${rankedNames.slice(1, 3).map((m) => `"${m.name}" ${m.score.toFixed(2)}`).join(', ')}` : ' (threshold=0.6)'}`);
 					if (identifiesForCard(card, best, rankedNames, cleanName)) {
 						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
@@ -1573,7 +1583,7 @@
 					log(`Card ${cardIdx + 1}: word "${word}" -> ${wData.results.length} results`);
 					const rankedNames = rankNameMatches(wData.results, cleanName);
 					const best = rankedNames[0] ?? { name: '', score: 0 };
-					for (const m of rankedNames) noteNameCandidate(card, m, 'word');
+					for (const m of rankedNames) noteNameCandidate(card, m, 'word', cleanName);
 					log(`Card ${cardIdx + 1}: word best match "${best.name}" score=${best.score.toFixed(3)}`);
 					if (nameIdentifies(best, cleanName)) {
 						card.results = wData.results.filter((r: Record<string, unknown>) => r.name === best.name);
