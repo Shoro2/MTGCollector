@@ -4,6 +4,7 @@ import { sqlite } from './db.js';
 import { setsCache } from './cache.js';
 import { bigramsOf, normalizeName, ownAliases, rankNameMatches, setPrintedAliasSource, similarity } from '../scanner/similarity.js';
 import { PrintedNameIndex } from './printed-name-index.js';
+import { PREFIX_MIN_LETTERS, letterCount, prefixNameScore, prefixScoreNorm, startShares } from '../scanner/name-prefix.js';
 import { allPrintedNames } from './printed-names.js';
 
 const selectFields = `id, name, set_name, set_code, collector_number, image_uri, local_image_path, price_eur, price_eur_foil, price_usd, price_usd_foil, rarity, art_hash`;
@@ -18,6 +19,12 @@ const FUZZY_ROWS = 200;
 const FUZZY_NAMES = 20;
 /** Printings per returned name in a fuzzy result (the fusion fetches the complete list separately). */
 const ROWS_PER_NAME = 10;
+/**
+ * Distinct names a prefix search returns, best first. The scan page needs
+ * every name that starts like a truncated name bar to judge whether the start
+ * is unique (prefixIdentifies), and a short start is shared by dozens.
+ */
+const PREFIX_NAMES = 40;
 
 export type CardRow = Record<string, unknown>;
 export type SearchResult = { results: CardRow[]; matchType: 'exact' | 'like' | 'fts' | 'fuzzy' | 'none' };
@@ -31,6 +38,7 @@ let _core: Statement | undefined;
 let _fts: Statement | undefined;
 let _setNum: Statement | undefined;
 let _printings: Statement | undefined;
+let _setRows: Statement | undefined;
 
 // Exact name: the canonical name, a "Front // Back" record whose front face
 // is the query, or any record with a face of that name (card_faces) — the
@@ -41,6 +49,7 @@ const exactStmt = () => (_exact ??= sqlite.prepare(`SELECT ${selectFields} FROM 
 	ORDER BY released_at DESC LIMIT 10`));
 const coreStmt = () => (_core ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${SCANNER_FILTER} ORDER BY released_at DESC LIMIT ${FUZZY_ROWS}`));
 const printingsStmt = () => (_printings ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name = ? AND ${SCANNER_FILTER} ORDER BY released_at DESC LIMIT 200`));
+const setRowsStmt = () => (_setRows ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE set_code = ? AND ${SCANNER_FILTER} ORDER BY collector_number`));
 const likeStmt = () => (_like ??= sqlite.prepare(`SELECT ${selectFields} FROM cards WHERE name LIKE ? AND ${SCANNER_FILTER} ORDER BY released_at DESC LIMIT 20`));
 // cards_fts is an external-content FTS5 index (content='cards',
 // content_rowid='rowid'): it stores only name/type_line/oracle_text and reuses
@@ -259,6 +268,62 @@ export function fuzzyNames(query: string, limit = 5): Array<{ name: string; scor
 		if (score >= 0.5 && score > (best.get(e.name) ?? 0)) best.set(e.name, score);
 	}
 	return [...best.entries()].map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+/**
+ * Canonical names whose start (or a face's start) matches a name bar cut off
+ * on the right — the "rows" scan mode, where the next card covers the rest of
+ * the name (name-prefix.ts) — prefix score `min` or better, best first, at
+ * most `limit`; with the printed names of non-English printings. The full scan
+ * over every name with a bigram prefilter on the names' starts takes a few
+ * tens of milliseconds. Texts with fewer than three letters match nothing.
+ */
+export function prefixNames(query: string, limit = PREFIX_NAMES, min = 0.6): Array<{ name: string; score: number }> {
+	const norm = normalizeName(query);
+	if (letterCount(norm) < PREFIX_MIN_LETTERS) return [];
+	const qb = [...bigramsOf(norm)];
+	const best = new Map<string, number>();
+	for (const e of nameEntries()) {
+		if (!startShares(qb, e.norm, norm.length)) continue;
+		const score = prefixScoreNorm(norm, e.norm);
+		if (score >= min && score > (best.get(e.name) ?? 0)) best.set(e.name, score);
+	}
+	const printedIndex = refreshPrintedNames();
+	if (printedIndex.size > 0) {
+		for (const h of printedIndex.prefixMatch(query, limit, min)) if (h.score > (best.get(h.name) ?? 0)) best.set(h.name, h.score);
+	}
+	return [...best.entries()].map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score || a.name.length - b.name.length).slice(0, limit);
+}
+
+/**
+ * The prefix search as the scan page consumes it: one row (the newest
+ * printing) per name of prefixNames(), so the page can score the names and
+ * fetch the printings of the few it keeps.
+ */
+export function searchByPrefix(query: string): SearchResult {
+	const names = prefixNames(query);
+	if (names.length === 0) return { results: [], matchType: 'none' };
+	return { results: names.flatMap((n) => printingsByName(n.name).slice(0, 1)), matchType: 'fuzzy' };
+}
+
+/**
+ * Every printing of one set whose name (a face, or a printed name of another
+ * language) starts like a truncated name bar, prefix score `min` or better,
+ * best first: the "rows" scan mode's answer for a collector line that shows
+ * the set code but no number. The scan covers the whole set, so a start that
+ * one name of the set alone matches is unique there — the client's candidate
+ * lists hold the best names of the whole catalogue and cannot tell.
+ */
+export function prefixInSet(text: string, setCode: string, min = 0.6): CardRow[] {
+	const lc = setCode.trim().toLowerCase();
+	if (!lc || letterCount(normalizeName(text)) < PREFIX_MIN_LETTERS) return [];
+	refreshPrintedNames();
+	const byName = new Map<string, number>();
+	const scoreOf = (name: string) => byName.get(name) ?? byName.set(name, prefixNameScore(text, name)).get(name)!;
+	const scored = (setRowsStmt().all(lc) as CardRow[])
+		.map((row) => ({ row, score: scoreOf(String(row.name)) }))
+		.filter((x) => x.score >= min);
+	return withPrinted(scored.sort((a, b) => b.score - a.score).map((x) => x.row));
 }
 
 /** Rows for a list of Scryfall ids (art-hash hits), keyed by id. */

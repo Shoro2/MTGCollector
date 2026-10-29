@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { searchByName, searchBySetNumber, printingsByName, isKnownSet, nearBySetNumber, cardsById, withPrinted } from '$lib/server/card-search';
+import { searchByName, searchByPrefix, searchBySetNumber, printingsByName, prefixInSet, isKnownSet, nearBySetNumber, cardsById, withPrinted } from '$lib/server/card-search';
 import { searchArt, type ArtSearchHit } from '$lib/server/art-index';
 import type { CardRow } from '$lib/server/card-search';
 import { ART_LIKELY } from '$lib/scanner/resolve';
@@ -32,6 +32,31 @@ export async function POST({ request }) {
 			const r = searchByName(q, body.exactOnly === true);
 			return { query: q, ...r, results: withPrinted(r.results) };
 		});
+		return json({ batch });
+	}
+
+	// Batch prefix form: { prefixes: string[] } -> { batch: SearchResult[] }, one
+	// row per name whose start matches the text: name bars cut off by the next
+	// card in the "rows" scan mode (name-prefix.ts).
+	if (Array.isArray(body.prefixes)) {
+		const prefixes = (body.prefixes as unknown[])
+			.filter((q): q is string => typeof q === 'string')
+			.slice(0, 50);
+		const batch = prefixes.map((q) => {
+			const r = searchByPrefix(q);
+			return { query: q, ...r, results: withPrinted(r.results) };
+		});
+		return json({ batch });
+	}
+
+	// Batch prefix-in-set form: { prefixSets: [{ text, setCode }, ...] } -> every
+	// printing of the set whose name starts like the text: a truncated name bar
+	// whose collector line shows the set code but no number.
+	if (Array.isArray(body.prefixSets)) {
+		const items = (body.prefixSets as unknown[])
+			.filter((x): x is { text: string; setCode: string } => !!x && typeof (x as { text?: unknown }).text === 'string' && typeof (x as { setCode?: unknown }).setCode === 'string')
+			.slice(0, 50);
+		const batch = items.map((it) => ({ text: it.text, setCode: it.setCode, setKnown: isKnownSet(it.setCode), results: isKnownSet(it.setCode) ? prefixInSet(it.text, it.setCode) : [] }));
 		return json({ batch });
 	}
 

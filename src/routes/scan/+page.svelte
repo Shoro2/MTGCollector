@@ -19,7 +19,10 @@
 	import { isPlausibleCardQuad, luminanceSpread, sampleQuadLuminance, type Pt } from '$lib/scanner/quad';
 	import { COARSE_LONG_EDGE, COARSE_PASS, findCardQuads, isInnerBoxOf } from '$lib/scanner/quick-rects';
 	import { detectFoilFromSeparator } from '$lib/scanner/foil';
-	import { cropWindowsFromProfiles } from '$lib/scanner/crops';
+	import { cropWindowsFromProfiles, stripCropWindows } from '$lib/scanner/crops';
+	import { extractSegments } from '$lib/scanner/overlap-cv';
+	import { detectOverlapRows, type StripEdge } from '$lib/scanner/overlap';
+	import { prefixIdentifies, rankPrefixMatches } from '$lib/scanner/name-prefix';
 	import { isImportable, isSelectedPrinting, scanCounts, scanSummary } from '$lib/scanner/results';
 	import type { QuickRect } from '$lib/scanner/detect';
 	import { emptyCells, filterByDimensions, inferGrid } from '$lib/scanner/grid';
@@ -79,6 +82,18 @@
 		/** Up to three candidates attached to a not_found card (structural number without name evidence, one digit off) for one-tap acceptance. */
 		suggestions: PrintingRow[];
 		reasons: string[];
+		/**
+		 * Rows mode (overlapping cards): the next card covers the right part of
+		 * this one, so its name bar shows only the start of the name; the name
+		 * passes search by prefix and the fusion scores prefixes (name-prefix.ts).
+		 */
+		truncated?: boolean;
+		/** Rows mode: visible fraction of the card's width, its row and its position in the row. */
+		visible?: number;
+		row?: number;
+		rowIndex?: number;
+		/** Where the card lies on the photo (full-resolution pixels): the card's corners, or the visible strip of an overlapped card. */
+		outline?: Array<[number, number]>;
 		/** Art hash of the warped card (Phase 3), upright and for the 180°-rotated warp; the server's nearest printings once fetched. */
 		artHash?: string;
 		artHashAlt?: string;
@@ -109,9 +124,14 @@
 	let selectedCards = $state<Set<number>>(new Set());
 	let importing = $state(false);
 	// Mode selector. 'single' assumes one card in the photo; 'multiple' lets
-	// the detector return as many cards as it can find; 'live' streams the
-	// device camera and auto-captures when the scene stabilizes (multi-card).
-	let scanMode = $state<'single' | 'multiple' | 'live'>('single');
+	// the detector return as many cards as it can find; 'rows' reads rows of
+	// overlapping cards (each card shifted right on top of the previous one,
+	// src/lib/scanner/overlap.ts); 'live' streams the device camera and
+	// auto-captures when the scene stabilizes (multi-card).
+	type ScanMode = 'single' | 'multiple' | 'rows' | 'live';
+	let scanMode = $state<ScanMode>('single');
+	/** Size of the photo the outlines in `detectedCards` refer to (the result overlay). */
+	let photoSize = $state<{ width: number; height: number } | null>(null);
 	const expectedCardCount = $derived<number | null>(scanMode === 'single' ? 1 : null);
 
 	// Long edge of the image the detection strategies run on. Card edges don't
@@ -196,16 +216,56 @@
 		return top && top[1] >= 3 && top[1] >= total * 0.6 ? top[0] : null;
 	}
 
-	/** Base-size PNG data URL of a warped card canvas for the result list and debug views. */
-	function cardThumbnailUrl(canvas: HTMLCanvasElement): string {
-		if (canvas.width === WARP_BASE_W && canvas.height === WARP_BASE_H) return canvas.toDataURL();
+	/**
+	 * Base-size PNG data URL of a warped card canvas for the result list and
+	 * debug views. `visibleFrac` (rows mode) dims the part of the warp right of
+	 * the visible strip, where the next card of the row lies.
+	 */
+	function cardThumbnailUrl(canvas: HTMLCanvasElement, visibleFrac?: number): string {
+		if (canvas.width === WARP_BASE_W && canvas.height === WARP_BASE_H && visibleFrac === undefined) return canvas.toDataURL();
 		const thumb = document.createElement('canvas');
 		thumb.width = WARP_BASE_W;
 		thumb.height = WARP_BASE_H;
 		const ctx = thumb.getContext('2d');
 		if (!ctx) return canvas.toDataURL();
 		ctx.drawImage(canvas, 0, 0, WARP_BASE_W, WARP_BASE_H);
+		if (visibleFrac !== undefined && visibleFrac < 1) {
+			const x = Math.round(WARP_BASE_W * Math.max(0, visibleFrac));
+			ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+			ctx.fillRect(x, 0, WARP_BASE_W - x, WARP_BASE_H);
+		}
 		return thumb.toDataURL();
+	}
+
+	/**
+	 * Batched name search, one round trip per kind and 50 texts: whole names
+	 * through `queries`, the starts of truncated name bars (rows mode) through
+	 * `prefixes`. Returns the server's entries aligned with `items`.
+	 */
+	type NameSearchEntry = { query: string; results: Record<string, unknown>[]; matchType: string };
+	async function searchNames(items: Array<{ text: string; truncated: boolean }>, exactOnly = false): Promise<Array<NameSearchEntry | undefined>> {
+		const out = new Array<NameSearchEntry | undefined>(items.length);
+		for (const kind of ['queries', 'prefixes'] as const) {
+			const idx = items.flatMap((it, k) => ((kind === 'prefixes') === it.truncated ? [k] : []));
+			for (let start = 0; start < idx.length; start += 50) {
+				const chunk = idx.slice(start, start + 50);
+				const body = kind === 'queries' ? { queries: chunk.map((k) => items[k].text), exactOnly } : { prefixes: chunk.map((k) => items[k].text) };
+				const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+				const data = learnPrinted(await res.json());
+				const batch = Array.isArray(data?.batch) ? data.batch : [];
+				chunk.forEach((k, j) => (out[k] = batch[j]));
+			}
+		}
+		return out;
+	}
+
+	/** The names a search result offers for a card's OCR text, best first: whole-name similarity, or prefix scores for a truncated name bar. */
+	function rankForCard(card: { truncated?: boolean }, results: Array<Record<string, unknown>>, text: string) {
+		return card.truncated ? rankPrefixMatches(results, text, 5) : rankNameMatches(results, text);
+	}
+	/** Whether the best name of a pass identifies the card on its own (nameIdentifies, or prefixIdentifies for a truncated name bar). */
+	function identifiesForCard(card: { truncated?: boolean }, best: { name: string; score: number }, ranked: Array<{ name: string; score: number }>, text: string): boolean {
+		return card.truncated ? prefixIdentifies(best, ranked, text) : nameIdentifies(best, text);
 	}
 
 	// Manual search fallback per card
@@ -226,7 +286,7 @@
 	onMount(() => {
 		try {
 			const storedMode = localStorage.getItem('mtg-scan-mode');
-			if (storedMode === 'single' || storedMode === 'multiple' || storedMode === 'live') {
+			if (storedMode === 'single' || storedMode === 'multiple' || storedMode === 'rows' || storedMode === 'live') {
 				scanMode = storedMode;
 			}
 		} catch { /* localStorage unavailable */ }
@@ -320,6 +380,7 @@
 			const file = input.files[0];
 			if (imagePreview) URL.revokeObjectURL(imagePreview);
 			imagePreview = URL.createObjectURL(file);
+			photoSize = null;
 			detectedCards = [];
 			debugCanvasUrl = '';
 			debugLog = [];
@@ -421,7 +482,9 @@
 
 			cv.cvtColor(detSrc, gray, cv.COLOR_RGBA2GRAY);
 
-			type CardCandidate = { corners: any; area: number; rect: { x: number; y: number; width: number; height: number }; synthetic?: boolean };
+			/** `strip`: a card of an overlapping row (rows mode) — its visible part, in the same coordinates as `corners`. */
+			type StripInfo = { points: Array<[number, number]>; visible: number; full: boolean; row: number; index: number; edge: StripEdge };
+			type CardCandidate = { corners: any; area: number; rect: { x: number; y: number; width: number; height: number }; synthetic?: boolean; strip?: StripInfo };
 			let allCandidates: CardCandidate[] = [];
 			const detArea = det.width * det.height;
 
@@ -439,6 +502,52 @@
 						pts.data32S[k * 2 + 1] = Math.round(r.corners[k][1]);
 					}
 					cardContours.push({ corners: pts, area: r.area, rect: { ...r.rect } });
+				}
+			} else if (scanMode === 'rows') {
+				// Rows of overlapping cards: no card but the last of a row is a
+				// rectangle any more, so the strategies below would find nothing (or
+				// the whole row). The left edges of the cards form a comb of long
+				// parallel lines; overlap.ts turns its teeth into cards with their full
+				// quadrilateral and the visible strip, top and bottom decided from the
+				// side the black borders run on.
+				const t0 = performance.now();
+				// The comb's teeth are a few pixels apart on a downscaled photo: the
+				// canvas copy (bilinear in Chromium) aliases them away, area resampling
+				// of the full-resolution gray keeps them (the last card of a light
+				// scene was lost in the browser and found in the Node experiment).
+				let rowsGray = gray;
+				if (detScale < 1) {
+					const full = new cv.Mat();
+					rowsGray = new cv.Mat();
+					cv.cvtColor(src, full, cv.COLOR_RGBA2GRAY);
+					cv.resize(full, rowsGray, new cv.Size(det.width, det.height), 0, 0, cv.INTER_AREA);
+					full.delete();
+				}
+				const segments = extractSegments(cv, rowsGray);
+				const layout = detectOverlapRows(segments, det.width, det.height, { data: new Uint8Array(rowsGray.data), width: det.width, height: det.height });
+				if (rowsGray !== gray) rowsGray.delete();
+				log(`Rows: ${segments.length} line segments, row model ${(performance.now() - t0).toFixed(0)} ms`);
+				for (const line of layout?.log ?? []) log(`Rows: ${line}`);
+				if (layout) {
+					log(`Rows: ${layout.rows} row(s), ${layout.cards.length} card(s), card height ${layout.cardHeight.toFixed(0)} px, rotation ${layout.rotation.toFixed(1)}°`);
+					for (const c of layout.cards) {
+						const corners = new cv.Mat(4, 1, cv.CV_32SC2);
+						c.corners.forEach(([x, y], k) => {
+							corners.data32S[k * 2] = Math.round(x);
+							corners.data32S[k * 2 + 1] = Math.round(y);
+						});
+						const xs = c.strip.map((p) => p[0]), ys = c.strip.map((p) => p[1]);
+						const rect = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+						cardContours.push({
+							corners,
+							area: rect.width * rect.height,
+							rect,
+							strip: { points: c.strip.map(([x, y]) => [x, y] as [number, number]), visible: c.visible, full: c.full, row: c.row, index: c.index, edge: c.edge }
+						});
+						log(`Rows: card ${cardContours.length}: row ${c.row + 1} #${c.index + 1}, ${(c.visible * 100).toFixed(0)}% visible${c.full ? ' (whole card)' : ''}${c.edge === 'detected' ? '' : `, left edge ${c.edge}`}`);
+					}
+				} else {
+					log('Rows: no row of overlapping cards found');
 				}
 			} else {
 				/** Corner array of a 4x1 CV_32SC2 Mat, for the pure spread-geometry helpers. */
@@ -882,14 +991,20 @@
 			for (let i = 0; i < cardContours.length; i++) {
 				const pts = cardContours[i].corners;
 				const px = (k: number) => Math.round(pts.data32S[k] * drawScale);
+				const strip = cardContours[i].strip;
 				for (let j = 0; j < 4; j++) {
 					const p1 = new cv.Point(px(j * 2), px(j * 2 + 1));
 					const p2 = new cv.Point(px(((j + 1) % 4) * 2), px(((j + 1) % 4) * 2 + 1));
-					cv.line(debugMat, p1, p2, new cv.Scalar(0, 255, 0, 255), 3);
+					// Rows mode: the full card thin, its visible strip bold in amber.
+					cv.line(debugMat, p1, p2, new cv.Scalar(0, 255, 0, 255), strip ? 1 : 3);
+					if (strip) {
+						const a = strip.points[j], b = strip.points[(j + 1) % 4];
+						cv.line(debugMat, new cv.Point(Math.round(a[0] * drawScale), Math.round(a[1] * drawScale)), new cv.Point(Math.round(b[0] * drawScale), Math.round(b[1] * drawScale)), new cv.Scalar(255, 190, 0, 255), 3);
+					}
 				}
 				// Label
 				const labelPt = new cv.Point(px(0), px(1) - 10);
-				cv.putText(debugMat, `Card ${i + 1}`, labelPt, cv.FONT_HERSHEY_SIMPLEX, 1.5, new cv.Scalar(0, 255, 0, 255), 3);
+				cv.putText(debugMat, `${strip ? '' : 'Card '}${i + 1}`, labelPt, cv.FONT_HERSHEY_SIMPLEX, strip ? 0.9 : 1.5, new cv.Scalar(0, 255, 0, 255), strip ? 2 : 3);
 			}
 
 			const debugCanvas = document.createElement('canvas');
@@ -938,13 +1053,15 @@
 					for (let k = 0; k < 8; k++) c.corners.data32S[k] = Math.round(c.corners.data32S[k] * inv);
 					c.rect = { x: c.rect.x * inv, y: c.rect.y * inv, width: c.rect.width * inv, height: c.rect.height * inv };
 					c.area *= inv * inv;
+					if (c.strip) c.strip.points = c.strip.points.map(([x, y]) => [x * inv, y * inv] as [number, number]);
 				}
 			}
 
 			log(`Detection complete: ${cardContours.length} card(s) found`);
 			// Uploads only: the live preview already refuses a card at the frame edge.
 			if (presetRects.length === 0) {
-				const cut = cardContours.filter((c) => !c.synthetic && cardCutOffByFrame([0, 1, 2, 3].map((k) => [c.corners.data32S[k * 2], c.corners.data32S[k * 2 + 1]] as [number, number]), img.width, img.height)).length;
+				// An overlapped card's covered part lies under its neighbour, not outside the photo: check the visible strip.
+				const cut = cardContours.filter((c) => !c.synthetic && cardCutOffByFrame(c.strip?.points ?? [0, 1, 2, 3].map((k) => [c.corners.data32S[k * 2], c.corners.data32S[k * 2 + 1]] as [number, number]), img.width, img.height)).length;
 				if (cut > 0) {
 					log(`${cut} card(s) reach the edge of the photo: probably cut off`);
 					edgeWarning = cut === 1 && cardContours.length === 1
@@ -957,10 +1074,13 @@
 			// Name band + collector strip crops from a warped card Mat, upscaled
 			// and sharpened for Tesseract. Shared by the card loop and the
 			// upside-down retry in Phase 2b, so both read exactly the same windows.
+			// `visibleX` (rows mode): the x in the warp where the next card of the
+			// row covers this one; the profiles and both windows stay left of it.
 			function extractOcrCrops(
 				warpedMat: any,
 				synthetic: boolean,
-				label: string
+				label: string,
+				visibleX: number | null = null
 			): { nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomUrlR: string; bottomCanvas: HTMLCanvasElement } {
 				const cardW = warpedMat.cols as number;
 				const cardH = warpedMat.rows as number;
@@ -988,14 +1108,24 @@
 					roi.delete(); out.delete();
 					return arr;
 				};
-				const win = cropWindowsFromProfiles(
-					rowMeans(Math.floor(cardW * 0.15), Math.floor(cardW * 0.85)),
-					rowMeans(Math.floor(cardW * 0.04), Math.floor(cardW * 0.46)),
-					colMeans(Math.floor(cardH * 0.2), Math.floor(cardH * 0.8)),
-					cardW,
-					cardH,
-					synthetic
-				);
+				const visibleEnd = visibleX === null ? 0 : Math.max(Math.floor(cardW * 0.04) + 2, Math.min(Math.floor(cardW * 0.46), Math.floor(visibleX - cardW * 0.015)));
+				const win = visibleX === null
+					? cropWindowsFromProfiles(
+						rowMeans(Math.floor(cardW * 0.15), Math.floor(cardW * 0.85)),
+						rowMeans(Math.floor(cardW * 0.04), Math.floor(cardW * 0.46)),
+						colMeans(Math.floor(cardH * 0.2), Math.floor(cardH * 0.8)),
+						cardW,
+						cardH,
+						synthetic
+					)
+					: stripCropWindows(
+						rowMeans(Math.floor(cardW * 0.04), Math.min(cardW, visibleEnd)),
+						colMeans(Math.floor(cardH * 0.2), Math.floor(cardH * 0.8)),
+						cardW,
+						cardH,
+						visibleX,
+						synthetic
+					);
 				grayCard.delete();
 				const { nameX, nameY, nameW, nameH } = win;
 				log(`${label}: crop windows (${win.source}, edges top=${win.edges.top} bottom=${win.edges.bottom} left=${win.edges.left}) name x=${nameX} y=${nameY} w=${nameW} h=${nameH}`);
@@ -1068,12 +1198,15 @@
 				// orderCornersForCard returns [TL, TR, BR, BL] such that TL→TR is
 				// always the short edge of the card — this handles arbitrary rotation
 				// without a separate landscape→portrait flip step.
-				let ordered = orderCorners(points);
+				// Rows mode: overlap.ts knows the card's top from the comb, so its corner
+				// order is kept instead of guessing between the card and its 180° turn.
+				const stripInfo = cardContours[i].strip;
+				let ordered = stripInfo ? points : orderCorners(points);
 				const edgeTop = Math.hypot(ordered[1][0] - ordered[0][0], ordered[1][1] - ordered[0][1]);
 				const edgeLeft = Math.hypot(ordered[3][0] - ordered[0][0], ordered[3][1] - ordered[0][1]);
 				log(`Card ${i + 1}: corners TL(${ordered[0]}) TR(${ordered[1]}) BR(${ordered[2]}) BL(${ordered[3]}) shortEdge=${edgeTop.toFixed(0)} longEdge=${edgeLeft.toFixed(0)}`);
 
-				ordered = expandedCardCorners(points, !cardContours[i].synthetic);
+				ordered = expandedCardCorners(points, !cardContours[i].synthetic, !!stripInfo);
 
 				// Perspective transform to flatten the card, at the quad's native
 				// resolution up to WARP_MAX_SCALE x the base size (see WARP_BASE_W).
@@ -1091,13 +1224,24 @@
 
 				// Full-resolution warp for the OCR crops and the upside-down retry;
 				// the result list shows a base-size thumbnail.
+				// Rows mode: where the next card covers this one, in warp pixels (the
+				// visible strip's right edge mapped through the warp; the nearer end).
+				const truncated = !!stripInfo && !stripInfo.full;
+				let visibleX: number | null = null;
+				if (truncated && stripInfo) {
+					const m = M.data64F as Float64Array;
+					const warpX = ([x, y]: [number, number]) => (m[0] * x + m[1] * y + m[2]) / (m[6] * x + m[7] * y + m[8]);
+					visibleX = Math.max(1, Math.min(cardW, warpX(stripInfo.points[1]), warpX(stripInfo.points[2])));
+					log(`Card ${i + 1}: overlapped, visible up to x=${visibleX.toFixed(0)} of ${cardW} in the warp`);
+				}
 				const cardCanvas = document.createElement('canvas');
 				cv.imshow(cardCanvas, warped);
-				const croppedUrl = cardThumbnailUrl(cardCanvas);
+				const croppedUrl = cardThumbnailUrl(cardCanvas, visibleX === null ? undefined : visibleX / cardW);
 				cardCanvases.push(cardCanvas);
-				const artHashes = artHashesOfWarp(cardCanvas);
+				// The artwork of an overlapped card is covered: no art hash (the visual channel stays silent).
+				const artHashes = truncated ? { hash: '', alt: '' } : artHashesOfWarp(cardCanvas);
 
-				const { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl, bottomUrl2, bottomUrlR, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`);
+				const { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl, bottomUrl2, bottomUrlR, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`, visibleX);
 				bottomCanvases.push(bottomCanvas);
 
 				cards.push({
@@ -1129,7 +1273,12 @@
 					suggestions: [],
 					reasons: [],
 					artHash: artHashes.hash,
-					artHashAlt: artHashes.alt
+					artHashAlt: artHashes.alt,
+					truncated,
+					visible: stripInfo?.visible,
+					row: stripInfo?.row,
+					rowIndex: stripInfo?.index,
+					outline: stripInfo ? stripInfo.points.map(([x, y]) => [Math.round(x), Math.round(y)] as [number, number]) : points
 				});
 
 				// Cleanup card-specific mats
@@ -1144,6 +1293,7 @@
 			if (superseded()) return;
 			const firstIdx = detectedCards.length;
 			detectedCards = [...detectedCards, ...cards];
+			if (!(source instanceof HTMLCanvasElement)) photoSize = { width: img.width, height: img.height };
 			const newCount = cards.length;
 
 			// Cleanup OpenCV mats
@@ -1182,15 +1332,9 @@
 			async function acceptNameMatches(items: Array<{ i: number; cleanName: string }>, tag: string, minScore = 0): Promise<number[]> {
 				const accepted: number[] = [];
 				if (items.length === 0 || superseded()) return accepted;
-				let batch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+				let batch: Array<NameSearchEntry | undefined> = [];
 				try {
-					const res = await fetch('/scan', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ queries: items.map((q) => q.cleanName) })
-					});
-					const data = learnPrinted(await res.json());
-					batch = Array.isArray(data?.batch) ? data.batch : [];
+					batch = await searchNames(items.map(({ i, cleanName }) => ({ text: cleanName, truncated: !!detectedCards[firstIdx + i].truncated })));
 				} catch (err) {
 					log(`${tag}: batch search error: ${err}`);
 					return accepted;
@@ -1199,12 +1343,12 @@
 					const card = detectedCards[firstIdx + i];
 					const searchData = batch[qi];
 					if (!searchData || searchData.results.length === 0) return;
-					const rankedNames = rankNameMatches(searchData.results, cleanName);
+					const rankedNames = rankForCard(card, searchData.results, cleanName);
 					const best = rankedNames[0] ?? { name: '', score: 0 };
-					log(`Card ${firstIdx + i + 1} ${tag}: best match "${best.name}" score=${best.score.toFixed(3)}`);
+					log(`Card ${firstIdx + i + 1} ${tag}: best ${card.truncated ? 'prefix ' : ''}match "${best.name}" score=${best.score.toFixed(3)}${card.truncated && rankedNames.length > 1 ? `, next ${rankedNames.slice(1, 3).map((m) => `"${m.name}" ${m.score.toFixed(2)}`).join(', ')}` : ''}`);
 					if (best.score < minScore) return;
 					for (const m of rankedNames) noteNameCandidate(card, m, tag);
-					if (!nameIdentifies(best, cleanName)) return;
+					if (!identifiesForCard(card, best, rankedNames, cleanName)) return;
 					card.results = searchData.results.filter((x: Record<string, unknown>) => x.name === best.name);
 					card.matchType = searchData.matchType;
 					card.nameText = cleanName;
@@ -1345,16 +1489,11 @@
 			}
 
 			scanProgress = `Searching ${namesToSearch.length} name(s)...`;
-			let primaryBatch: Array<{ query: string; results: Record<string, unknown>[]; matchType: string }> = [];
+			// Whole names exactly first; the starts of truncated name bars (rows mode) by prefix right away.
+			let primaryBatch: Array<NameSearchEntry | undefined> = [];
 			if (namesToSearch.length > 0) {
 				try {
-					const res = await fetch('/scan', {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ queries: namesToSearch.map((n) => n.cleanName), exactOnly: true })
-					});
-					const data = learnPrinted(await res.json());
-					primaryBatch = Array.isArray(data?.batch) ? data.batch : [];
+					primaryBatch = await searchNames(namesToSearch.map((n) => ({ text: n.cleanName, truncated: !!detectedCards[n.cardIdx].truncated })), true);
 				} catch (err) {
 					log(`Batch name search error: ${err}`);
 				}
@@ -1369,11 +1508,11 @@
 				log(`Card ${cardIdx + 1}: searching "${cleanName}"`);
 				if (searchData && searchData.results.length > 0) {
 					log(`Card ${cardIdx + 1}: ${searchData.results.length} results (matchType=${searchData.matchType})`);
-					const rankedNames = rankNameMatches(searchData.results, cleanName);
+					const rankedNames = rankForCard(card, searchData.results, cleanName);
 					const best = rankedNames[0] ?? { name: '', score: 0 };
 					for (const m of rankedNames) noteNameCandidate(card, m, 'primary');
-					log(`Card ${cardIdx + 1}: best match "${best.name}" score=${best.score.toFixed(3)} (threshold=0.6)`);
-					if (nameIdentifies(best, cleanName)) {
+					log(`Card ${cardIdx + 1}: best ${card.truncated ? 'prefix ' : ''}match "${best.name}" score=${best.score.toFixed(3)}${card.truncated && rankedNames.length > 1 ? `, next ${rankedNames.slice(1, 3).map((m) => `"${m.name}" ${m.score.toFixed(2)}`).join(', ')}` : ' (threshold=0.6)'}`);
+					if (identifiesForCard(card, best, rankedNames, cleanName)) {
 						card.results = searchData.results.filter((r: Record<string, unknown>) => r.name === best.name);
 						card.matchType = searchData.matchType;
 						log(`Card ${cardIdx + 1}: accepted "${best.name}" -> ${card.results.length} reprints`);
@@ -1382,7 +1521,9 @@
 					log(`Card ${cardIdx + 1}: score below threshold, rejected`);
 				}
 
-				// Queue word fallback — longest 2 words sorted by length.
+				// Queue word fallback — longest 2 words sorted by length. A truncated name bar
+				// was searched by its start already; its last word is cut and its words alone say less.
+				if (card.truncated) continue;
 				const words = cleanName.split(/\s+/).filter((w) => w.length >= 3);
 				words.sort((a, b) => b.length - a.length);
 				for (const word of words.slice(0, 2)) {
@@ -1390,7 +1531,8 @@
 				}
 			}
 
-			for (const i of unresolved()) {
+			// Rows mode decides every card's top from the row it lies in: no rotated retry.
+			for (const i of scanMode === 'rows' ? [] : unresolved()) {
 				if (superseded()) break;
 				const original = cardCanvases[i];
 				const rot = document.createElement('canvas');
@@ -1496,7 +1638,8 @@
 			const extra: StripVariant[] = [];
 			for (let i = 0; i < newCount; i++) {
 				const c = newCards[i];
-				if (c.results.length === 1) continue;
+				// A truncated name's search keeps one row per name: its printing is never settled by it.
+				if (c.results.length === 1 && !c.truncated) continue;
 				if (c.bottomUrl2) extra.push({ i, url: c.bottomUrl2, rotated: false, label: 'small' });
 				if (c.altBottomUrl) extra.push({ i, url: c.altBottomUrl, rotated: true, label: 'rotated' });
 				if (c.altBottomUrl2) extra.push({ i, url: c.altBottomUrl2, rotated: true, label: 'rotated small' });
@@ -1534,9 +1677,11 @@
 			// not settled: read the right half of the strip (and of the rotated strip) for a
 			// 1998–2014 frame's "146/249". Only a fraction counts there; the reading carries no set
 			// code, rarity or language, because those frames print none (parseLegacyCollectorLine).
+			// An overlapped card (rows mode) is skipped: its right half lies under the next card.
 			const legacy: Array<{ i: number; url: string; label: string }> = [];
 			for (let i = 0; i < newCount; i++) {
 				const c = detectedCards[firstIdx + i];
+				if (c.truncated) continue;
 				if (c.results.length === 1 || c.readings.some((r) => r.collectorNumber && isStructural(r.numberSource))) continue;
 				if (c.bottomUrlR) legacy.push({ i, url: c.bottomUrlR, label: 'right' });
 				if (c.altBottomUrlR) legacy.push({ i, url: c.altBottomUrlR, label: 'rotated right' });
@@ -1606,6 +1751,9 @@
 			const lookupCache = new Map<string, PrintingRow[]>();
 			const nearCache = new Map<string, PrintingRow[]>();
 			const knownSets = new Map<string, boolean>();
+			// Rows mode: the printings of a set whose name starts like a truncated name bar (step 2s).
+			const prefixSetCache = new Map<string, PrintingRow[]>();
+			const prefixSetKey = (setCode: string, text: string) => `${setCode.toLowerCase()}|${text}`;
 			const lookupKey = (setCode: string, n: string) => `${setCode.toLowerCase()}|${n}`;
 			const nearKey = (setCode: string, n: string, rarity: string) => `${setCode.toLowerCase()}|${n}|${rarity}`;
 			const structural = (r: FooterReading) => isStructural(r.numberSource);
@@ -1613,6 +1761,12 @@
 				const names = new Set<string>();
 				const lookups: Array<{ setCode: string; collectorNumber: string }> = [];
 				const near: Array<{ setCode: string; collectorNumber: string; rarity: string }> = [];
+				const prefixSets: Array<{ text: string; setCode: string }> = [];
+				const wantPrefix = (setCode: string, text: string) => {
+					if (!setCode || !text || prefixSetCache.has(prefixSetKey(setCode, text))) return;
+					prefixSetCache.set(prefixSetKey(setCode, text), []);
+					prefixSets.push({ text, setCode });
+				};
 				const want = (setCode: string, n: string) => {
 					if (!setCode || lookupCache.has(lookupKey(setCode, n))) return;
 					lookupCache.set(lookupKey(setCode, n), []);
@@ -1624,7 +1778,15 @@
 					near.push({ setCode, collectorNumber: n, rarity });
 				};
 				for (const c of cards) {
-					for (const cand of c.nameCandidates) if (cand.score >= NAME_LIKELY && !printingsCache.has(cand.name)) names.add(cand.name);
+					// A truncated name bar's start fits many names: the printings of its twelve best are enough.
+					const candidates = c.truncated ? [...c.nameCandidates].sort((a, b) => b.score - a.score).slice(0, 12) : c.nameCandidates;
+					for (const cand of candidates) if (cand.score >= NAME_LIKELY && !printingsCache.has(cand.name)) names.add(cand.name);
+					// A truncated name bar under a collector line without a number: the names of the
+					// read set (or, in the second pass, of the majority set) that start like it.
+					if (c.truncated && c.nameText && !c.readings.some(structural)) {
+						for (const r of c.readings) if (r.setCode) wantPrefix(r.setCode, c.nameText);
+						if (majoritySet) wantPrefix(majoritySet, c.nameText);
+					}
 					for (const r of c.readings) {
 						if (r.setCode) want(r.setCode, r.collectorNumber);
 						if (majoritySet && r.collectorNumber) want(majoritySet, r.collectorNumber);
@@ -1651,6 +1813,15 @@
 						const data = learnPrinted(await res.json());
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) {
 							lookupCache.set(lookupKey(entry.setCode, entry.collectorNumber), entry.results ?? []);
+							knownSets.set(String(entry.setCode).toLowerCase(), !!entry.setKnown);
+						}
+					}
+					for (let start = 0; start < prefixSets.length; start += 50) {
+						const chunk = prefixSets.slice(start, start + 50);
+						const res = await fetch('/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prefixSets: chunk }) });
+						const data = learnPrinted(await res.json());
+						for (const entry of Array.isArray(data?.batch) ? data.batch : []) {
+							prefixSetCache.set(prefixSetKey(entry.setCode, entry.text), entry.results ?? []);
 							knownSets.set(String(entry.setCode).toLowerCase(), !!entry.setKnown);
 						}
 					}
@@ -1686,7 +1857,7 @@
 						const data = learnPrinted(await res.json());
 						for (const entry of Array.isArray(data?.batch) ? data.batch : []) nearCache.set(nearKey(entry.setCode, entry.collectorNumber, entry.rarity ?? ''), entry.results ?? []);
 					}
-					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s), ${artCards.length} art hash(es)`);
+					log(`Phase 3 prefetch: ${names.size} name(s), ${lookups.length} set+number lookup(s), ${near.length} near-number lookup(s), ${artCards.length} art hash(es)${prefixSets.length ? `, ${prefixSets.length} name start(s) in a set` : ''}`);
 				} catch (err) {
 					log(`Phase 3 prefetch error: ${err}`);
 				}
@@ -1695,6 +1866,7 @@
 				let d = resolveCard({
 					nameCandidates: card.nameCandidates,
 					nameText: card.nameText,
+					nameTruncated: card.truncated,
 					footer: card.readings,
 					majoritySet,
 					printingsByName: (n) => printingsCache.get(n) ?? [],
@@ -1703,6 +1875,7 @@
 					artHashAlt: card.artHashAlt,
 					lookup: (setCode, n) => lookupCache.get(lookupKey(setCode, n)) ?? [],
 					nearLookup: (setCode, n, rarity) => nearCache.get(nearKey(setCode, n, rarity)) ?? [],
+					prefixInSet: card.truncated ? (setCode) => prefixSetCache.get(prefixSetKey(setCode, card.nameText)) ?? [] : undefined,
 					isKnownSet: (setCode) => (majoritySet !== null && setCode.toLowerCase() === majoritySet) || (knownSets.get(setCode.toLowerCase()) ?? false)
 				});
 				d = applySessionSet(d, captureSession.setCode, card.readings.filter(r => knownSets.get(r.setCode.toLowerCase())).map(r => r.setCode.toLowerCase()));
@@ -1948,6 +2121,7 @@
 		scanToken++; // invalidate any in-flight scan
 		if (imagePreview) URL.revokeObjectURL(imagePreview);
 		imagePreview = '';
+		photoSize = null;
 		detectedCards = [];
 		debugCanvasUrl = '';
 		debugLog = [];
@@ -2043,6 +2217,8 @@
 					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Single card</button>
 				<button type="button" onclick={() => (scanMode = 'multiple')}
 					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Multiple cards</button>
+				<button type="button" onclick={() => (scanMode = 'rows')}
+					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Overlapping rows</button>
 				<button type="button" onclick={() => (scanMode = 'live')}
 					class="px-3 py-1 text-xs rounded-md transition-colors bg-[var(--color-primary)] text-white">Live camera</button>
 			</div>
@@ -2060,8 +2236,8 @@
 				<path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
 				<path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
 			</svg>
-			<p class="text-[var(--color-text-muted)] font-medium">Upload photo of card(s)</p>
-			<p class="text-xs text-[var(--color-text-muted)] mt-1">Detects multiple cards in one image</p>
+			<p class="text-[var(--color-text-muted)] font-medium">{scanMode === 'rows' ? 'Upload photo of your card rows' : 'Upload photo of card(s)'}</p>
+			<p class="text-xs text-[var(--color-text-muted)] mt-1">{scanMode === 'rows' ? 'Up to two or three rows of overlapping cards in one image' : 'Detects multiple cards in one image'}</p>
 			<input type="file" accept="image/*" capture="environment" onchange={onFileSelect} class="hidden" />
 		</label>
 		<div class="flex items-center gap-2 mt-3">
@@ -2087,6 +2263,15 @@
 				</button>
 				<button
 					type="button"
+					onclick={() => (scanMode = 'rows')}
+					class="px-3 py-1 text-xs rounded-md transition-colors {scanMode === 'rows'
+						? 'bg-[var(--color-primary)] text-white'
+						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+				>
+					Overlapping rows
+				</button>
+				<button
+					type="button"
 					onclick={() => (scanMode = 'live')}
 					class="px-3 py-1 text-xs rounded-md transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
 				>
@@ -2095,13 +2280,47 @@
 			</div>
 		</div>
 
-		<p class="text-xs text-[var(--color-text-muted)] mt-3 p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
-			<svg class="inline w-4 h-4 mr-1 -mt-0.5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-			</svg>
-			<strong class="text-[var(--color-text)]">Tip:</strong>
-			For best results, place the card(s) on a plain white background — a sheet of white paper works perfectly. When scanning multiple cards, leave a small gap between each card so the detector can separate them.
-		</p>
+		{#if scanMode === 'rows'}
+			<div class="mt-3 p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-muted)]" data-rows-guide>
+				<p class="mb-2"><strong class="text-[var(--color-text)]">How to lay out the cards:</strong> no need to separate them. Fan them out in rows and take one photo.</p>
+				<div class="flex flex-col sm:flex-row gap-3 items-start">
+					<!-- Original drawing of the layout (no card images): two rows of fanned cards; the visible strip of every card shows the start of the name and the collector corner. -->
+					<svg viewBox="0 0 300 172" class="w-full sm:w-72 flex-shrink-0 rounded bg-[var(--color-bg)]" role="img" aria-label="Two rows of cards, each card on top of the previous one and shifted to the right">
+						{#each [0, 1] as r}
+							{#each Array.from({ length: r === 0 ? 7 : 5 }, (_, k) => k) as k}
+								{@const x = 12 + k * 26}
+								{@const y = 10 + r * 82}
+								<g>
+									<rect x={x} y={y} width="52" height="72" rx="3" fill="#1f2937" stroke="#9ca3af" stroke-width="1" />
+									<rect x={x + 3} y={y + 3} width="46" height="66" rx="2" fill="#e5e7eb" />
+									<rect x={x + 5} y={y + 5} width="18" height="5" rx="1" fill="#f59e0b" />
+									<rect x={x + 5} y={y + 13} width="42" height="26" fill="#94a3b8" />
+									<rect x={x + 5} y={y + 61} width="14" height="5" rx="1" fill="#f59e0b" />
+								</g>
+							{/each}
+						{/each}
+						<text x="236" y="30" font-size="9" fill="#f59e0b">name start</text>
+						<text x="236" y="70" font-size="9" fill="#f59e0b">collector</text>
+						<text x="236" y="80" font-size="9" fill="#f59e0b">number</text>
+					</svg>
+					<ul class="list-disc pl-4 space-y-1">
+						<li>Each card lies on top of the previous one, shifted to the right, so the <strong class="text-[var(--color-text)]">left third</strong> of every card stays visible: the start of the name at the top and the collector number at the bottom left.</li>
+						<li>The last card of a row is fully visible. Up to about 15 cards per row.</li>
+						<li>Start the next row below, without covering the bottom of the row above.</li>
+						<li>Photo from straight above, the whole layout in the picture, even light without glare. A dark mat works.</li>
+						<li>Overlapped cards are identified by the collector number and the start of the name; check the result before importing.</li>
+					</ul>
+				</div>
+			</div>
+		{:else}
+			<p class="text-xs text-[var(--color-text-muted)] mt-3 p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
+				<svg class="inline w-4 h-4 mr-1 -mt-0.5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+				</svg>
+				<strong class="text-[var(--color-text)]">Tip:</strong>
+				For best results, place the card(s) on a plain white background — a sheet of white paper works perfectly. When scanning multiple cards, leave a small gap between each card so the detector can separate them. Many cards at once: use "Overlapping rows".
+			</p>
+		{/if}
 
 		<p class="text-xs text-[var(--color-text-muted)] mt-2">
 			<svg class="inline w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -2126,6 +2345,34 @@
 	{/if}
 	{#if !scanning && edgeWarning}
 		<p class="text-sm px-3 py-2 rounded-lg bg-yellow-500/10 text-yellow-300 border border-yellow-500/30" data-edge-warning>{edgeWarning}</p>
+	{/if}
+
+	<!-- The photo with every detected card outlined in its result colour; a click jumps to the card. -->
+	{#if imagePreview && photoSize && detectedCards.some((c) => c.outline)}
+		{@const fontSize = Math.max(photoSize.width, photoSize.height) / 55}
+		<div class="panel p-2" data-photo-overlay>
+			<div class="relative">
+				<img src={imagePreview} alt="Your upload with the detected cards" class="w-full rounded" />
+				<svg viewBox="0 0 {photoSize.width} {photoSize.height}" class="absolute inset-0 w-full h-full" aria-label="Detected cards">
+					{#each detectedCards as card, origIdx}
+						{#if card.outline}
+							{@const tone = card.status === 'scanning' ? 'scanning' : isImportable(card) ? 'ok' : card.status === 'found' || card.status === 'likely' || card.status === 'conflict' ? 'check' : 'miss'}
+							{@const cx = card.outline.reduce((s, p) => s + p[0], 0) / card.outline.length}
+							{@const cy = card.outline.reduce((s, p) => s + p[1], 0) / card.outline.length}
+							<a href="#scan-card-{origIdx}" aria-label="Card {origIdx + 1}: {tone === 'ok' ? 'identified' : tone === 'check' ? 'needs a check' : tone === 'miss' ? 'not identified' : 'scanning'}">
+								<polygon points={card.outline.map((p) => p.join(',')).join(' ')}
+									class="photo-outline {tone === 'ok' ? 'fill-green-500/20 stroke-green-400' : tone === 'check' ? 'fill-yellow-500/25 stroke-yellow-300' : tone === 'miss' ? 'fill-red-500/25 stroke-red-400' : 'fill-white/10 stroke-white/60'}"
+									stroke-width="3" vector-effect="non-scaling-stroke" />
+								<text x={cx} y={cy} font-size={fontSize} text-anchor="middle" dominant-baseline="middle" class="fill-white font-semibold" paint-order="stroke" stroke="#000" stroke-width={fontSize / 6}>{origIdx + 1}</text>
+							</a>
+						{/if}
+					{/each}
+				</svg>
+			</div>
+			<p class="mt-2 text-xs text-[var(--color-text-muted)]">
+				<span class="text-green-400">Green</span>: identified with its printing · <span class="text-yellow-300">yellow</span>: needs a tap or a printing · <span class="text-red-400">red</span>: not identified. Tap a card to jump to it.
+			</p>
+		</div>
 	{/if}
 
 	<!-- Detected Cards -->
@@ -2188,10 +2435,12 @@
 			{#each sortedCards() as { card, origIdx }, idx}
 				{@const cardState = card.status === 'found' ? 'confirmed' : card.status === 'likely' ? 'likely' : card.status === 'conflict' ? 'conflict' : card.status === 'scanning' ? 'scanning' : 'unknown'}
 				<div
+					id="scan-card-{origIdx}"
 					data-state={cardState}
 					data-printing-state={card.printingState}
 					data-finish={card.finish}
-					class="bg-[var(--color-surface)] rounded-lg border p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''} {card.status === 'likely' || card.status === 'conflict' ? 'border-yellow-500/40' : 'border-[var(--color-border)]'}">
+					data-truncated={card.truncated ? 'true' : undefined}
+					class="scroll-mt-4 bg-[var(--color-surface)] rounded-lg border p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''} {card.status === 'likely' || card.status === 'conflict' ? 'border-yellow-500/40' : 'border-[var(--color-border)]'}">
 					<div class="flex flex-col sm:flex-row gap-4">
 						<!-- Selection checkbox for importable cards -->
 						{#if loggedIn && isImportable(card) && !addedCards.some(a => a.captureId === card.captureId)}
@@ -2230,6 +2479,9 @@
 							<p class="text-xs text-[var(--color-text-muted)] mb-2 break-words">{card.session.setCode ? `Session set: ${card.session.setCode.toUpperCase()} · ` : ''}{card.session.condition.replaceAll('_', ' ')} · {card.session.location || 'Unassigned'}</p>
 							<h3 class="text-sm font-semibold mb-2 flex flex-wrap items-center gap-1">
 								<span>Card {origIdx + 1}</span>
+								{#if card.row !== undefined && card.rowIndex !== undefined}
+									<span class="text-xs font-normal text-[var(--color-text-muted)]">row {card.row + 1}, #{card.rowIndex + 1}{card.truncated ? ` · ${Math.round((card.visible ?? 0) * 100)}% visible` : ''}</span>
+								{/if}
 								{#if card.status === 'found'}
 									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-green-500/15 text-green-400 border-green-500/30">Confirmed</span>
 									{#if card.results.length > 1 && card.printingState !== 'confirmed'}
