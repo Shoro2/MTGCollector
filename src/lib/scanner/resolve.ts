@@ -18,6 +18,7 @@ import type { CollectorInfo } from './parse';
 import { aliasLanguage, bestAlias, nameAliases, nameScore, normalizeName, realWordCount, similarity } from './similarity';
 import { disambiguateReprints, normalizeCollectorNumber } from './pipeline';
 import { hammingDistance } from './phash';
+import { CARD_BACK_SCAN, cardBackDistance } from './card-back';
 import { PREFIX_CONTRADICT, PREFIX_FIT, PREFIX_IDENTIFY, PREFIX_MARGIN, PREFIX_SET_LETTERS, bestPrefixAlias, letterCount, prefixIdentifies, prefixNameScore, stripLeadingToken } from './name-prefix';
 
 export type DecisionState = 'confirmed' | 'likely' | 'unknown' | 'conflict';
@@ -78,6 +79,8 @@ export type Decision = {
 	finish: Finish;
 	language: string;
 	reasons: string[];
+	/** The scan shows the back of a card (card-back.ts): nothing is identified or offered. */
+	cardBack?: boolean;
 };
 
 /** A name candidate at or above this score identifies the card on its own. */
@@ -312,6 +315,17 @@ export function resolveCard(input: ResolveInput): Decision {
 	const agrees = (row: PrintingRow) => scoreOf(input.nameText, String(row.name)) >= fitMin || (best !== null && best.name === row.name && best.score >= fitMin);
 	const textOf = (c: NameCandidate) => c.text ?? input.nameText;
 	const supported = (c: NameCandidate) => nameSupported(c, input.nameText);
+
+	// The back of a card: its artwork is every card's, so neither the art channel nor a
+	// partial name read from the back's pattern may name a card. Only a name that
+	// identifies on its own or a structural collector number (a front after all) goes on.
+	const backDistance = cardBackDistance(input.artHash, input.artHashAlt);
+	if (backDistance !== null && backDistance <= CARD_BACK_SCAN
+		&& !nameCandidates.some((c) => identifies(c))
+		&& !readings.some((r) => r.collectorNumber !== '' && isStructural(r.numberSource))) {
+		reasons.push(`artwork ${backDistance} bits from the card back, no name or collector number read -> card back, nothing offered`);
+		return { ...done(null, 'unknown', null, [], 'unknown'), cardBack: true };
+	}
 
 	const sameNumber = (r: FooterReading, row: PrintingRow) => r.collectorNumber !== '' && normalizeCollectorNumber(r.collectorNumber) === normalizeCollectorNumber(String(row.collector_number));
 	// A number-only hit is plausible unless the printed rarity letter or real
