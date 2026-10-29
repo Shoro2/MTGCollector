@@ -56,6 +56,10 @@ node scripts/scanner-harness/rescore.mjs results-fulldb.json scripts/scanner-har
 
 # Synthetic fixtures (no photos needed)
 node scripts/scanner-harness/make-synthetic.mjs fixtures/
+# The synth-legacy-*.jpg fixtures (2003–2014 frame: artist bottom left, copyright and
+# "146/249" bottom right, no set code) need their extra printings in the seeded DB:
+MTG_DB_PATH=/tmp/seed-db/mtg.db node scripts/scanner-harness/seed-test-db.mjs --distractors --legacy
+HARNESS_URL=http://localhost:5174 node scripts/scanner-harness/harness.mjs --mode multiple --expect scripts/scanner-harness/expectations.json fixtures/synth-legacy-grid.jpg
 
 # Live mode: a Y4M clip is played as the camera (Chromium fake device)
 node scripts/scanner-harness/make-live-y4m.mjs fixtures/live-scene.y4m
@@ -672,6 +676,28 @@ set), but the full-catalogue rate is not measured: this cloud session cannot
 download Scryfall's bulk data. Synthetic cards are cleaner than a phone photo
 (even light, flat cards, no sleeves). Both measurements are owed: the
 full catalogue on the dev PC and the owner's real photos.
+
+## Right-half collector line (1998–2014 frames), 2026-10-29
+
+Those frames print the collector number after the copyright at the bottom
+right and no set code; the scanner reads the right half of the strip for cards
+without a structural number (`parseLegacyCollectorLine()`, CLAUDE.md §6.1 step
+8). `seed-cards-legacy.json` adds further printings of seeded names with
+**illustrative** collector numbers (not Scryfall's): Lightning Bolt M11 #149,
+Giant Growth 10E #268, and Llanowar Elves at #175 in both M10 and M11 (a
+deliberate same-number collision that must stay open). Measured on the seeded
+catalogue with distractors, master `b9a9493` against the branch, same DB:
+
+| Fixture | master: printing | branch: printing | wrong |
+|---|---|---|---|
+| synth-legacy-single.jpg (single) | 0 / 1 | 1 / 1 | 0 |
+| synth-legacy-grid.jpg (multiple; one M15 control card, one collision) | 1 / 4 | 3 / 4 | 0 |
+| synth-single, synth-grid, synth-sideways | 1/1, 3/4, 1/1 | unchanged | 0 |
+
+The right-half pass adds about 0.3 s per scan. Real photos of old cards and
+the full catalogue are not measured yet. The pass is skipped for the
+covered cards of the overlapping-rows mode: their right half lies under the
+next card.
 
 ## Offline mode (2026-10-29)
 

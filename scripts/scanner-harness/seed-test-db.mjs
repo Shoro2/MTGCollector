@@ -15,8 +15,12 @@
 import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
 const withDistractors = process.argv.includes('--distractors');
+// `--legacy` adds the printings of the 1998–2014-frame fixtures (synth-legacy-*.jpg): further
+// printings of seeded names whose collector numbers are illustrative, not Scryfall's.
+const withLegacy = process.argv.includes('--legacy');
 const db = new Database(process.env.MTG_DB_PATH ?? 'data/mtg.db');
 const cards = JSON.parse(readFileSync(new URL('./seed-cards.json', import.meta.url), 'utf8'));
+if (withLegacy) cards.push(...JSON.parse(readFileSync(new URL('./seed-cards-legacy.json', import.meta.url), 'utf8')));
 const ins = db.prepare(`INSERT OR REPLACE INTO cards (id, oracle_id, name, mana_cost, cmc, type_line, oracle_text, colors, color_identity, keywords,
 	set_code, set_name, collector_number, rarity, image_uri, layout, released_at, scryfall_uri, price_eur, price_eur_foil, price_usd, price_usd_foil)
 	VALUES (@id, @oracle_id, @name, @mana_cost, 1, @type_line, '', '[]', '[]', '[]', @set_code, @set_name, @collector_number, @rarity, NULL, @layout, '2024-01-01', 'https://scryfall.com/', 1.0, 2.0, 1.1, 2.2)`);

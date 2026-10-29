@@ -14,7 +14,16 @@ const scenes = {
 		{ name: 'Giant Growth', type: 'Instant', text: 'Target creature gets +3/+3 until end of turn.', num: '184/249 C', set: 'M10', cx: 650, cy: 1480, h: 800, angle: 0.5, color: '#3aa05a' },
 		{ name: 'Lightning Helix', type: 'Instant', text: 'Lightning Helix deals 3 damage to any target and you gain 3 life.', num: '372/291 U', set: 'RVR', cx: 1750, cy: 1480, h: 800, angle: -1, color: '#c88a3a' }
 	] },
-	'synth-sideways.jpg': { w: 2200, h: 1600, cards: [{ name: 'Counterspell', type: 'Instant', text: 'Counter target spell.', num: '267/303 U', set: 'MH2', cx: 1100, cy: 800, h: 1200, angle: 90, color: '#3a6fc8' }] }
+	'synth-sideways.jpg': { w: 2200, h: 1600, cards: [{ name: 'Counterspell', type: 'Instant', text: 'Counter target spell.', num: '267/303 U', set: 'MH2', cx: 1100, cy: 800, h: 1200, angle: 90, color: '#3a6fc8' }] },
+	// 1998–2014 frames ("legacy"): artist bottom left, copyright and collector number bottom
+	// right, no set code. Their printings come from seed-cards-legacy.json (seed-test-db.mjs --legacy).
+	'synth-legacy-single.jpg': { w: 1600, h: 2200, cards: [{ name: 'Lightning Bolt', type: 'Instant', text: 'Lightning Bolt deals 3 damage to any target.', num: '146/249', legacy: true, cx: 800, cy: 1100, h: 1300, angle: 2, color: '#c8433a' }] },
+	'synth-legacy-grid.jpg': { w: 2400, h: 2000, cards: [
+		{ name: 'Lightning Bolt', type: 'Instant', text: 'Lightning Bolt deals 3 damage to any target.', num: '149/249', legacy: true, cx: 650, cy: 520, h: 800, angle: -1.5, color: '#c8433a' },
+		{ name: 'Counterspell', type: 'Instant', text: 'Counter target spell.', num: '267/303 U', set: 'MH2', cx: 1750, cy: 520, h: 800, angle: 1, color: '#3a6fc8' },
+		{ name: 'Giant Growth', type: 'Instant', text: 'Target creature gets +3/+3 until end of turn.', num: '268/383', legacy: true, cx: 650, cy: 1480, h: 800, angle: 0.5, color: '#3aa05a' },
+		{ name: 'Llanowar Elves', type: 'Creature', text: 'Add one green mana.', num: '175/249', legacy: true, cx: 1750, cy: 1480, h: 800, angle: -1, color: '#3aa05a' }
+	] }
 };
 for (const [file, scene] of Object.entries(scenes)) {
 	const dataUrl = await page.evaluate((scene) => {
@@ -52,9 +61,19 @@ for (const [file, scene] of Object.entries(scenes)) {
 			if (line) ctx.fillText(line, r(0.065), y);
 			// collector info (two lines, bottom left, light on dark like real cards)
 			ctx.fillStyle = '#eee'; ctx.font = `${r(0.0165)}px "DejaVu Sans", sans-serif`;
-			ctx.fillText(card.num, r(0.05), r(0.925));
-			ctx.fillText(`${card.set} • EN`, r(0.05), r(0.951));
-			ctx.fillText('™ & © 2009 Wizards of the Coast', W - r(0.36), r(0.951));
+			if (card.legacy) {
+				// These frames print the footer white on the black bottom border.
+				ctx.fillStyle = '#111'; ctx.fillRect(r(0.028), r(0.93), W - 2 * r(0.028), r(0.05));
+				ctx.fillStyle = '#eee';
+				ctx.fillText('Illus. Christopher Moeller', r(0.05), r(0.951));
+				ctx.textAlign = 'right';
+				ctx.fillText(`™ & © 2009 Wizards of the Coast, Inc. ${card.num}`, W - r(0.05), r(0.951));
+				ctx.textAlign = 'left';
+			} else {
+				ctx.fillText(card.num, r(0.05), r(0.925));
+				ctx.fillText(`${card.set} • EN`, r(0.05), r(0.951));
+				ctx.fillText('™ & © 2009 Wizards of the Coast', W - r(0.36), r(0.951));
+			}
 			ctx.restore();
 		}
 		return c.toDataURL('image/jpeg', 0.9);

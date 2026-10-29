@@ -11,7 +11,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { loadOpenCV } from '$lib/scanner/opencv';
 	import { getTesseractPool, setPoolParameters, recognizeBatch, recognizeDetailed, terminatePool } from '$lib/scanner/tesseract';
-	import { parseCollectorInfo } from '$lib/scanner/parse';
+	import { parseCollectorInfo, parseLegacyCollectorLine } from '$lib/scanner/parse';
 	import { rankNameMatches, realWordCount, setPrintedAliasSource, type PrintedAlias } from '$lib/scanner/similarity';
 	import { resolveCard, nameIdentifies, isStructural, NAME_CERTAIN, NAME_LIKELY, ART_LIKELY, type FooterReading, type NameCandidate, type PrintingRow, type Finish, type DecisionState, type ArtMatch } from '$lib/scanner/resolve';
 	import { artHashesOfWarp, expandedCardCorners } from '$lib/scanner/warp';
@@ -109,10 +109,13 @@
 		nameUrl3?: string;
 		nameUrl4?: string;
 		bottomUrl2?: string;
+		/** Right half of the bottom strip: where 1998–2014 frames print their collector number (after the copyright). */
+		bottomUrlR?: string;
 		altNameUrl2?: string;
 		altNameUrl3?: string;
 		altNameUrl4?: string;
 		altBottomUrl2?: string;
+		altBottomUrlR?: string;
 	}>>([]);
 	let debugCanvasUrl = $state('');
 	let debugLog = $state<string[]>([]);
@@ -1228,7 +1231,7 @@
 				synthetic: boolean,
 				label: string,
 				visibleX: number | null = null
-			): { nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement } {
+			): { nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomUrlR: string; bottomCanvas: HTMLCanvasElement } {
 				const cardW = warpedMat.cols as number;
 				const cardH = warpedMat.rows as number;
 
@@ -1317,7 +1320,11 @@
 				log(`${label}: bottom crop x=${bottomX} y=${bottomY} h=${bottomH} w=${roiW}`);
 				const bottom = cropUrl(bottomX, bottomY, roiW, bottomH, BOTTOM_OCR_SCALE, true);
 				const bottomUrl2 = cropUrl(bottomX, bottomY, roiW, bottomH, BOTTOM_OCR_SCALE_ALT, true).url;
-				return { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl: bottom.url, bottomUrl2, bottomCanvas: bottom.canvas };
+				// The same rows over the right half: 1998–2014 frames (Exodus to Journey into Nyx) print
+				// the collector number there, after the copyright, and no set code (see parseLegacyCollectorLine).
+				const rightX = Math.floor(cardW * 0.45);
+				const bottomUrlR = cropUrl(rightX, bottomY, cardW - rightX, bottomH, BOTTOM_OCR_SCALE, true).url;
+				return { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl: bottom.url, bottomUrl2, bottomUrlR, bottomCanvas: bottom.canvas };
 			}
 
 			// Process each detected card
@@ -1384,7 +1391,7 @@
 				// The artwork of an overlapped card is covered: no art hash (the visual channel stays silent).
 				const artHashes = truncated ? { hash: '', alt: '' } : artHashesOfWarp(cardCanvas);
 
-				const { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl, bottomUrl2, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`, visibleX);
+				const { nameUrl, nameUrl2, nameUrl3, nameUrl4, bottomUrl, bottomUrl2, bottomUrlR, bottomCanvas } = extractOcrCrops(warped, !!cardContours[i].synthetic, `Card ${i + 1}`, visibleX);
 				bottomCanvases.push(bottomCanvas);
 
 				cards.push({
@@ -1397,6 +1404,7 @@
 					nameUrl4,
 					bottomUrl,
 					bottomUrl2,
+					bottomUrlR,
 					nameText: '',
 					ocrText: '',
 					setCode: '',
@@ -1548,7 +1556,7 @@
 			// Try the cheap rotated gray line before expensive preprocessing/engine passes.
 			// Only a certain name can short-circuit the upright alternatives here; weaker
 			// rotated reads retain the previous ordering and are retried from the cache.
-			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomCanvas: HTMLCanvasElement };
+			type RotCrops = { canvas: HTMLCanvasElement; nameUrl: string; nameUrl2: string; nameUrl3: string; nameUrl4: string; bottomUrl: string; bottomUrl2: string; bottomUrlR: string; bottomCanvas: HTMLCanvasElement };
 			const rotated = new Map<number, RotCrops>();
 			const originalNameText = new Map<number, string>();
 			const rotatedGrayText = new Map<number, string>();
@@ -1562,6 +1570,7 @@
 				card.altNameUrl4 = r.nameUrl4;
 				card.altBottomUrl = r.bottomUrl;
 				card.altBottomUrl2 = r.bottomUrl2;
+				card.altBottomUrlR = r.bottomUrlR;
 				card.altCroppedUrl = cardThumbnailUrl(r.canvas);
 			};
 			const adoptRotated = (i: number) => {
@@ -1575,6 +1584,7 @@
 				card.altNameUrl4 = card.nameUrl4;
 				card.altBottomUrl = card.bottomUrl;
 				card.altBottomUrl2 = card.bottomUrl2;
+				card.altBottomUrlR = card.bottomUrlR;
 				card.altCroppedUrl = card.croppedUrl;
 				alternateNameText.set(i, originalNameText.get(i) ?? '');
 				card.nameUrl = r.nameUrl;
@@ -1583,6 +1593,7 @@
 				card.nameUrl4 = r.nameUrl4;
 				card.bottomUrl = r.bottomUrl;
 				card.bottomUrl2 = r.bottomUrl2;
+				card.bottomUrlR = r.bottomUrlR;
 				card.croppedUrl = cardThumbnailUrl(r.canvas);
 				bottomCanvases[i] = r.bottomCanvas;
 				cardCanvases[i] = r.canvas;
@@ -1815,6 +1826,32 @@
 				}
 				list.push({ ...e, text });
 			});
+			// Cards whose strips gave no structural number and whose printing a unique name hit has
+			// not settled: read the right half of the strip (and of the rotated strip) for a
+			// 1998–2014 frame's "146/249". Only a fraction counts there; the reading carries no set
+			// code, rarity or language, because those frames print none (parseLegacyCollectorLine).
+			// An overlapped card (rows mode) is skipped: its right half lies under the next card.
+			const legacy: Array<{ i: number; url: string; label: string }> = [];
+			for (let i = 0; i < newCount; i++) {
+				const c = detectedCards[firstIdx + i];
+				if (c.truncated) continue;
+				if (c.results.length === 1 || c.readings.some((r) => r.collectorNumber && isStructural(r.numberSource))) continue;
+				if (c.bottomUrlR) legacy.push({ i, url: c.bottomUrlR, label: 'right' });
+				if (c.altBottomUrlR) legacy.push({ i, url: c.altBottomUrlR, label: 'rotated right' });
+			}
+			if (legacy.length > 0) {
+				log(`Phase 3: right half of the bottom strip (1998–2014 frames) for ${new Set(legacy.map((l) => l.i)).size} card(s) without a structural number`);
+				const legacyTexts = await recognizeBatch(pool, legacy.map((l) => l.url), (done, total) => {
+					scanProgress = `OCR bottom (right) ${done}/${total}...`;
+				});
+				legacy.forEach((l, k) => {
+					const text = cleanOcr(legacyTexts[k]);
+					const parsed = parseLegacyCollectorLine(text);
+					log(`Card ${firstIdx + l.i + 1} bottom OCR (${l.label}): "${text}"${parsed.numberSource === 'fraction' ? ` -> #${parsed.collectorNumber} of ${parsed.total}` : ''}`);
+					if (parsed.numberSource !== 'fraction') return;
+					detectedCards[firstIdx + l.i].readings.push({ setCode: '', collectorNumber: parsed.collectorNumber, numberSource: 'fraction', foilFromText: false, rarity: '', language: '', text, variant: l.label, trustFoil: false });
+				});
+			}
 			for (const [i, variants] of variantsByCard) {
 				const card = detectedCards[firstIdx + i];
 				let bestScore = stripScore(parseCollectorInfo(card.ocrText, langs));
@@ -1848,6 +1885,7 @@
 				card.altNameUrl4 = undefined;
 				card.altBottomUrl = undefined;
 				card.altBottomUrl2 = undefined;
+				card.altBottomUrlR = undefined;
 				card.altCroppedUrl = undefined;
 			}
 			for (let i = 0; i < newCount; i++) {
