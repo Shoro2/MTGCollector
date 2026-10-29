@@ -7,11 +7,13 @@
  * embeds a self-hosted Plausible script. 'unsafe-inline' is required by
  * SvelteKit's hydration payloads; 'unsafe-eval' is required by OpenCV's WASM
  * glue. A new external host (script, image, fetch) must be added here, or the
- * scanner, images or analytics break silently.
+ * scanner, images or analytics break silently. challenges.cloudflare.com serves
+ * the Turnstile captcha (its script and its iframe) on /contact and when a deck
+ * is made public.
  */
 export const CSP_DIRECTIVES = [
 	"default-src 'self'",
-	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com",
+	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com https://challenges.cloudflare.com",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: blob: https://cards.scryfall.io https://c1.scryfall.com https://c2.scryfall.com https://lh3.googleusercontent.com",
 	// data: is for OpenCV.js, whose single-file build fetches its embedded WASM
@@ -23,6 +25,7 @@ export const CSP_DIRECTIVES = [
 	// attempting to fetch resource." (owner's phone, 2026-10-29).
 	"connect-src 'self' data: https://api.scryfall.com https://api.frankfurter.dev https://analytics.mtg-collector.com https://cdn.jsdelivr.net https://docs.opencv.org",
 	"font-src 'self' data:",
+	"frame-src https://challenges.cloudflare.com",
 	"worker-src 'self' blob:",
 	"frame-ancestors 'none'",
 	"base-uri 'self'",

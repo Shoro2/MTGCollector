@@ -24,6 +24,11 @@ describe('content security policy', () => {
 		expect(cspSources('connect-src')).toContain('data:');
 	});
 
+	it('lets the Turnstile captcha load its script and its iframe', () => {
+		expect(cspSources('script-src')).toContain('https://challenges.cloudflare.com');
+		expect(cspSources('frame-src')).toEqual(['https://challenges.cloudflare.com']);
+	});
+
 	it('joins the directives into one header value', () => {
 		expect(CSP.split('; ')[0]).toBe("default-src 'self'");
 		expect(CSP).not.toMatch(/;;|\n/);

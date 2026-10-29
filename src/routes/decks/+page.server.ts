@@ -1,21 +1,25 @@
 import { sqlite } from '$lib/server/db';
-import { listDecks, publicDecks, type PublicDeckSort } from '$lib/server/decks';
+import { lastAuthorName, listDecks, publicDecks, type PublicDeckSort } from '$lib/server/decks';
+import { captchaSiteKey } from '$lib/server/captcha';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 
 /**
  * Two lists: the signed-in user's decks (search and sort happen in the page) and everybody's
  * public decks (searched, filtered and paged here, also for visitors). `?view=public` picks
- * the public list; a visitor always gets it.
+ * the public list; a visitor always gets it. The create dialog gets the author name the user
+ * chose last and the captcha's site key (null when the captcha is off).
  */
 export async function load({ locals, url, depends }) {
 	depends('app:decks');
 	const rate = await getUsdToEurRate();
 	const signedIn = !!locals.user;
+	const create = locals.user ? { authorName: lastAuthorName(sqlite, locals.user.id), captchaSiteKey: captchaSiteKey() } : null;
 	if (!locals.user || url.searchParams.get('view') === 'public') {
 		const params = url.searchParams;
 		return {
 			view: 'public' as const,
 			signedIn,
+			create,
 			decks: [],
 			public: publicDecks(sqlite, {
 				q: params.get('q') ?? '',
@@ -25,5 +29,5 @@ export async function load({ locals, url, depends }) {
 			}, rate)
 		};
 	}
-	return { view: 'mine' as const, signedIn, decks: listDecks(sqlite, locals.user.id, rate), public: null };
+	return { view: 'mine' as const, signedIn, create, decks: listDecks(sqlite, locals.user.id, rate), public: null };
 }

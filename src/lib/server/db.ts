@@ -5,7 +5,7 @@ import { SCHEMA_SQL } from './schema-sql.js';
 import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
-import { DECKS_SQL, addDeckBracket, addDeckReports } from './decks.js';
+import { DECKS_SQL, addDeckAuthor, addDeckBracket, addDeckReports } from './decks.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -371,6 +371,12 @@ const MIGRATIONS: Migration[] = [
 		// deck_reports.
 		id: '0029_deck_reports',
 		run: (db) => addDeckReports(db)
+	},
+	{
+		// The author name a deck's owner chooses to show on a shared deck (never the
+		// Google name or e-mail address), appended after hidden_at for the positional dump.
+		id: '0030_deck_author',
+		run: (db) => addDeckAuthor(db)
 	}
 ];
 
