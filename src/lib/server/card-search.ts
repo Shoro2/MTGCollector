@@ -231,7 +231,10 @@ function searchEnglishName(cleaned: string, exactOnly = false): SearchResult {
 		// runner-up margin is 0.1), so the scan skips names that cannot get there.
 		const fuzzy = fuzzyNames(cleaned, 10, ranked.length > 0 ? ranked[0].score - FUZZY_SCAN_MARGIN : FUZZY_MIN);
 		if (fuzzy.length > 0) {
-			pool.push(...fuzzy.flatMap((f) => exactStmt().all(f.name, `${f.name} //%`, f.name) as CardRow[]));
+			// fuzzyNames() returns canonical names, so the indexed name lookup is
+			// enough; exactStmt()'s LIKE and face join scan the whole table per name
+			// (10 names took ~0.6 s on the full catalogue).
+			pool.push(...fuzzy.flatMap((f) => printingsByName(f.name).slice(0, ROWS_PER_NAME)));
 			ranked = rankNameMatches(pool, cleaned, FUZZY_NAMES);
 		}
 	}
