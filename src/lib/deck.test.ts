@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-	allocateOwnership, cardCategory, deckColors, deckTotals, groupDeck, manaCurve, pickDeckPrinting, timeAgo, unitPriceEur,
-	type Board
+	allocateOwnership, ownershipRank, cardCategory, cardFrame, deckColors, deckTotals, groupDeck, isBracket, manaColors, manaCurve, pickDeckPrinting,
+	timeAgo, unitPriceEur, type Board
 } from './deck';
 
 const price = { price_eur: null, price_eur_foil: null, price_usd: null, price_usd_foil: null };
@@ -38,8 +38,8 @@ describe('allocateOwnership', () => {
 	it('spends real copies before proxies and never counts a copy twice', () => {
 		const owned = new Map([['bolt', { real: 3, proxy: 2 }]]);
 		const result = allocateOwnership([row(2, 'sideboard', 2), row(1, 'main', 4)], owned);
-		expect(result.get(1)).toEqual({ real: 3, proxy: 1, missing: 0, state: 'proxy' });
-		expect(result.get(2)).toEqual({ real: 0, proxy: 1, missing: 1, state: 'partial' });
+		expect(result.get(1)).toEqual({ real: 3, proxy: 1, missing: 0, state: 'proxy', printing: false });
+		expect(result.get(2)).toEqual({ real: 0, proxy: 1, missing: 1, state: 'partial', printing: false });
 		expect(owned.get('bolt')).toEqual({ real: 3, proxy: 2 });
 	});
 	it('marks owned, missing and commander-first allocation', () => {
@@ -47,7 +47,18 @@ describe('allocateOwnership', () => {
 		const result = allocateOwnership([row(5, 'main', 1, 'cmd'), row(9, 'commander', 1, 'cmd'), row(6, 'main', 1, 'other')], owned);
 		expect(result.get(9)?.state).toBe('owned');
 		expect(result.get(5)?.state).toBe('missing');
-		expect(result.get(6)).toEqual({ real: 0, proxy: 0, missing: 1, state: 'missing' });
+		expect(result.get(6)).toEqual({ real: 0, proxy: 0, missing: 1, state: 'missing', printing: false });
+	});
+	it("tells the deck's own printing from another printing of the card", () => {
+		const owned = new Map([['bolt', { real: 2, proxy: 1 }]]);
+		const rows = [{ ...row(1, 'main', 1), card_id: 'clu' }, { ...row(2, 'main', 1), card_id: 'lea' }, { ...row(3, 'sideboard', 2), card_id: 'clu' }];
+		const result = allocateOwnership(rows, owned, new Set(['clu']));
+		expect([1, 2, 3].map((id) => [result.get(id)?.state, result.get(id)?.printing])).toEqual([['owned', true], ['owned', false], ['partial', false]]);
+		expect([1, 2, 3].map((id) => ownershipRank(result.get(id)))).toEqual([0, 1, 2]);
+		expect(ownershipRank({ real: 0, proxy: 1, missing: 0, state: 'proxy', printing: false })).toBe(3);
+		expect(ownershipRank({ real: 1, proxy: 0, missing: 1, state: 'partial', printing: true })).toBe(2);
+		expect(ownershipRank({ real: 0, proxy: 0, missing: 1, state: 'missing', printing: false })).toBe(4);
+		expect(ownershipRank(null)).toBe(5);
 	});
 });
 
@@ -114,6 +125,11 @@ describe('groupDeck', () => {
 		expect(groups.map((g) => g.label)).toEqual(['Commander', 'Mana value 2', 'Mana value 3', 'Mana value 5', 'Lands', 'Sideboard', 'Maybeboard']);
 		expect(groupDeck(rows, 'none', 'cmc', () => null)[1].rows.map((r) => r.name)).toEqual(['Mountain', 'Abrade', 'Beast Within', 'Zealous Conscripts']);
 	});
+	it('sorts by what the viewer owns, then by name', () => {
+		const ranks: Record<number, number> = { 1: 0, 2: 4, 3: 1, 5: 1 };
+		expect(groupDeck(rows, 'none', 'owned', () => null, (r) => ranks[r.id] ?? 4)[1].rows.map((r) => r.name))
+			.toEqual(['Zealous Conscripts', 'Beast Within', 'Mountain', 'Abrade']);
+	});
 });
 
 describe('pickDeckPrinting', () => {
@@ -138,5 +154,43 @@ describe('timeAgo', () => {
 		expect(timeAgo('2026-03-01T12:00:00Z', now)).toBe('7 months ago');
 		expect(timeAgo('2023-10-01T12:00:00Z', now)).toBe('3 years ago');
 		expect(timeAgo('garbage', now)).toBe('just now');
+	});
+});
+
+describe('card frames', () => {
+	const frame = (colors: string[] | null, mana_cost: string | null, type_line = 'Instant') => cardFrame({ colors, mana_cost, type_line });
+	it('reads the colors of a mana cost', () => {
+		expect(manaColors('{2}{G}{W/U}{B/P}{2/R}{C}{X}')).toEqual(['W', 'U', 'B', 'R', 'G']);
+		expect(manaColors(null)).toEqual([]);
+	});
+	it('gives one color its own frame and several a gold one', () => {
+		expect(frame(['R'], '{R}')).toEqual({ kind: 'r', colors: ['R'] });
+		expect(frame(['G', 'U'], '{1}{G}{U}').kind).toBe('multi');
+		expect(frame(['U', 'G'], '{1}{G}{U}').colors).toEqual(['U', 'G']);
+		expect(frame(['W', 'U', 'B', 'R', 'G'], '{W}{U}{B}{R}{G}').kind).toBe('multi');
+	});
+	it('splits a two-color hybrid card, not a gold card with a hybrid symbol', () => {
+		expect(frame(['G', 'W'], '{1}{G/W}{G/W}')).toEqual({ kind: 'hybrid', colors: ['W', 'G'] });
+		expect(frame(['R', 'G'], '{R}{R/G}').kind).toBe('multi');
+		expect(frame(['W', 'U', 'B'], '{W/U}{B/W}').kind).toBe('multi');
+	});
+	it('frames colorless cards as artifact, land or colorless', () => {
+		expect(frame([], '{1}', 'Artifact').kind).toBe('artifact');
+		expect(frame([], '{0}', 'Artifact Creature — Golem').kind).toBe('artifact');
+		expect(frame([], null, 'Basic Land — Forest').kind).toBe('land');
+		expect(frame(['G'], null, 'Land Creature — Forest Dryad').kind).toBe('g');
+		expect(frame([], '{10}', 'Creature — Eldrazi').kind).toBe('colorless');
+		expect(frame([], '{3}{U}', 'Creature — Eldrazi Drone').kind).toBe('colorless');
+	});
+	it('falls back to the mana cost when the card stores no colors', () => {
+		expect(frame(null, '{U}', 'Creature — Human Wizard // Creature — Human Insect').kind).toBe('u');
+		expect(frame(null, null, 'Land // Land').kind).toBe('land');
+	});
+});
+
+describe('brackets', () => {
+	it('accepts the five Commander Brackets only', () => {
+		expect([1, 2, 3, 4, 5].every(isBracket)).toBe(true);
+		expect([0, 6, '3', 2.5, null].some(isBracket)).toBe(false);
 	});
 });

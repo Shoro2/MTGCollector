@@ -3,6 +3,7 @@ import { getPriceUpdateStatus } from '$lib/server/price-updater';
 import { redirect } from '@sveltejs/kit';
 import { statSync } from 'node:fs';
 import { recentSnapshots as loadRecentSnapshots, priceHistoryRange } from '$lib/server/admin-stats';
+import { reportedDecks } from '$lib/server/decks';
 
 const USERS_PAGE_SIZE = 50;
 
@@ -116,6 +117,8 @@ export async function load({ locals, url }) {
 		priceStatus,
 		recentSnapshots,
 		contactMessages,
-		unhandledContactCount
+		unhandledContactCount,
+		// Decks players reported; hidden ones need nothing, restoring is optional.
+		reportedDecks: reportedDecks(sqlite)
 	};
 }

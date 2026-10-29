@@ -2,9 +2,11 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { DECK_FORMATS, deckFormat } from '$lib/deck-formats';
-	import { VISIBILITIES, VISIBILITY_LABELS, type CardSuggestion, type Visibility } from '$lib/deck';
+	import { VISIBILITIES, VISIBILITY_LABELS, type Bracket, type CardSuggestion, type Visibility } from '$lib/deck';
 	import CardSearchInput from './CardSearchInput.svelte';
+	import BracketSelect from './BracketSelect.svelte';
 	import DeckLineIssues from './DeckLineIssues.svelte';
+	import { deckLinkHelp } from '$lib/deck-text';
 
 	let { onclose }: { onclose: () => void } = $props();
 	let dialog: HTMLDialogElement;
@@ -13,10 +15,14 @@
 	let name = $state('');
 	let format = $state('commander');
 	let commander = $state<CardSuggestion | null>(null);
+	let partner = $state<CardSuggestion | null>(null);
+	let bracket = $state<Bracket | null>(null);
 	let legalOnly = $state(true);
 	let visibility = $state<Visibility>('private');
 	let source = $state<'none' | 'paste' | 'file'>('none');
 	let text = $state('');
+	// A pasted deck link gets an explanation of where the site's text export is.
+	const linkHelp = $derived(source === 'paste' ? deckLinkHelp(text) : null);
 	let fileText = $state('');
 	let busy = $state(false);
 	let message = $state('');
@@ -25,10 +31,15 @@
 
 	const selected = $derived(deckFormat(format));
 	const leader = $derived(selected.command === 'oathbreaker' ? 'Oathbreaker' : 'Commander');
+	// A second commander: Partner, Friends forever, a Background or a Doctor's companion.
+	const canTakePartner = $derived(!!commander?.partner && !!selected.command && selected.command !== 'oathbreaker');
+	$effect(() => {
+		if (!canTakePartner) partner = null;
+	});
 	const VISIBILITY_HELP: Record<Visibility, string> = {
 		private: 'Only you can see it.',
 		unlisted: 'Anyone with the link can view it. It is never listed.',
-		public: 'Anyone with the link can view it. Public decks can later appear in deck lists on the site.'
+		public: 'Anyone with the link can view it, and it is listed in the public deck list.'
 	};
 
 	async function readFile(event: Event) {
@@ -52,7 +63,12 @@
 			const response = await fetch('/api/decks', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name, format, visibility, commanderId: selected.command ? commander?.id : undefined, list })
+				body: JSON.stringify({
+					name, format, visibility, list,
+					commanderId: selected.command ? commander?.id : undefined,
+					partnerId: canTakePartner ? partner?.id : undefined,
+					bracket: selected.kind === 'commander' ? bracket : null
+				})
 			});
 			const result = await response.json().catch(() => ({}));
 			if (!response.ok || !result.success) throw new Error(result.message || 'The deck could not be created.');
@@ -114,6 +130,23 @@
 							</label>
 						</div>
 					{/if}
+					{#if canTakePartner && commander}
+						<div class="sm:col-start-2" data-partner-field>
+							{#if partner}
+								<p class="text-sm text-[var(--color-text-muted)]">Partner</p>
+								<p class="mt-1 flex min-h-[var(--control-height)] items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 text-sm">
+									<span class="min-w-0 flex-1 truncate">{partner.name}</span>
+									<button type="button" onclick={() => (partner = null)} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)]" aria-label="Remove {partner.name}">×</button>
+								</p>
+							{:else}
+								<CardSearchInput label="Partner (optional)" placeholder="Second commander…" {format} legal={legalOnly} partnerOf={commander.id} onselect={(card) => (partner = card)} />
+								<p class="mt-1 text-xs text-[var(--color-text-muted)]">Only cards that may share the command zone with {commander.name}.</p>
+							{/if}
+						</div>
+					{/if}
+					{#if selected.kind === 'commander'}
+						<BracketSelect bind:value={bracket} />
+					{/if}
 				</div>
 				<fieldset>
 					<legend class="text-sm text-[var(--color-text-muted)]">Visibility</legend>
@@ -140,6 +173,7 @@
 							<span class="sr-only">Card list</span>
 							<textarea bind:value={text} rows="8" placeholder={'1 Sol Ring (C21) 263\n4 Lightning Bolt\n\nSideboard\n2 Pyroblast'} class="control block w-full px-3 py-2 font-mono text-xs"></textarea>
 						</label>
+						{#if linkHelp}<p class="mt-2 rounded-lg border border-[var(--color-accent-muted)] p-3 text-sm" role="status" data-link-help>{linkHelp}</p>{/if}
 					{:else if source === 'file'}
 						<label class="mt-2 block text-sm">
 							<span class="sr-only">Deck file</span>
@@ -155,7 +189,7 @@
 			</fieldset>
 			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
 			<div class="flex justify-end">
-				<button type="submit" disabled={busy || !name.trim()} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
+				<button type="submit" disabled={busy || !name.trim() || !!linkHelp} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
 			</div>
 		</form>
 	{/if}

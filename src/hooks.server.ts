@@ -97,9 +97,9 @@ process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
 
 // /api/scan-log is public like /scan itself (its GET side checks for an admin on its own).
-// '/decks/' (trailing slash) opens shared deck pages and their export to visitors, while
-// the deck list /decks itself stays protected; the deck loads hide private decks.
-const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/portfolio-tracker', '/impressum', '/datenschutz', '/contact', '/api/health', '/api/scan-log', '/decks/'];
+// '/decks' opens the public deck list, shared deck pages and their export to visitors; the
+// deck loads hide private decks and show a visitor only the public list.
+const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/portfolio-tracker', '/impressum', '/datenschutz', '/contact', '/api/health', '/api/scan-log', '/decks'];
 
 // Permissive CSP: the app loads OpenCV and Tesseract from CDNs and embeds a
 // self-hosted Plausible script. 'unsafe-inline' is required by SvelteKit's

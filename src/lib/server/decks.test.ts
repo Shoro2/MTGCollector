@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { SCHEMA_SQL } from './schema-sql';
 import {
-	DECKS_SQL, DeckError, addDeckCard, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
+	DECKS_SQL, DeckError, REPORTS_TO_HIDE, addDeckBracket, addDeckCard, addDeckReports, hasReported, publicDecks, reportDeck, reportedDecks, restoreDeck, cardPrintings, cardResolver, copyDeck, createDeck, deckCards, deleteDeck, importDeckList,
 	listDecks, ownedCards, readableDeck, removeDeckCard, searchDeckCards, updateDeck, updateDeckCard
 } from './decks';
 
@@ -12,6 +12,8 @@ function fixture() {
 	db.pragma('foreign_keys = ON');
 	db.exec(SCHEMA_SQL);
 	db.exec(DECKS_SQL);
+	addDeckBracket(db);
+	addDeckReports(db);
 	db.exec('CREATE TABLE card_names (name TEXT NOT NULL, lang TEXT NOT NULL, printed_name TEXT NOT NULL, PRIMARY KEY (lang, printed_name, name))');
 	const insert = db.prepare(`INSERT INTO cards (id, oracle_id, name, type_line, oracle_text, cmc, color_identity, set_code, set_name, collector_number,
 		rarity, released_at, image_uri, layout, legalities, price_eur, price_usd, is_paper) VALUES
@@ -28,11 +30,17 @@ function fixture() {
 	card('horn', 'o-horn', 'War Horn', { type: 'Artifact', set: 'ori', number: '243' });
 	card('mountain', 'o-mountain', 'Mountain', { type: 'Basic Land — Mountain', ci: '["R"]', cmc: 0, eur: 0.1 });
 	card('goblin-token', 'o-goblin', 'Goblin', { type: 'Token Creature — Goblin', layout: 'token' });
+	const partner = 'Partner (You can have two commanders if both have partner.)';
+	card('thrasios', 'o-thrasios', 'Thrasios, Triton Hero', { type: 'Legendary Creature — Merfolk Wizard', text: partner, ci: '["G","U"]' });
+	card('tymna', 'o-tymna', 'Tymna the Weaver', { type: 'Legendary Creature — Human Cleric', text: partner, ci: '["B","W"]' });
+	card('wilson', 'o-wilson', 'Wilson, Refined Grizzly', { type: 'Legendary Creature — Bear Warrior', text: 'Choose a Background (You can have a Background as a second commander.)', ci: '["G"]' });
+	card('giants', 'o-giants', 'Raised by Giants', { type: 'Legendary Enchantment — Background', text: 'Commander creatures you own have base power and toughness 10/10.', ci: '["G"]' });
 	db.exec(`INSERT INTO card_faces (card_id, face_index, name, mana_cost, type_line) VALUES ('delver', 0, 'Delver of Secrets', '{U}', 'Creature — Human Wizard'),
 		('delver', 1, 'Insectile Aberration', NULL, 'Creature — Human Insect');
 		INSERT INTO card_names VALUES ('War Horn', 'de', 'Kriegshorn');
 		INSERT INTO cards_fts (cards_fts) VALUES ('rebuild');
-		INSERT INTO users (id, google_id, email, name) VALUES ('a', 'a', 'a@example.invalid', 'A'), ('b', 'b', 'b@example.invalid', 'B');
+		INSERT INTO users (id, google_id, email, name) VALUES ('a', 'a', 'a@example.invalid', 'A'), ('b', 'b', 'b@example.invalid', 'B'),
+			('c', 'c', 'c@example.invalid', 'C'), ('d', 'd', 'd@example.invalid', 'D');
 		INSERT INTO collection_cards (user_id, card_id, quantity, proxy) VALUES ('a', 'bolt-old', 1, 0), ('a', 'bolt-new', 2, 1), ('b', 'krenko', 1, 0);`);
 	return db;
 }
@@ -77,6 +85,34 @@ describe('creating, sharing and copying decks', () => {
 		expect(readableDeck(db, result.id, null)).toMatchObject({ name: 'Goblins', visibility: 'unlisted' });
 		db.close();
 	});
+	it('puts a partner in the command zone only when the two cards may pair', () => {
+		const db = fixture();
+		const duo = createDeck(db, 'a', { name: 'Thrasymna', commanderId: 'thrasios', partnerId: 'tymna', list: '1 Tymna the Weaver\n1 Lightning Bolt' });
+		expect(board(db, duo.id)).toEqual([['commander', 1, 'thrasios', 0], ['commander', 1, 'tymna', 0], ['main', 1, 'bolt-new', 0]]);
+		const bear = createDeck(db, 'a', { name: 'Bear', commanderId: 'wilson', partnerId: 'giants' });
+		expect(board(db, bear.id).map((r) => r[2])).toEqual(['wilson', 'giants']);
+		expect(() => createDeck(db, 'a', { name: 'x', commanderId: 'krenko', partnerId: 'tymna' })).toThrow('Tymna the Weaver cannot share the command zone with Krenko, Mob Boss.');
+		expect(() => createDeck(db, 'a', { name: 'x', commanderId: 'thrasios', partnerId: 'thrasios' })).toThrow('cannot share the command zone');
+		expect(() => createDeck(db, 'a', { name: 'x', partnerId: 'tymna' })).toThrow('Choose the commander before its partner.');
+		expect(() => createDeck(db, 'a', { name: 'x', commanderId: 'thrasios', partnerId: 'nope' })).toThrow('not in the catalogue');
+		expect(listDecks(db, 'a', 1).map((d) => d.commander?.name).sort()).toEqual(['Thrasios, Triton Hero & Tymna the Weaver', 'Wilson, Refined Grizzly & Raised by Giants']);
+		db.close();
+	});
+	it('stores the bracket, changes it, copies it and lists it', () => {
+		const db = fixture();
+		const { id } = createDeck(db, 'a', { name: 'Goblins', commanderId: 'krenko', bracket: 3, visibility: 'unlisted' });
+		expect(readableDeck(db, id, 'a')?.bracket).toBe(3);
+		updateDeck(db, 'a', id, { bracket: 4 });
+		expect(listDecks(db, 'a', 1)[0].bracket).toBe(4);
+		expect(readableDeck(db, copyDeck(db, 'b', id), 'b')?.bracket).toBe(4);
+		updateDeck(db, 'a', id, { bracket: null });
+		expect(readableDeck(db, id, 'a')?.bracket).toBeNull();
+		expect(readableDeck(db, createDeck(db, 'a', { name: 'No bracket' }).id, 'a')?.bracket).toBeNull();
+		for (const bracket of [0, 6, '3', 2.5]) expect(() => updateDeck(db, 'a', id, { bracket })).toThrow('The bracket is a number from 1 to 5.');
+		addDeckBracket(db);
+		expect(() => db.prepare('UPDATE decks SET bracket = 9 WHERE id = ?').run(id)).toThrow();
+		db.close();
+	});
 	it('promotes an MTGO sideboard commander, but not in constructed formats', () => {
 		const db = fixture();
 		const edh = createDeck(db, 'a', { name: 'EDH', format: 'commander', list: '4 Lightning Bolt\n30 Mountain\n\n1 Krenko, Mob Boss' });
@@ -119,6 +155,68 @@ describe('creating, sharing and copying decks', () => {
 		expect(db.prepare('SELECT COUNT(*) AS n FROM deck_cards').get()).toEqual({ n: 0 });
 		db.close();
 	});
+	it('refuses links and contact addresses in names and descriptions and cleans the text', () => {
+		const db = fixture();
+		expect(() => createDeck(db, 'a', { name: 'Cheap cards at cards.com' })).toThrow('Links, web addresses and e-mail addresses are not allowed');
+		const { id } = createDeck(db, 'a', { name: 'Go\u200Bblins  \n deck' });
+		expect(readableDeck(db, id, 'a')?.name).toBe('Goblins deck');
+		expect(() => updateDeck(db, 'a', id, { description: 'Buy singles: www.example.shop' })).toThrow('not allowed');
+		expect(() => updateDeck(db, 'a', id, { description: 'mail me: me (at) example dot com' })).toThrow('not allowed');
+		updateDeck(db, 'a', id, { description: 'Turn 3 Krenko.\r\nThen B.F.M. wins.\u202E' });
+		expect(readableDeck(db, id, 'a')?.description).toBe('Turn 3 Krenko.\nThen B.F.M. wins.');
+		db.close();
+	});
+
+	it('lists public decks for everybody, without hidden or empty ones', () => {
+		const db = fixture();
+		const goblins = createDeck(db, 'a', { name: 'Goblins', commanderId: 'krenko', list: '4 Lightning Bolt', visibility: 'public', bracket: 2 });
+		const duo = createDeck(db, 'b', { name: 'Partners', commanderId: 'thrasios', partnerId: 'tymna', visibility: 'public' });
+		createDeck(db, 'b', { name: 'Unlisted', list: '1 Mountain', visibility: 'unlisted' });
+		createDeck(db, 'b', { name: 'Private', list: '1 Mountain' });
+		createDeck(db, 'b', { name: 'Empty', visibility: 'public' });
+		const all = publicDecks(db, {}, 1);
+		expect(all).toMatchObject({ total: 2, page: 1, pages: 1, sort: 'updated' });
+		expect(all.decks.map((d) => d.name).sort()).toEqual(['Goblins', 'Partners']);
+		expect(all.decks.find((d) => d.id === goblins.id)).toMatchObject({ cards: 5, bracket: 2, commander: { name: 'Krenko, Mob Boss' } });
+		expect(all.decks.find((d) => d.id === duo.id)?.commander?.name).toBe('Thrasios, Triton Hero & Tymna the Weaver');
+		expect(JSON.stringify(all)).not.toMatch(/user_id|example\.invalid/);
+		expect(publicDecks(db, { q: 'tymna' }, 1).decks.map((d) => d.name)).toEqual(['Partners']);
+		expect(publicDecks(db, { q: 'gob' }, 1).decks.map((d) => d.name)).toEqual(['Goblins']);
+		expect(publicDecks(db, { q: '%' }, 1).total).toBe(0);
+		expect(publicDecks(db, { format: 'modern' }, 1).total).toBe(0);
+		expect(publicDecks(db, { sort: 'cards' }, 1).decks.map((d) => d.name)).toEqual(['Goblins', 'Partners']);
+		expect(publicDecks(db, { sort: 'name', page: 99 }, 1)).toMatchObject({ page: 1, decks: [{ name: 'Goblins' }, { name: 'Partners' }] });
+		db.close();
+	});
+
+	it('hides a shared deck after reports from several accounts, until the admin restores it', () => {
+		const db = fixture();
+		const { id } = createDeck(db, 'a', { name: 'Goblins', list: '1 Mountain', visibility: 'public', description: 'Fast goblins.' });
+		const secret = createDeck(db, 'a', { name: 'Secret', list: '1 Mountain' });
+		expect(() => reportDeck(db, 'b', secret.id, 'spam')).toThrow('Deck not found.');
+		expect(() => reportDeck(db, 'a', id, 'spam')).toThrow('You cannot report your own deck.');
+		expect(() => reportDeck(db, 'b', id, 'ads')).toThrow('Choose a reason.');
+		expect(REPORTS_TO_HIDE).toBe(3);
+		expect(reportDeck(db, 'b', id, 'spam')).toEqual({ hidden: false });
+		expect(reportDeck(db, 'b', id, 'offensive')).toEqual({ hidden: false });
+		expect(hasReported(db, 'b', id)).toBe(true);
+		expect(reportDeck(db, 'c', id, 'spam')).toEqual({ hidden: false });
+		expect(publicDecks(db, {}, 1).total).toBe(1);
+		expect(reportDeck(db, 'd', id, 'other')).toEqual({ hidden: true });
+		expect(readableDeck(db, id, null)?.hidden_at).toBeTruthy();
+		expect(publicDecks(db, {}, 1).total).toBe(0);
+		expect(readableDeck(db, copyDeck(db, 'b', id), 'b')?.description).toBe('');
+		expect(readableDeck(db, copyDeck(db, 'a', id), 'a')?.description).toBe('Fast goblins.');
+		expect(reportedDecks(db)).toMatchObject([{ id, reports: 3 }]);
+		expect(reportedDecks(db)[0].reasons.split(', ').sort()).toEqual(['other', 'spam', 'spam']);
+		restoreDeck(db, id);
+		expect(readableDeck(db, id, null)?.hidden_at).toBeNull();
+		expect(reportedDecks(db)).toEqual([]);
+		expect(publicDecks(db, {}, 1).total).toBe(1);
+		db.prepare("DELETE FROM users WHERE id = 'c'").run();
+		db.close();
+	});
+
 	it('removes decks with the account', () => {
 		const db = fixture();
 		createDeck(db, 'a', { name: 'Goblins', list: '1 Lightning Bolt' });
@@ -175,7 +273,9 @@ describe('reads for the deck pages', () => {
 	it('takes the mana cost of the front face for double-faced cards', () => {
 		const db = fixture();
 		const { id } = createDeck(db, 'a', { name: 'Delver', list: '1 Delver of Secrets' });
-		expect(deckCards(db, id)[0]).toMatchObject({ name: 'Delver of Secrets // Insectile Aberration', mana_cost: '{U}', color_identity: ['U'] });
+		expect(deckCards(db, id)[0]).toMatchObject({ name: 'Delver of Secrets // Insectile Aberration', mana_cost: '{U}', colors: null, color_identity: ['U'] });
+		db.prepare(`UPDATE cards SET colors = '["U"]' WHERE id = 'delver'`).run();
+		expect(deckCards(db, id)[0].colors).toEqual(['U']);
 		db.close();
 	});
 	it('suggests cards by name, commanders and legal cards only when asked', () => {
@@ -190,6 +290,18 @@ describe('reads for the deck pages', () => {
 		db.prepare(`UPDATE cards SET legalities = '{"commander":"banned"}' WHERE oracle_id = 'o-bolt'`).run();
 		expect(searchDeckCards(db, 'lightning', { format: 'commander', legal: true })).toEqual([]);
 		expect(searchDeckCards(db, 'lightning', { format: 'commander' }).length).toBe(1);
+		db.close();
+	});
+	it('suggests partners that may pair with the commander and flags who can take one', () => {
+		const db = fixture();
+		expect(searchDeckCards(db, 'thrasios', { format: 'commander', commander: true })).toMatchObject([{ name: 'Thrasios, Triton Hero', partner: true }]);
+		expect(searchDeckCards(db, 'krenko', { format: 'commander', commander: true })).toMatchObject([{ partner: false }]);
+		expect(searchDeckCards(db, 'ty', { partnerOf: 'thrasios' }).map((c) => c.name)).toEqual(['Tymna the Weaver']);
+		expect(searchDeckCards(db, 'thrasios', { partnerOf: 'thrasios' })).toEqual([]);
+		expect(searchDeckCards(db, 'krenko', { partnerOf: 'thrasios' })).toEqual([]);
+		expect(searchDeckCards(db, 'raised', { partnerOf: 'wilson', format: 'commander', commander: true }).map((c) => c.name)).toEqual(['Raised by Giants']);
+		expect(searchDeckCards(db, 'raised', { format: 'commander', commander: true })).toEqual([]);
+		expect(searchDeckCards(db, 'tymna', { partnerOf: 'nope' })).toEqual([]);
 		db.close();
 	});
 	it('lists every printing of the same card', () => {

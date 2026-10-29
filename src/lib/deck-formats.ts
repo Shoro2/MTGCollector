@@ -94,6 +94,17 @@ export function canPair(a: Pick<RuleCard, 'name' | 'type_line' | 'oracle_text'>,
 	return pairs(a, b) || pairs(b, a);
 }
 
+/**
+ * Can this commander share the command zone with a second card? True for the abilities
+ * canPair() accepts (Partner, Partner with, a Partner variant, Friends forever, Choose a
+ * Background, Doctor's companion) and for a Time Lord Doctor, which a companion joins.
+ */
+export function canHavePartner(card: Pick<RuleCard, 'type_line' | 'oracle_text'>): boolean {
+	const text = card.oracle_text ?? '';
+	return /^(?:Partner(?: \(|$| with |—)|Friends forever(?: \(|$)|Choose a Background|Doctor's companion)/m.test(text) ||
+		/\bTime Lord Doctor\b/.test(frontType(card.type_line));
+}
+
 function legalityOf(card: RuleCard, key: string): string | undefined {
 	let data = card.legalities;
 	if (typeof data === 'string') {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deckListText, parseDeckList } from './deck-text';
+import { deckLinkHelp, deckListText, parseDeckList } from './deck-text';
 
 const brief = (text: string) => parseDeckList(text).entries.map((e) => [e.board, e.quantity, e.name, e.set, e.number, e.foil]);
 
@@ -78,5 +78,21 @@ describe('deckListText', () => {
 			['main', 1, 'Sol Ring', 'c21', '263', false],
 			['sideboard', 1, 'Shock', 'm21', '159', false]
 		]);
+	});
+});
+
+describe('deckLinkHelp', () => {
+	it('explains how to copy the list when only a deck link was pasted', () => {
+		expect(deckLinkHelp('https://moxfield.com/decks/abc123XYZ')).toMatch(/^Moxfield links cannot be read\. Open the deck on Moxfield, choose More, then Export/);
+		expect(deckLinkHelp('  www.moxfield.com/decks/abc?tab=primer \n')).toMatch(/^Moxfield/);
+		expect(deckLinkHelp('https://archidekt.com/decks/123/goblins')).toMatch(/^Archidekt/);
+		expect(deckLinkHelp('https://example.org/list')).toMatch(/not a link/);
+		expect(() => parseDeckList('https://moxfield.com/decks/abc')).toThrow('Moxfield links cannot be read');
+	});
+
+	it('leaves card lists and single card names alone', () => {
+		for (const text of ['Counterspell', '1 Sol Ring (C21) 263', 'B.F.M. (Big Furry Monster)', 'Fire // Ice', '4 Lightning Bolt\nhttps://moxfield.com/decks/abc']) {
+			expect(deckLinkHelp(text)).toBeNull();
+		}
 	});
 });

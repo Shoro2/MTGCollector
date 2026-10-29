@@ -5,7 +5,7 @@ import { SCHEMA_SQL } from './schema-sql.js';
 import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
-import { DECKS_SQL } from './decks.js';
+import { DECKS_SQL, addDeckBracket, addDeckReports } from './decks.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -359,6 +359,18 @@ const MIGRATIONS: Migration[] = [
 		// nightly user-data dump must list both tables.
 		id: '0027_decks',
 		run: (db) => db.exec(DECKS_SQL)
+	},
+	{
+		// The Commander Bracket (1 to 5) a deck's owner states, shown after the deck's name.
+		id: '0028_deck_bracket',
+		run: (db) => addDeckBracket(db)
+	},
+	{
+		// Reports on shared decks and the time a deck was hidden after enough of them;
+		// an index for the public deck list. User data: the nightly dump must list
+		// deck_reports.
+		id: '0029_deck_reports',
+		run: (db) => addDeckReports(db)
 	}
 ];
 

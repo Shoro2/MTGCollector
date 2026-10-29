@@ -25,6 +25,15 @@
 		await invalidateAll();
 	}
 
+	async function restoreDeck(id: string) {
+		await fetch('/admin/api', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'restore_deck', id })
+		});
+		await invalidateAll();
+	}
+
 	async function triggerPriceUpdate() {
 		updating = true;
 		updateMsg = 'Triggering price update...';
@@ -238,6 +247,36 @@
 						</div>
 					</details>
 				{/each}
+			</div>
+		{/if}
+	</div>
+
+	<!-- Reported decks: three reports hide a deck by themselves; restoring is the only action. -->
+	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]" data-reported-decks>
+		<h2 class="text-lg font-semibold mb-1">Reported Decks</h2>
+		<p class="mb-4 text-xs text-[var(--color-text-muted)]">A deck reported by three accounts is hidden automatically (no description for others, not in the public list). Restore clears its reports.</p>
+		{#if data.reportedDecks.length === 0}
+			<p class="text-sm text-[var(--color-text-muted)]">No reports.</p>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="w-full text-sm">
+					<thead class="text-left text-xs uppercase text-[var(--color-text-muted)]">
+						<tr><th class="py-2 pr-3">Deck</th><th class="py-2 pr-3">Reports</th><th class="py-2 pr-3">State</th><th class="py-2 pr-3">Last report</th><th></th></tr>
+					</thead>
+					<tbody>
+						{#each data.reportedDecks as deck (deck.id)}
+							<tr class="border-t border-[var(--color-border)]">
+								<td class="py-2 pr-3"><a href="/decks/{deck.id}" class="hover:text-[var(--color-primary)]">{deck.name}</a> <span class="text-xs text-[var(--color-text-muted)]">{deck.visibility}</span></td>
+								<td class="py-2 pr-3">{deck.reports} <span class="text-xs text-[var(--color-text-muted)]">({deck.reasons})</span></td>
+								<td class="py-2 pr-3">{deck.hidden_at ? `hidden ${formatDate(deck.hidden_at)}` : 'visible'}</td>
+								<td class="py-2 pr-3 text-xs text-[var(--color-text-muted)]">{formatDate(deck.last_report)}</td>
+								<td class="py-2 text-right">
+									<button onclick={() => restoreDeck(deck.id)} class="text-xs border border-[var(--color-border)] px-3 py-1.5 rounded hover:bg-[var(--color-surface-hover)]">Restore</button>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
 			</div>
 		{/if}
 	</div>

@@ -13,19 +13,32 @@
 		return matches.map((token) => token.slice(1, -1));
 	});
 
+	const COLORS = ['w', 'u', 'b', 'r', 'g', 'c'];
+
 	function pipClass(symbol: string): string {
 		const normalized = symbol.toLowerCase();
-		if (['w', 'u', 'b', 'r', 'g', 'c'].includes(normalized)) {
+		if (COLORS.includes(normalized)) {
 			return `mana-pip pip-${normalized}`;
 		}
+		if (symbol.includes('/')) return 'mana-pip mana-pip-hybrid';
 		return 'mana-pip mana-pip-generic';
+	}
+
+	// Hybrid and Phyrexian symbols ("R/W", "2/W", "G/P"): the ring takes both colors, one
+	// per half, and the letters drop the slash so they fit the pip.
+	function hybridStyle(symbol: string): string | undefined {
+		if (!symbol.includes('/')) return undefined;
+		const colors = symbol.toLowerCase().split('/').filter((part) => COLORS.includes(part));
+		if (!colors.length) return undefined;
+		const [a, b = a] = colors.map((c) => `var(--pip-${c})`);
+		return `color: ${a}; border-color: ${a} ${b} ${b} ${a}`;
 	}
 </script>
 
 {#if symbols.length > 0}
 	<span class="mana-cost {className}" aria-label={cost ?? ''}>
 		{#each symbols as symbol}
-			<span class={pipClass(symbol)}>{symbol}</span>
+			<span class={pipClass(symbol)} style={hybridStyle(symbol)}>{symbol.replace('/', '')}</span>
 		{/each}
 	</span>
 {/if}

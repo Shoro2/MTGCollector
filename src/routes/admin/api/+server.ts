@@ -1,5 +1,6 @@
 import { sqlite } from '$lib/server/db';
 import { json, error } from '@sveltejs/kit';
+import { restoreDeck } from '$lib/server/decks';
 import type { RequestHandler } from './$types';
 
 export const POST: RequestHandler = async ({ locals, request }) => {
@@ -25,6 +26,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 		const id = Number(body.id);
 		if (!id) return json({ success: false, message: 'Missing id' }, { status: 400 });
 		sqlite.prepare('DELETE FROM contact_messages WHERE id = ?').run(id);
+		return json({ success: true });
+	}
+
+	if (action === 'restore_deck') {
+		if (typeof body.id !== 'string' || !body.id) return json({ success: false, message: 'Missing id' }, { status: 400 });
+		restoreDeck(sqlite, body.id);
 		return json({ success: true });
 	}
 

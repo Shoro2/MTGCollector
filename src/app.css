@@ -35,6 +35,10 @@
 	--rarity-uncommon: #b6c2d2;
 	--rarity-rare: #d9a94b;
 	--rarity-mythic: #e7613a;
+	--frame-gold: #d6b04c;
+	--frame-artifact: #a9b6c6;
+	--frame-land: #b4865a;
+	--frame-colorless: #b3aea5;
 	--shadow-raised: 0 10px 30px rgba(0, 0, 0, 0.24);
 	--shadow-overlay: 0 24px 70px rgba(0, 0, 0, 0.45);
 	--radius-sm: 6px;
@@ -343,6 +347,11 @@ tbody tr:hover {
 	line-height: 1;
 }
 
+.mana-pip-hybrid {
+	font-size: 0.5rem;
+	letter-spacing: -0.03em;
+}
+
 .mana-pip-generic {
 	border-style: solid;
 	color: #9aa6b5;
@@ -466,6 +475,63 @@ tbody tr:hover {
 .dense-row {
 	min-height: var(--row-height-dense);
 	border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/*
+ * Deck list rows framed in the color a printed card of that kind has (original tints,
+ * no frame art): a stripe on the left, a tinted border and a fading background. Gold
+ * for several colors; a hybrid card shows its two colors (--frame-a, --frame-b inline).
+ */
+.deck-card {
+	--frame: var(--frame-colorless);
+	position: relative;
+	min-height: 2.25rem;
+	border: 1px solid color-mix(in srgb, var(--frame) 34%, transparent);
+	border-radius: var(--radius-sm);
+	padding-left: 0.6rem;
+	background: linear-gradient(90deg, color-mix(in srgb, var(--frame) 20%, transparent), color-mix(in srgb, var(--frame) 5%, transparent) 70%);
+}
+
+.deck-card::before {
+	position: absolute;
+	top: -1px;
+	bottom: -1px;
+	left: -1px;
+	width: 4px;
+	border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+	background: var(--frame);
+	content: "";
+}
+
+.deck-card:hover,
+.deck-card:focus-within {
+	border-color: color-mix(in srgb, var(--frame) 60%, transparent);
+	background: linear-gradient(90deg, color-mix(in srgb, var(--frame) 30%, transparent), color-mix(in srgb, var(--frame) 10%, transparent) 70%);
+}
+
+.frame-w { --frame: var(--pip-w); }
+.frame-u { --frame: var(--pip-u); }
+.frame-b { --frame: var(--pip-b); }
+.frame-r { --frame: var(--pip-r); }
+.frame-g { --frame: var(--pip-g); }
+.frame-multi { --frame: var(--frame-gold); }
+.frame-artifact { --frame: var(--frame-artifact); }
+.frame-land { --frame: var(--frame-land); }
+.frame-colorless { --frame: var(--frame-colorless); }
+
+.frame-hybrid {
+	--frame: color-mix(in srgb, var(--frame-a) 50%, var(--frame-b));
+	background: linear-gradient(90deg, color-mix(in srgb, var(--frame-a) 20%, transparent), color-mix(in srgb, var(--frame-b) 14%, transparent) 70%);
+}
+
+.frame-hybrid::before {
+	background: linear-gradient(180deg, var(--frame-a) 50%, var(--frame-b) 50%);
+}
+
+.bracket-chip {
+	border-color: rgba(111, 178, 255, 0.4);
+	color: var(--color-primary);
+	font-family: var(--font-data);
 }
 
 .skeleton {
