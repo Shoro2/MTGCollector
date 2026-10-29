@@ -70,6 +70,29 @@ try {
 		await new Promise(resolve => setTimeout(resolve, 200));
 	}
 	assert.ok(ready, output);
+	// Decks need the tables the app's migrations create, so they are added once it has booted.
+	// Only a public, unhidden deck of at least 40 cards may be indexed (src/lib/deck-seo.ts).
+	const deckId = (name) => name.padEnd(16, 'x');
+	const decks = { indexed: deckId('Indexed'), small: deckId('Small'), unlisted: deckId('Unlisted'), hidden: deckId('Hidden'), secret: deckId('Secret') };
+	{
+		const live = new Database(dbPath);
+		live.prepare("INSERT INTO users (id, google_id, email, name) VALUES ('owner', 'g-owner', 'owner@example.invalid', 'Real Google Name')").run();
+		const deck = live.prepare(`INSERT INTO decks (id, user_id, name, format, visibility, author_name, hidden_at, created_at, updated_at)
+			VALUES (?, 'owner', ?, ?, ?, ?, ?, '2026-10-20T10:00:00.000Z', '2026-10-28T12:00:00.000Z')`);
+		const entry = live.prepare('INSERT INTO deck_cards (deck_id, card_id, board, quantity) VALUES (?, ?, ?, ?)');
+		live.transaction(() => {
+			deck.run(decks.indexed, 'Fixture Brew', 'modern', 'public', 'Shoro', null);
+			entry.run(decks.indexed, printingId(1), 'main', 36);
+			entry.run(decks.indexed, printingId(82), 'main', 4);
+			entry.run(decks.indexed, printingId(83), 'sideboard', 2);
+			for (const [id, name, visibility, cards, hidden] of [[decks.small, 'Tiny Start', 'public', 39, null], [decks.unlisted, 'Link Only', 'unlisted', 60, null],
+				[decks.hidden, 'Reported Deck', 'public', 60, '2026-10-29T10:00:00.000Z'], [decks.secret, 'Secret Deck', 'private', 60, null]]) {
+				deck.run(id, name, 'modern', visibility, 'Shoro', hidden);
+				entry.run(id, printingId(4), 'main', cards);
+			}
+		})();
+		live.close();
+	}
 	const index = await fetch(origin + '/sitemap.xml', { redirect: 'manual' });
 	check(index.status === 200 && index.headers.get('content-type').includes('application/xml'), 'sitemap is public XML, without a login redirect');
 	const indexXml = await index.text();
@@ -82,9 +105,14 @@ try {
 		const xml = await response.text();
 		urls.push(...locations(xml));
 	}
-	check(urls.length === 36 && new Set(urls).size === 36, 'all 29 cards and seven public pages appear exactly once');
+	check(urls.length === 38 && new Set(urls).size === 38, 'all 29 cards, eight public pages and the one indexable deck appear exactly once');
+	check(urls.includes(`${publicOrigin}/decks/${decks.indexed}`) && urls.includes(`${publicOrigin}/decks`)
+		&& !Object.values(decks).filter((id) => id !== decks.indexed).some((id) => urls.some((url) => url.includes(id))),
+		'the sitemap lists the public deck list and the indexable deck, never a small, unlisted, hidden or private one');
+	check((await (await fetch(origin + '/sitemap-decks-1.xml')).text()).includes(`<loc>${publicOrigin}/decks/${decks.indexed}</loc><lastmod>2026-10-28T12:00:00.000Z</lastmod>`),
+		'a deck in the sitemap carries the date of its last change');
 	check(!urls.some((url) => /\/cards\/[0-9a-f]{8}-/.test(url)) && urls.includes(publicOrigin + '/cards/teferis-protection'), 'the sitemap lists card pages, not printings');
-	for (const path of ['/sitemap-cards-0.xml', '/sitemap-cards-2.xml', '/sitemap-unknown.xml']) {
+	for (const path of ['/sitemap-cards-0.xml', '/sitemap-cards-2.xml', '/sitemap-decks-2.xml', '/sitemap-unknown.xml']) {
 		check((await fetch(origin + path, { redirect: 'manual' })).status === 404, `missing sitemap returns 404: ${path}`);
 	}
 	for (const path of ['/collection', '/prices', '/admin']) {
@@ -202,6 +230,34 @@ try {
 	check((await page.locator('main').innerText()).includes('Example data'), 'the dashboard preview is labelled as example data');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'portfolio tracker page fits a mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'portfolio-tracker-mobile.png'), fullPage: true });
+	// Decks (owner decision 2026-10-29): public decks of a real size are landing pages, the rest is not.
+	await page.goto(origin + `/decks/${decks.indexed}?group=cmc&sort=price`);
+	check(await page.locator('meta[name="robots"]').count() === 0, 'an indexable deck page carries no noindex');
+	check(await page.locator('link[rel="canonical"]').getAttribute('href') === `${publicOrigin}/decks/${decks.indexed}`, 'a deck page is its own canonical, without its view parameters');
+	const deckTitle = await page.title(), deckSnippet = await page.locator('meta[name="description"]').getAttribute('content');
+	check(deckTitle === 'Fixture Brew: MTG Modern deck', 'a deck page title names the deck and its format');
+	check(deckSnippet.startsWith('Modern deck by Shoro: 40 cards and 2 in the sideboard') && deckSnippet.includes("Teferi's Protection") && deckSnippet.length <= 155,
+		'a deck snippet states author, size and the most valuable cards within 155 characters');
+	check(!/[–—]/.test(deckTitle + deckSnippet) && !(await page.content()).includes('Real Google Name') && !(await page.content()).includes('owner@example.invalid'),
+		'a deck page uses no dashes and never shows the owner\'s Google name or e-mail address');
+	check(await page.locator('meta[property="og:url"]').getAttribute('content') === `${publicOrigin}/decks/${decks.indexed}`, 'a deck page shares its canonical URL');
+	for (const [label, id] of [['too small', decks.small], ['unlisted', decks.unlisted], ['hidden after reports', decks.hidden]]) {
+		await page.goto(origin + `/decks/${id}`);
+		check(await page.locator('meta[name="robots"]').getAttribute('content') === 'noindex, nofollow' && await page.locator('link[rel="canonical"]').count() === 0,
+			`a ${label} deck stays out of search engines`);
+	}
+	check((await fetch(origin + `/decks/${decks.secret}`)).status === 404, 'a private deck is a 404 for visitors');
+	check((await fetch(origin + `/decks/${decks.indexed}/export`)).headers.get('x-robots-tag') === 'noindex', 'a deck\'s text export is never indexed');
+	await page.goto(origin + '/decks');
+	check(await page.locator('meta[name="robots"]').count() === 0 && await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/decks',
+		'the public deck list is a landing page with its clean canonical');
+	const decksTitle = await page.title(), decksSnippet = await page.locator('meta[name="description"]').getAttribute('content');
+	check(decksTitle.length <= 60 && decksSnippet.length <= 155 && !/[-–—]/.test(decksTitle + decksSnippet), 'the public deck list has a snippet without dashes that fits');
+	check(await page.locator(`a[href="/decks/${decks.indexed}"]`).count() === 1 && await page.locator(`a[href="/decks/${decks.hidden}"]`).count() === 0,
+		'the public deck list links public decks, not hidden ones');
+	await page.goto(origin + '/decks?q=Fixture&view=public');
+	check(await page.locator('meta[name="robots"]').getAttribute('content') === 'noindex, follow'
+		&& await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/decks?q=Fixture', 'a deck search is noindex, follow');
 	await page.goto(origin + '/login');
 	const loginText = await page.locator('main').innerText();
 	check(loginText.includes('free to use') && loginText.includes('never sell your data') && !/[–—]/.test(loginText),

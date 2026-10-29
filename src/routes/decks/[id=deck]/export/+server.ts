@@ -13,7 +13,8 @@ export async function GET({ params, url, locals }) {
 	const deck = readableDeck(sqlite, params.id, locals.user?.id ?? null);
 	if (!deck) throw error(404, 'Deck not found');
 	const style = url.searchParams.get('style') === 'names' ? 'names' : 'printings';
-	const headers: Record<string, string> = { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'private, no-store' };
+	// The deck page is the search result; its plain-text export never is.
+	const headers: Record<string, string> = { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'private, no-store', 'X-Robots-Tag': 'noindex' };
 	if (url.searchParams.get('download') === '1') {
 		headers['Content-Disposition'] = `attachment; filename="${slugifyCardName(deck.name) || 'deck'}.txt"`;
 	}

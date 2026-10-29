@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { DECK_FORMATS, deckFormat } from '$lib/deck-formats';
+	import { INDEX_MIN_CARDS } from '$lib/deck-seo';
 	import { VISIBILITIES, VISIBILITY_LABELS, type Bracket, type CardSuggestion, type Visibility } from '$lib/deck';
 	import CardSearchInput from './CardSearchInput.svelte';
 	import BracketSelect from './BracketSelect.svelte';
@@ -50,8 +51,8 @@
 	});
 	const VISIBILITY_HELP: Record<Visibility, string> = {
 		private: 'Only you can see it.',
-		unlisted: 'Anyone with the link can view it. It is never listed.',
-		public: 'Anyone with the link can view it, and it is listed in the public deck list.'
+		unlisted: 'Anyone with the link can view it. It is never listed, and search engines do not show it.',
+		public: `Anyone with the link can view it, it is listed in the public deck list, and from ${INDEX_MIN_CARDS} cards on search engines such as Google may show it.`
 	};
 
 	async function readFile(event: Event) {

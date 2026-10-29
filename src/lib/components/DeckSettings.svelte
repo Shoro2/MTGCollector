@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { DECK_FORMATS } from '$lib/deck-formats';
+	import { INDEX_MIN_CARDS } from '$lib/deck-seo';
 	import { VISIBILITIES, VISIBILITY_LABELS, type Bracket, type Visibility } from '$lib/deck';
 	import BracketSelect from './BracketSelect.svelte';
 	import Turnstile from './Turnstile.svelte';
@@ -111,7 +112,7 @@
 					{/each}
 				</div>
 				<p class="mt-1 text-xs text-[var(--color-text-muted)]">
-					Private decks are yours alone. Unlisted and public decks can be viewed by anyone with the link, with the author name below but never your Google name, e-mail address or collection.
+					Private decks are yours alone. Unlisted and public decks can be viewed by anyone with the link, with the author name below but never your Google name, e-mail address or collection. Public decks are listed for everybody, and from {INDEX_MIN_CARDS} cards on search engines such as Google may show them.
 				</p>
 			</fieldset>
 			<label class="block text-sm">

@@ -3,7 +3,8 @@ import { sqlite } from '$lib/server/db';
 import { deckCards, hasReported, ownedCards, ownedPrintings, readableDeck } from '$lib/server/decks';
 import { captchaSiteKey } from '$lib/server/captcha';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
-import { allocateOwnership, cardFrame, deckColors, deckTotals, manaCurve, ownershipKey, unitPriceEur } from '$lib/deck';
+import { allocateOwnership, cardCategory, cardFrame, deckColors, deckTotals, manaCurve, ownershipKey, unitPriceEur } from '$lib/deck';
+import { deckIndexable, deckPageMeta, deckPageUrl } from '$lib/deck-seo';
 import { canHavePartner, checkDeck } from '$lib/deck-formats';
 
 /**
@@ -33,13 +34,34 @@ export async function load({ params, locals, depends }) {
 	const partnerOf = isOwner && command && command !== 'oathbreaker' && zone.length === 1 && zone[0].quantity === 1 && canHavePartner(zone[0])
 		? { cardId: zone[0].card_id, name: zone[0].name }
 		: null;
+	const totals = deckTotals(rows, rate, ownership);
+	const colors = deckColors(rows);
+	const hidden = !!deck.hidden_at;
+	const authorName = hidden && !isOwner ? '' : deck.author_name ?? '';
+	const cards = totals.counts.commander + totals.counts.main;
+	// Search engines index public decks of a real size, never a hidden one (deck-seo.ts). The
+	// snippet quotes the deck's most valuable cards; commanders are named already, basics say nothing.
+	const notable = rows
+		.filter((r) => r.board === 'main' && !/\bBasic\b/.test(r.type_line ?? '') && cardCategory(r.type_line) !== 'Other')
+		.map((r) => ({ name: r.name, unit: unitPriceEur(r, rate) ?? -1 }))
+		.sort((a, b) => b.unit - a.unit || a.name.localeCompare(b.name))
+		.map((r) => r.name);
+	const seo = {
+		indexable: deckIndexable({ visibility: deck.visibility, hidden, cards }),
+		canonical: deckPageUrl(deck.id),
+		...deckPageMeta({
+			name: deck.name, formatLabel: check.format.label, commander: zone.map((r) => r.name).join(' & '), author: authorName,
+			cards, sideboard: totals.counts.sideboard, colors, value: totals.value, priced: cards + totals.counts.sideboard > totals.unpriced, notable: notable.slice(0, 8)
+		})
+	};
 	return {
+		seo,
 		deck: {
 			id: deck.id, name: deck.name, format: deck.format, visibility: deck.visibility, bracket: deck.bracket ?? null,
 			// A deck hidden after reports keeps its description and author name from everybody but its owner.
 			description: deck.hidden_at && !isOwner ? '' : deck.description,
-			author_name: deck.hidden_at && !isOwner ? '' : deck.author_name ?? '',
-			hidden: !!deck.hidden_at,
+			author_name: authorName,
+			hidden,
 			created_at: deck.created_at, updated_at: deck.updated_at
 		},
 		isOwner,
@@ -52,8 +74,8 @@ export async function load({ params, locals, depends }) {
 			...row, unit: unitPriceEur(row, rate), owned: ownership?.get(row.id) ?? null, frame: cardFrame(row)
 		})),
 		check: { formatLabel: check.format.label, kind: check.format.kind, problems: check.problems, unchecked: check.unchecked },
-		totals: deckTotals(rows, rate, ownership),
+		totals,
 		curve: manaCurve(rows),
-		colors: deckColors(rows)
+		colors
 	};
 }

@@ -13,6 +13,7 @@
 	import DeckReport from '$lib/components/DeckReport.svelte';
 	import { BOARDS, BOARD_LABELS, VISIBILITY_LABELS, groupDeck, ownershipRank, timeAgo, type Board, type CardSuggestion, type GroupBy, type SortBy } from '$lib/deck';
 	import { formatPrice } from '$lib/utils';
+	import { SITE_URL } from '$lib/seo';
 
 	let { data }: { data: PageData } = $props();
 	type Row = PageData['rows'][number];
@@ -30,6 +31,11 @@
 	let hovered = $state<Row | null>(null);
 	const preview = $derived(hovered ?? lead);
 	const image = (row: Row | null) => (row ? row.local_image_path || row.image_uri : null);
+	// Social previews need an absolute URL; a locally stored image is a path on this site.
+	const socialImage = $derived.by(() => {
+		const src = image(lead);
+		return src?.startsWith('/') ? SITE_URL + src : src;
+	});
 
 	const counts = $derived(data.totals.counts);
 	const deckSize = $derived(counts.commander + counts.main);
@@ -136,11 +142,22 @@
 </script>
 
 <svelte:head>
-	<title>{deck.name} | MTG Collector</title>
-	<meta name="robots" content="noindex, nofollow" />
-	<meta property="og:title" content="{deck.name}: {data.check.formatLabel} deck" />
-	<meta property="og:description" content="{deckSize} cards{counts.sideboard ? `, ${counts.sideboard} in the sideboard` : ''}, valued at {formatPrice(data.totals.value)}." />
-	{#if image(lead)}<meta property="og:image" content={image(lead)} />{/if}
+	<!-- Public decks of a real size are indexed (deck-seo.ts); unlisted, hidden and small decks are not. -->
+	<title>{data.seo.title}</title>
+	<meta name="description" content={data.seo.description} />
+	{#if data.seo.indexable}
+		<link rel="canonical" href={data.seo.canonical} />
+	{:else}
+		<meta name="robots" content="noindex, nofollow" />
+	{/if}
+	<meta property="og:title" content={data.seo.title} />
+	<meta property="og:description" content={data.seo.description} />
+	<meta property="og:type" content="website" />
+	<meta property="og:url" content={data.seo.canonical} />
+	{#if socialImage}
+		<meta property="og:image" content={socialImage} />
+		<meta property="og:image:alt" content={lead?.name} />
+	{/if}
 </svelte:head>
 
 <div class="space-y-5" data-deck={deck.id}>
