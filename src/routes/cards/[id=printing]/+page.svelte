@@ -3,6 +3,7 @@
 	import { SITE_URL, cardPageUrl, jsonLd } from '$lib/seo';
 	import { formatPrice, getRarityColor, conditionLabel, priceDate, priceDivergence, isSuspiciousDivergence, type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
+	import { formatQuote, parseCurrency } from '$lib/currency';
 	import { invalidate } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { Chart } from 'chart.js';
@@ -23,6 +24,8 @@
 	let showAddForm = $state(false);
 
 	let card = $derived(data.card);
+	// The viewer's display currency (/settings); visitors see euros.
+	const currency = $derived(parseCurrency(data.currency));
 	let cardLabel = $derived(`${card.name} - ${card.set_name} #${card.collector_number}`);
 	let canonical = $derived(data.cardSlug ? cardPageUrl(data.cardSlug) : `${SITE_URL}/cards/${card.id}`);
 	let pageUrl = $derived(`${SITE_URL}/cards/${card.id}`);
@@ -299,11 +302,11 @@
 				</div>
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
 					<span class="text-[var(--color-text-muted)]">Price</span>
-					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur as number | null, card.price_usd as number | null)}</p>
+					<p class="font-medium text-[var(--color-accent)]">{formatQuote(card.price_eur as number | null, card.price_usd as number | null, currency)}</p>
 				</div>
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
 					<span class="text-[var(--color-text-muted)]">Price Foil</span>
-					<p class="font-medium text-[var(--color-accent)]">{formatPrice(card.price_eur_foil as number | null, card.price_usd_foil as number | null)}</p>
+					<p class="font-medium text-[var(--color-accent)]">{formatQuote(card.price_eur_foil as number | null, card.price_usd_foil as number | null, currency)}</p>
 				</div>
 			</div>
 
@@ -403,7 +406,7 @@
 							</div>
 						</div>
 						<div>
-							<label for="add-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price (EUR)</label>
+							<label for="add-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price ({currency})</label>
 							<input
 								id="add-purchase-price"
 								type="number"

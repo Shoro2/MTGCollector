@@ -27,9 +27,9 @@ export async function load({ locals, url, depends }) {
 			format: params.get('format') ?? '',
 			sort: (params.get('sort') ?? 'updated') as PublicDeckSort,
 			page: Number(params.get('page') ?? 1)
-		}, rate);
+		}, rate, locals.user?.currency);
 		// The public list and its pages are landing pages for search engines; searches and filters are not.
 		return { view: 'public' as const, signedIn, create, decks: [], public: list, seo: deckListSeo(params, list.page) };
 	}
-	return { view: 'mine' as const, signedIn, create, decks: listDecks(sqlite, locals.user.id, rate), public: null, seo: null };
+	return { view: 'mine' as const, signedIn, create, decks: listDecks(sqlite, locals.user.id, rate, locals.user.currency), public: null, seo: null };
 }

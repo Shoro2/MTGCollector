@@ -8,9 +8,12 @@
 	import PublicDeckList from '$lib/components/PublicDeckList.svelte';
 	import { deckFormat } from '$lib/deck-formats';
 	import { VISIBILITY_LABELS, timeAgo } from '$lib/deck';
-	import { formatPrice } from '$lib/utils';
+	import { formatMoney, parseCurrency } from '$lib/currency';
 
 	let { data }: { data: PageData } = $props();
+
+	// Deck values arrive in the viewer's display currency (/settings).
+	const formatPrice = (amount: number | null | undefined) => formatMoney(amount, parseCurrency(page.data.currency));
 
 	const SORTS = { updated: 'Updated', name: 'Name', format: 'Format', cards: 'Cards', value: 'Value' } as const;
 	type Sort = keyof typeof SORTS;

@@ -12,10 +12,13 @@
 	import DeckBracket from '$lib/components/DeckBracket.svelte';
 	import DeckReport from '$lib/components/DeckReport.svelte';
 	import { BOARDS, BOARD_LABELS, VISIBILITY_LABELS, groupDeck, ownershipRank, timeAgo, type Board, type CardSuggestion, type GroupBy, type SortBy } from '$lib/deck';
-	import { formatPrice } from '$lib/utils';
+	import { formatMoney, parseCurrency } from '$lib/currency';
 	import { SITE_URL } from '$lib/seo';
 
 	let { data }: { data: PageData } = $props();
+
+	// Deck values arrive in the viewer's display currency (/settings).
+	const formatPrice = (amount: number | null | undefined) => formatMoney(amount, parseCurrency(page.data.currency));
 	type Row = PageData['rows'][number];
 
 	const GROUPS: Record<GroupBy, string> = { type: 'Card type', cmc: 'Mana value', none: 'None' };

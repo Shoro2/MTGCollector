@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { euro } from '$lib/home';
+	import { currencySymbol, formatMoneyGrouped, type Currency } from '$lib/currency';
 	import { SITE_URL, jsonLd } from '$lib/seo';
 
 	let { data }: { data: PageData } = $props();
@@ -10,9 +11,16 @@
 	const description = "Scan Magic: The Gathering cards, look up prices for every printing and follow your collection's value and profit. Free to use, with Moxfield import.";
 
 	const change = (pct: number) => `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(1)}%`;
-	const signed = (amount: number) => `${amount >= 0 ? '+' : '−'}${euro(Math.abs(amount))}`;
-	const unitPrice = (eur: number | null, usd: number | null) =>
-		eur != null ? euro(eur) : usd != null ? `$${usd.toFixed(2)}` : 'no price';
+	// Visitors see Cardmarket prices in euros; the dashboard is in the user's display currency.
+	const currency = $derived<Currency>(data.dashboard?.currency ?? 'EUR');
+	const money = (amount: number) => formatMoneyGrouped(amount, currency);
+	const signed = (amount: number) => `${amount >= 0 ? '+' : '−'}${money(Math.abs(amount))}`;
+	// A card's own price in the display currency, else the other market's with its own symbol.
+	const unitPrice = (eur: number | null, usd: number | null) => {
+		const [first, other]: [number | null, number | null] = currency === 'USD' ? [usd, eur] : [eur, usd];
+		const otherCurrency: Currency = currency === 'USD' ? 'EUR' : 'USD';
+		return first != null ? money(first) : other != null ? formatMoneyGrouped(other, otherCurrency) : 'no price';
+	};
 </script>
 
 <svelte:head>
@@ -145,10 +153,10 @@
 		<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
 			<div class="kpi-card">
 				<p class="kpi-label">Collection value</p>
-				<p class="kpi-value text-[var(--color-accent)]">{euro(s.value)}</p>
+				<p class="kpi-value text-[var(--color-accent)]">{money(s.value)}</p>
 				{#if s.change != null}
 					<p class="kpi-subtle {s.change > 0 ? 'text-[var(--color-success)]' : s.change < 0 ? 'text-[var(--color-danger)]' : ''}">
-						{s.change === 0 ? 'No change today' : `${s.change > 0 ? '▲' : '▼'} ${euro(Math.abs(s.change))} today`}
+						{s.change === 0 ? 'No change today' : `${s.change > 0 ? '▲' : '▼'} ${money(Math.abs(s.change))} today`}
 					</p>
 				{/if}
 			</div>
@@ -196,7 +204,7 @@
 					<svg
 						viewBox="0 0 320 120"
 						role="img"
-						aria-label="Value from {euro(dash.chart.first.value)} to {euro(dash.chart.last.value)}, purchase cost from {euro(dash.chart.first.cost)} to {euro(dash.chart.last.cost)}"
+						aria-label="Value from {money(dash.chart.first.value)} to {money(dash.chart.last.value)}, purchase cost from {money(dash.chart.first.cost)} to {money(dash.chart.last.cost)}"
 						class="block h-[160px] w-full md:h-[220px]"
 						preserveAspectRatio="none"
 					>
@@ -229,7 +237,7 @@
 										<span class="min-w-0 flex-1 truncate">{move.name}</span>
 										{#if move.foil}<span class="chip text-[11px]">Foil</span>{/if}
 										<span class="chip set-code">{move.setCode}</span>
-										<span class="price w-[76px] text-right">{euro(move.price)}</span>
+										<span class="price w-[76px] text-right">{money(move.price)}</span>
 										<span class="price w-[68px] text-right {move.pct > 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}">{change(move.pct)}</span>
 									</a>
 								</li>
@@ -238,7 +246,7 @@
 					{:else}
 						<p class="text-sm text-[var(--color-text-muted)]">No price changes in your collection today.</p>
 					{/if}
-					<p class="text-xs text-[var(--color-text-muted)]">Today against the price before. Cards under €1 and proxies are not included.</p>
+					<p class="text-xs text-[var(--color-text-muted)]">Today against the price before. Cards under {currencySymbol(currency)}1 and proxies are not included.</p>
 				</section>
 
 				<section aria-labelledby="recently-added" class="panel flex min-w-0 flex-col gap-2 p-5">

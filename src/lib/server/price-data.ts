@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3';
+import { costIn, DEFAULT_CURRENCY, quoteIn, type Currency } from '../currency.js';
 
 interface Quote {
 	price_eur: number | null;
@@ -18,6 +19,7 @@ interface Holding extends Quote {
 	foil: number;
 	proxy: number;
 	purchase_price: number | null;
+	purchase_currency: string | null;
 	added_at: string | null;
 	local_eur: number | null;
 	local_eur_foil: number | null;
@@ -33,29 +35,39 @@ export interface ProfitPoint {
 	estimated_count: number;
 }
 
-// Preserve the catalogue's EUR-first policy, including its English reference
-// fallback. Mark that fallback whenever it supplies the value actually used.
-function prices(base: Quote | undefined, local: Quote | undefined, foil: number, foreign: boolean) {
+// Preserve the catalogue's policy of the display currency first (EUR by default),
+// including its English reference fallback. Mark that fallback whenever it supplies
+// the value actually used.
+function prices(base: Quote | undefined, local: Quote | undefined, foil: number, foreign: boolean, currency: Currency) {
 	const ownEur = foil ? local?.price_eur_foil : local?.price_eur;
 	const ownUsd = foil ? local?.price_usd_foil : local?.price_usd;
 	const baseEur = foil ? base?.price_eur_foil : base?.price_eur;
 	const baseUsd = foil ? base?.price_usd_foil : base?.price_usd;
+	const [ownFirst, ownOther, baseFirst, baseOther] = currency === 'USD'
+		? [ownUsd, ownEur, baseUsd, baseEur] : [ownEur, ownUsd, baseEur, baseUsd];
 	return {
 		price: ownEur ?? baseEur ?? null,
 		price_usd: ownUsd ?? baseUsd ?? null,
-		estimated: foreign && ownEur == null && (baseEur != null || (ownUsd == null && baseUsd != null))
+		estimated: foreign && ownFirst == null && (baseFirst != null || (ownOther == null && baseOther != null))
 	};
 }
-function inEur(quote: { price: number | null; price_usd: number | null }, rate: number) {
-	return quote.price ?? (quote.price_usd == null ? null : quote.price_usd * rate);
+/** One copy's market price in the display currency (the other market's price converted at the rate). */
+function unitValue(quote: { price: number | null; price_usd: number | null }, currency: Currency, rate: number) {
+	return quoteIn(quote.price, quote.price_usd, currency, rate);
 }
 const key = (card: string, language: string) => `${card}/${language}`;
 
-/** Inject the connection: tests use an isolated in-memory database, never db.ts. */
-export function getPriceData(db: Database, userId: string, rate: number, today = new Date().toISOString().slice(0, 10)) {
+/**
+ * Inject the connection: tests use an isolated in-memory database, never db.ts. Every
+ * amount comes back in `currency` (the user's display currency): market prices of the
+ * other market and purchase prices entered in the other currency are converted at `rate`
+ * (USD -> EUR).
+ */
+export function getPriceData(db: Database, userId: string, rate: number, today = new Date().toISOString().slice(0, 10),
+	currency: Currency = DEFAULT_CURRENCY) {
 	const all = db.prepare(`SELECT c.id, c.name, c.set_name, c.image_uri, c.local_image_path,
 		c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil,
-		cc.id AS collection_id, cc.quantity, cc.foil, cc.proxy, cc.purchase_price, cc.added_at,
+		cc.id AS collection_id, cc.quantity, cc.foil, cc.proxy, cc.purchase_price, cc.purchase_currency, cc.added_at,
 		COALESCE(cc.language, 'en') AS language,
 		cpl.price_eur AS local_eur, cpl.price_eur_foil AS local_eur_foil,
 		cpl.price_usd AS local_usd, cpl.price_usd_foil AS local_usd_foil
@@ -90,28 +102,32 @@ export function getPriceData(db: Database, userId: string, rate: number, today =
 		const current = prices(h, {
 			price_eur: h.local_eur, price_eur_foil: h.local_eur_foil,
 			price_usd: h.local_usd, price_usd_foil: h.local_usd_foil
-		}, h.foil, h.language !== 'en');
-		const prev = prices(previous.get(key(h.id, 'en')), previous.get(key(h.id, h.language)), h.foil, h.language !== 'en');
+		}, h.foil, h.language !== 'en', currency);
+		const prev = prices(previous.get(key(h.id, 'en')), previous.get(key(h.id, h.language)), h.foil, h.language !== 'en', currency);
 		return {
 			id: h.id, collection_id: h.collection_id, name: h.name, set_name: h.set_name,
 			image_uri: h.image_uri, local_image_path: h.local_image_path,
-			quantity: h.quantity, foil: h.foil, language: h.language, purchase_price: h.purchase_price,
-			...current, prev_price: prev.price, prev_price_usd: prev.price_usd, prev_estimated: prev.estimated
+			quantity: h.quantity, foil: h.foil, language: h.language,
+			purchase_price: h.purchase_price, purchase_currency: h.purchase_currency ?? 'EUR',
+			...current, prev_price: prev.price, prev_price_usd: prev.price_usd, prev_estimated: prev.estimated,
+			// The same copy in the display currency: market value now and before today, purchase cost.
+			value: unitValue(current, currency, rate), prev_value: unitValue(prev, currency, rate),
+			cost: costIn(h.purchase_price, h.purchase_currency, currency, rate)
 		};
 	});
 	const stats = { totalValue: 0, totalPurchaseValue: 0, profitValue: 0, profitCost: 0, profitCopies: 0,
 		uniqueCards: new Set(all.map(h => h.id)).size, totalCards: all.reduce((n, h) => n + h.quantity, 0) };
 	let missingPriceCount = 0, missingMarketCount = 0, estimatedCount = 0;
 	for (const h of topCards) {
-		const value = inEur(h, rate);
+		const value = h.value;
 		stats.totalValue += (value ?? 0) * h.quantity;
-		stats.totalPurchaseValue += (h.purchase_price ?? 0) * h.quantity;
-		if (h.purchase_price == null) missingPriceCount += h.quantity;
+		stats.totalPurchaseValue += (h.cost ?? 0) * h.quantity;
+		if (h.cost == null) missingPriceCount += h.quantity;
 		if (value == null) missingMarketCount += h.quantity;
 		if (h.estimated) estimatedCount += h.quantity;
-		if (value != null && h.purchase_price != null) {
+		if (value != null && h.cost != null) {
 			stats.profitValue += value * h.quantity;
-			stats.profitCost += h.purchase_price * h.quantity;
+			stats.profitCost += h.cost * h.quantity;
 			stats.profitCopies += h.quantity;
 		}
 	}
@@ -143,27 +159,28 @@ export function getPriceData(db: Database, userId: string, rate: number, today =
 		for (const { h, current } of eligible) {
 			if (day !== today && day < (h.added_at?.slice(0, 10) ?? '1970-01-01')) continue;
 			const quote = day === today ? current : prices(currentSnapshots.get(key(h.id, 'en')),
-				currentSnapshots.get(key(h.id, h.language)), h.foil, h.language !== 'en');
-			const unit = inEur(quote, rate);
+				currentSnapshots.get(key(h.id, h.language)), h.foil, h.language !== 'en', currency);
+			const unit = unitValue(quote, currency, rate);
 			// Unknown values are gaps, never a fictitious 100% loss. Do not
 			// backfill earlier dates with prices learned in the future.
 			if (unit == null) { missing += h.quantity; continue; }
 			priced += h.quantity;
 			value += unit * h.quantity;
-			cost += h.purchase_price! * h.quantity;
+			// A cost in the other currency is converted at today's rate on every day.
+			cost += current.cost! * h.quantity;
 			if (quote.estimated) estimated += h.quantity;
 		}
 		profitHistory.push({ recorded_at: day, total_value: priced ? value : null, total_purchase: priced ? cost : null,
 			missing_market_count: missing, estimated_count: estimated });
 	}
 	const proxyCopies = all.reduce((n, h) => n + (h.proxy ? h.quantity : 0), 0);
-	return { topCards: topCards.filter(h => inEur(h, rate) != null), stats, missingPriceCount, missingMarketCount,
-		estimatedCount, proxyCopies, profitHistory, usdToEur: rate };
+	return { topCards: topCards.filter(h => h.value != null), stats, missingPriceCount, missingMarketCount,
+		estimatedCount, proxyCopies, profitHistory, usdToEur: rate, currency };
 }
 
 export type PriceData = ReturnType<typeof getPriceData>;
 
-export function getCardPriceHistory(db: Database, cardId: string, language: string) {
+export function getCardPriceHistory(db: Database, cardId: string, language: string, currency: Currency = DEFAULT_CURRENCY) {
 	const rows = db.prepare(`SELECT * FROM price_history
 		WHERE card_id = ? AND language IN (?, 'en') ORDER BY snapshot_date`).all(cardId, language) as Snapshot[];
 	const result = [];
@@ -175,8 +192,8 @@ export function getCardPriceHistory(db: Database, cardId: string, language: stri
 			if (row.language === 'en') base = row;
 			if (row.language === language) local = row;
 		}
-		const regular = prices(base, local, 0, language !== 'en');
-		const foil = prices(base, local, 1, language !== 'en');
+		const regular = prices(base, local, 0, language !== 'en', currency);
+		const foil = prices(base, local, 1, language !== 'en', currency);
 		result.push({ recorded_at: day, price_eur: regular.price, price_usd: regular.price_usd,
 			price_eur_foil: foil.price, price_usd_foil: foil.price_usd, estimated: regular.estimated || foil.estimated });
 	}

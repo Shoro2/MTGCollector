@@ -39,7 +39,7 @@ export async function POST({ request, locals }) {
 		return json({ success: true, headers: parsed.headers, mapping: parsed.mapping, digest: plan.digest,
 			summary: plan.summary, rows: plan.entries.slice(0, 50).map(row => ({ line: row.line, name: row.card.name,
 				set: row.card.set_code, number: row.card.collector_number, quantity: row.quantity, foil: row.foil, proxy: row.proxy, condition: row.condition,
-				language: row.language, purchasePrice: row.purchasePrice, location: row.location, duplicate: row.duplicate })),
+				language: row.language, purchasePrice: row.purchasePrice, purchaseCurrency: row.purchaseCurrency, location: row.location, duplicate: row.duplicate })),
 			issues: plan.issues.slice(0, 100) }, { headers: { 'Cache-Control': 'private, no-store' } });
 	} catch (cause) {
 		return json({ success: false, message: cause instanceof Error ? cause.message : 'Import failed.' }, { status: 400 });

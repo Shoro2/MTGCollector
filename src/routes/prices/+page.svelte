@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { formatPrice, priceDate, histEur } from '$lib/utils';
+	import { priceDate } from '$lib/utils';
+	import { formatMoney, parseCurrency, quoteIn, type Currency } from '$lib/currency';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
@@ -23,6 +24,9 @@
 	let chartError = $state<string | null>(null);
 	let active = false;
 	let usdToEur = $state(0.92);
+	// Every amount from /api/prices/data is in the user's display currency (/settings).
+	let currency = $state<Currency>('EUR');
+	const formatPrice = (amount: number | null | undefined) => formatMoney(amount, currency);
 
 	// One-time repair after a collection re-sync reset every card's added_at.
 	let restoring = $state(false);
@@ -60,6 +64,7 @@
 			proxyCopies = result.proxyCopies;
 			profitHistory = result.profitHistory;
 			usdToEur = result.usdToEur;
+			currency = parseCurrency(result.currency);
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : 'Failed to load price data.';
 		} finally {
@@ -136,20 +141,20 @@
 					labels: result.history.map((h: Record<string, unknown>) => priceDate(h.recorded_at as string)),
 					datasets: [
 						{
-							label: 'Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur as number | null, h.price_usd as number | null, usdToEur)),
+							label: `Price (${currency})`,
+							data: result.history.map((h: Record<string, unknown>) => quoteIn(h.price_eur as number | null, h.price_usd as number | null, currency, usdToEur)),
 							borderColor: '#3b82f6',
 							tension: 0.3
 						},
 						{
-							label: 'Foil Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur_foil as number | null, h.price_usd_foil as number | null, usdToEur)),
+							label: `Foil Price (${currency})`,
+							data: result.history.map((h: Record<string, unknown>) => quoteIn(h.price_eur_foil as number | null, h.price_usd_foil as number | null, currency, usdToEur)),
 							borderColor: '#f59e0b',
 							tension: 0.3
 						}
 					]
 				},
-				options: lineChartOptions()
+				options: lineChartOptions({ currency })
 			});
 		} catch (err) {
 			if (active && request === modalRequest) modalError = err instanceof Error ? err.message : 'Price history unavailable.';
@@ -165,16 +170,13 @@
 		modalChart = null;
 	}
 
+	// One copy's price now, before today and its purchase price, in the display currency (getPriceData()).
 	function currentPrice(card: Record<string, unknown>): number | null {
-		const price = card.price as number | null;
-		const priceUsd = card.price_usd as number | null;
-		return price ?? (priceUsd != null ? priceUsd * usdToEur : null);
+		return card.value as number | null;
 	}
 
 	function prevPrice(card: Record<string, unknown>): number | null {
-		const price = card.prev_price as number | null;
-		const priceUsd = card.prev_price_usd as number | null;
-		return price ?? (priceUsd != null ? priceUsd * usdToEur : null);
+		return card.prev_value as number | null;
 	}
 
 	function cardValue(card: Record<string, unknown>): number {
@@ -182,7 +184,7 @@
 	}
 
 	function cardProfit(card: Record<string, unknown>): number | null {
-		const base = changeMode === 'purchase' ? card.purchase_price as number | null : prevPrice(card);
+		const base = changeMode === 'purchase' ? card.cost as number | null : prevPrice(card);
 		if (base == null) return null;
 		const cur = currentPrice(card);
 		if (cur == null) return null;
@@ -190,7 +192,7 @@
 	}
 
 	function cardProfitPct(card: Record<string, unknown>): number | null {
-		const base = changeMode === 'purchase' ? card.purchase_price as number | null : prevPrice(card);
+		const base = changeMode === 'purchase' ? card.cost as number | null : prevPrice(card);
 		if (base == null || !base) return null;
 		const cur = currentPrice(card);
 		if (cur == null) return null;
@@ -254,7 +256,7 @@
 					labels: profitData.map((h) => h.date),
 					datasets: [
 						{
-							label: 'Profit / Loss (EUR)',
+							label: `Profit / Loss (${currency})`,
 							data: profitData.map((h) => h.profit),
 							borderColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e' : '#ef4444',
 							backgroundColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e22' : '#ef444422',
@@ -264,7 +266,7 @@
 							pointRadius: profitData.length > 30 ? 0 : 3
 						},
 						{
-							label: 'Purchase Price (EUR)',
+							label: `Purchase Price (${currency})`,
 							data: profitHistory.map((h) => h.total_purchase),
 							borderColor: '#b0bec5',
 							borderDash: [5, 5],
@@ -272,7 +274,7 @@
 							pointRadius: 0
 						},
 						{
-							label: 'Market Value (EUR)',
+							label: `Market Value (${currency})`,
 							data: profitHistory.map((h) => h.total_value),
 							borderColor: '#f59e0b',
 							tension: 0.3,
@@ -280,7 +282,7 @@
 						}
 					]
 				},
-				options: lineChartOptions()
+				options: lineChartOptions({ currency })
 			});
 		}
 	}
@@ -428,7 +430,7 @@
 					<p class="text-xs text-green-400 mb-3">{restoreMessage}</p>
 				{/if}
 
-				<p class="text-xs text-[var(--color-text-muted)] mb-3">Reconstructed from your current quantities and recorded added dates, using copies with both prices available on each day. USD prices use the current exchange rate.</p>
+				<p class="text-xs text-[var(--color-text-muted)] mb-3">Reconstructed from your current quantities and recorded added dates, using copies with both prices available on each day. {currency === 'USD' ? 'Euro prices and euro purchase prices' : 'Dollar prices and dollar purchase prices'} use the current exchange rate.</p>
 				{#if profitHistory.some(point => point.estimated_count > 0)}
 					<p class="text-xs text-[var(--color-text-muted)] mb-3">Some historical values use English reference prices where prices in the card's language are missing.</p>
 				{/if}

@@ -1,3 +1,5 @@
+import { formatQuote, type Currency } from './currency';
+
 export function formatManaCost(manaCost: string | null): string {
 	if (!manaCost) return '';
 	return manaCost.replace(/\{([^}]+)\}/g, (_, symbol) => symbol).trim();
@@ -52,18 +54,18 @@ export type PriceFields = {
 
 /**
  * Price to show for a printing in list/tile contexts. Prefers the non-foil
- * price (EUR, then USD). When a printing has no non-foil price at all it falls
+ * price (the chosen currency's, then the other one; see formatQuote()). When a printing has no non-foil price at all it falls
  * back to the foil price and flags it: some printings only exist in foil (The
  * Hobbit extras, many promos) and used to render as "-" although Scryfall
  * carries a perfectly good foil price for them.
  */
-export function displayPrice(card: PriceFields): { text: string; foil: boolean } | null {
+export function displayPrice(card: PriceFields, currency: Currency = 'EUR'): { text: string; foil: boolean } | null {
 	const has = (v: number | null | undefined): v is number => v !== null && v !== undefined;
 	if (has(card.price_eur) || has(card.price_usd)) {
-		return { text: formatPrice(card.price_eur ?? null, card.price_usd ?? null), foil: false };
+		return { text: formatQuote(card.price_eur, card.price_usd, currency), foil: false };
 	}
 	if (has(card.price_eur_foil) || has(card.price_usd_foil)) {
-		return { text: formatPrice(card.price_eur_foil ?? null, card.price_usd_foil ?? null), foil: true };
+		return { text: formatQuote(card.price_eur_foil, card.price_usd_foil, currency), foil: true };
 	}
 	return null;
 }

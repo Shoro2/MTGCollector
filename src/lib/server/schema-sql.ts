@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS users (
 	name TEXT NOT NULL,
 	avatar_url TEXT,
 	google_vision_api_key TEXT,
-	created_at TEXT
+	created_at TEXT,
+	currency TEXT NOT NULL DEFAULT 'EUR'
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -77,7 +78,8 @@ CREATE TABLE IF NOT EXISTS collection_cards (
 	notes TEXT,
 	added_at TEXT,
 	location TEXT NOT NULL DEFAULT '',
-	proxy INTEGER NOT NULL DEFAULT 0
+	proxy INTEGER NOT NULL DEFAULT 0,
+	purchase_currency TEXT NOT NULL DEFAULT 'EUR'
 );
 
 CREATE TABLE IF NOT EXISTS card_prices_lang (

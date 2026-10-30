@@ -3,7 +3,7 @@ import { sqlite } from '$lib/server/db';
 import { deckCards, hasReported, ownedCards, ownedPrintings, publishBlocked, readableDeck } from '$lib/server/decks';
 import { captchaSiteKey } from '$lib/server/captcha';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
-import { allocateOwnership, cardCategory, cardFrame, deckColors, deckTotals, manaCurve, ownershipKey, unitPriceEur } from '$lib/deck';
+import { allocateOwnership, cardCategory, cardFrame, deckColors, deckTotals, manaCurve, ownershipKey, unitPrice, unitPriceEur } from '$lib/deck';
 import { deckIndexable, deckPageMeta, deckPageUrl } from '$lib/deck-seo';
 import { canHavePartner, checkDeck } from '$lib/deck-formats';
 
@@ -34,7 +34,10 @@ export async function load({ params, locals, depends }) {
 	const partnerOf = isOwner && command && command !== 'oathbreaker' && zone.length === 1 && zone[0].quantity === 1 && canHavePartner(zone[0])
 		? { cardId: zone[0].card_id, name: zone[0].name }
 		: null;
-	const totals = deckTotals(rows, rate, ownership);
+	// Values in the viewer's display currency; the search snippet stays in euros.
+	const currency = locals.user?.currency ?? 'EUR';
+	const totals = deckTotals(rows, rate, ownership, currency);
+	const seoValue = currency === 'EUR' ? totals : deckTotals(rows, rate);
 	const colors = deckColors(rows);
 	const hidden = !!deck.hidden_at;
 	const authorName = hidden && !isOwner ? '' : deck.author_name ?? '';
@@ -51,7 +54,7 @@ export async function load({ params, locals, depends }) {
 		canonical: deckPageUrl(deck.id),
 		...deckPageMeta({
 			name: deck.name, formatLabel: check.format.label, commander: zone.map((r) => r.name).join(' & '), author: authorName,
-			cards, sideboard: totals.counts.sideboard, colors, value: totals.value, priced: cards + totals.counts.sideboard > totals.unpriced, notable: notable.slice(0, 8)
+			cards, sideboard: totals.counts.sideboard, colors, value: seoValue.value, priced: cards + totals.counts.sideboard > seoValue.unpriced, notable: notable.slice(0, 8)
 		})
 	};
 	return {
@@ -73,10 +76,11 @@ export async function load({ params, locals, depends }) {
 		reported: viewer !== null && !isOwner ? hasReported(sqlite, viewer, deck.id) : false,
 		signedIn: viewer !== null,
 		rows: rows.map(({ legalities: _l, oracle_text: _t, ...row }) => ({
-			...row, unit: unitPriceEur(row, rate), owned: ownership?.get(row.id) ?? null, frame: cardFrame(row)
+			...row, unit: unitPrice(row, currency, rate), owned: ownership?.get(row.id) ?? null, frame: cardFrame(row)
 		})),
 		check: { formatLabel: check.format.label, kind: check.format.kind, problems: check.problems, unchecked: check.unchecked },
 		totals,
+		currency,
 		curve: manaCurve(rows),
 		colors
 	};

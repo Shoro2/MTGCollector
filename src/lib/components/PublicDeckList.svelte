@@ -5,7 +5,7 @@
 	import DeckBracket from './DeckBracket.svelte';
 	import { DECK_FORMATS, deckFormat } from '$lib/deck-formats';
 	import { timeAgo, type Visibility } from '$lib/deck';
-	import { formatPrice } from '$lib/utils';
+	import { formatMoney, parseCurrency } from '$lib/currency';
 
 	type Summary = {
 		id: string; name: string; format: string; visibility: Visibility; bracket: number | null; author_name: string; updated_at: string;
@@ -13,6 +13,9 @@
 	};
 	/** Everybody's public decks: searched, filtered, sorted and paged on the server (URL parameters). */
 	let { list }: { list: { decks: Summary[]; total: number; page: number; pages: number; q: string; format: string; sort: string } } = $props();
+
+	// Deck values arrive in the viewer's display currency (/settings).
+	const formatPrice = (amount: number | null | undefined) => formatMoney(amount, parseCurrency(page.data.currency));
 
 	const SORTS = { updated: 'Recently updated', name: 'Name', cards: 'Most cards' } as const;
 	let search = $state('');

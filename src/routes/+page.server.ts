@@ -28,7 +28,7 @@ export async function load({ locals }) {
 
 	const data = await priceDataCache.get(userId);
 	const today = new Date().toISOString().slice(0, 10);
-	const moves = collectionMoves(data.topCards, data.usdToEur);
+	const moves = collectionMoves(data.topCards);
 	const codes = setCodes(sqlite, [...moves.up, ...moves.down].map(m => m.id));
 	const withSet = <T extends { id: string }>(m: T) => ({ ...m, setCode: (codes.get(m.id) ?? '').toUpperCase() });
 	return {
@@ -36,6 +36,8 @@ export async function load({ locals }) {
 		catalogueEmpty,
 		visitor: null,
 		dashboard: {
+			// Every amount of the dashboard is in the user's display currency (getPriceData()).
+			currency: data.currency,
 			summary: dashboardSummary(data),
 			profitCopies: data.stats.profitCopies,
 			wishlist: wishlistCount(sqlite, userId),

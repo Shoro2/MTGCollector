@@ -1,8 +1,43 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { CURRENCIES, currencyMarket, currencySymbol, type Currency } from '$lib/currency';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	const CURRENCY_LABELS: Record<Currency, string> = { EUR: 'Euro', USD: 'US dollar' };
+	let savingCurrency = $state(false);
+	// The choice being saved, shown as selected until the server answers (a refusal reverts it).
+	let pendingCurrency = $state<Currency | null>(null);
+	const shownCurrency = $derived(pendingCurrency ?? data.currency);
+	let currencyMessage = $state('');
+	let currencyError = $state('');
+
+	async function setCurrency(currency: Currency) {
+		if (currency === data.currency || savingCurrency) return;
+		savingCurrency = true;
+		pendingCurrency = currency;
+		currencyMessage = '';
+		currencyError = '';
+		try {
+			const res = await fetch('/api/settings', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ currency })
+			});
+			if (!res.ok) {
+				currencyError = 'The currency could not be saved. Please try again.';
+				return;
+			}
+			await invalidateAll();
+			currencyMessage = `Prices are now shown in ${currency === 'USD' ? 'US dollars' : 'euros'}.`;
+		} catch {
+			currencyError = 'Network error. Please try again.';
+		} finally {
+			savingCurrency = false;
+			pendingCurrency = null;
+		}
+	}
 
 	let showDeleteDialog = $state(false);
 	let deleteConfirmText = $state('');
@@ -62,6 +97,44 @@
 			</div>
 		</div>
 		<p class="text-xs text-[var(--color-text-muted)]">Signed in via Google. Account details can only be changed at Google.</p>
+	</div>
+
+	<!-- Currency -->
+	<div class="panel p-6" data-settings="currency">
+		<h2 class="text-lg font-semibold mb-1" id="currency-heading">Currency</h2>
+		<p class="text-sm text-[var(--color-text-muted)] mb-4">
+			The currency every page shows prices in: card prices, your collection's value, profit and loss, and deck values.
+		</p>
+		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup" aria-labelledby="currency-heading">
+			{#each CURRENCIES as currency (currency)}
+				<label
+					class="flex min-w-0 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors {shownCurrency === currency
+						? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
+						: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}"
+				>
+					<input
+						type="radio"
+						name="currency"
+						value={currency}
+						checked={shownCurrency === currency}
+						disabled={savingCurrency}
+						onchange={() => setCurrency(currency)}
+						class="mt-1"
+					/>
+					<span class="min-w-0">
+						<span class="block font-medium">{CURRENCY_LABELS[currency]} ({currencySymbol(currency)})</span>
+						<span class="block text-xs text-[var(--color-text-muted)]">{currencyMarket(currency)} prices</span>
+					</span>
+				</label>
+			{/each}
+		</div>
+		<p class="mt-3 text-xs text-[var(--color-text-muted)]">
+			A card without a {currencyMarket(data.currency)} price shows its {currencyMarket(data.currency === 'USD' ? 'EUR' : 'USD')} price
+			with its own symbol. Totals convert such prices at the day's exchange rate. Purchase prices keep the currency you entered them in
+			and are converted only where they are added up.
+		</p>
+		{#if currencyMessage}<p class="mt-2 text-sm text-green-400" role="status">{currencyMessage}</p>{/if}
+		{#if currencyError}<p class="mt-2 text-sm text-red-400" role="alert">{currencyError}</p>{/if}
 	</div>
 
 	<!-- Collection Stats -->

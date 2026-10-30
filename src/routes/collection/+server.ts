@@ -5,6 +5,8 @@ import { parseLanguageInput } from '$lib/utils';
 import { ensureForeignPrice } from '$lib/server/foreign-prices';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { cleanLocation } from '$lib/collection-fields';
+import { isCurrency } from '$lib/currency';
+import { marketPriceSql } from '$lib/server/money-sql';
 
 function locationInput(raw: unknown) {
 	try { return cleanLocation(raw); } catch { throw error(400, 'Invalid location.'); }
@@ -39,7 +41,7 @@ function cleanPurchasePrice(raw: unknown): number | null {
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { cardId, quantity, condition, foil, language, purchasePrice, location = '', proxy } = await request.json();
+	const { cardId, quantity, condition, foil, language, purchasePrice, purchaseCurrency, location = '', proxy } = await request.json();
 	if (typeof cardId !== 'string' || !sqlite.prepare('SELECT 1 FROM cards WHERE id = ?').get(cardId)) {
 		throw error(400, 'Unknown card');
 	}
@@ -47,7 +49,7 @@ export async function POST({ request, locals }) {
 
 	sqlite
 		.prepare(
-			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at, location, proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+			'INSERT INTO collection_cards (user_id, card_id, quantity, condition, foil, language, purchase_price, added_at, location, proxy, purchase_currency) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
 		)
 		.run(
 			locals.user.id,
@@ -59,7 +61,9 @@ export async function POST({ request, locals }) {
 			cleanPurchasePrice(purchasePrice),
 			new Date().toISOString(),
 			locationInput(location),
-			proxy === true ? 1 : 0
+			proxy === true ? 1 : 0,
+			// A purchase price is entered in the user's display currency unless the caller names one.
+			isCurrency(purchaseCurrency) ? purchaseCurrency : locals.user.currency
 		);
 
 	priceDataCache.invalidate(locals.user.id);
@@ -73,14 +77,14 @@ export async function POST({ request, locals }) {
 
 export async function PUT({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');
-	const { id, quantity, condition, foil, language, notes, purchasePrice, location, proxy } = await request.json();
+	const { id, quantity, condition, foil, language, notes, purchasePrice, purchaseCurrency, location, proxy } = await request.json();
 	if (!Number.isInteger(id)) throw error(400, 'Invalid id');
 	const lang = parseLanguageInput(language);
 
-	// Location and proxy status stay as they are when a caller leaves them out.
+	// Location, proxy status and the purchase price's currency stay as they are when a caller leaves them out.
 	const result = sqlite
 		.prepare(
-			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ?, location = COALESCE(?, location), proxy = COALESCE(?, proxy) WHERE id = ? AND user_id = ?'
+			'UPDATE collection_cards SET quantity = ?, condition = ?, foil = ?, language = ?, notes = ?, purchase_price = ?, location = COALESCE(?, location), proxy = COALESCE(?, proxy), purchase_currency = COALESCE(?, purchase_currency) WHERE id = ? AND user_id = ?'
 		)
 		.run(
 			cleanQuantity(quantity),
@@ -91,6 +95,7 @@ export async function PUT({ request, locals }) {
 			cleanPurchasePrice(purchasePrice),
 			location === undefined ? null : locationInput(location),
 			typeof proxy === 'boolean' ? Number(proxy) : null,
+			isCurrency(purchaseCurrency) ? purchaseCurrency : null,
 			id,
 			locals.user.id
 		);
@@ -125,24 +130,24 @@ export async function PATCH({ locals }) {
 	const usdToEur = await getUsdToEurRate();
 
 	// Fill missing purchase prices with the same effective current price the UI
-	// shows: per-language overlay first, then English, then USD*rate fallback.
-	// (Previously this used the English EUR price only, so USD-only and
-	// non-English cards were either left unset or recorded at the wrong price.)
-	// Proxies are skipped: the market price of the original is not their cost.
+	// shows, in the user's display currency: per-language overlay first, then
+	// English, then the other market's price at the rate. (Previously this used
+	// the English EUR price only, so USD-only and non-English cards were either
+	// left unset or recorded at the wrong price.) Proxies are skipped: the market
+	// price of the original is not their cost.
+	const currency = locals.user.currency;
 	const result = sqlite
 		.prepare(
-			`UPDATE collection_cards SET purchase_price = (
-				SELECT COALESCE(
-					CASE WHEN collection_cards.foil = 1 THEN COALESCE(cpl.price_eur_foil, c.price_eur_foil) ELSE COALESCE(cpl.price_eur, c.price_eur) END,
-					(CASE WHEN collection_cards.foil = 1 THEN COALESCE(cpl.price_usd_foil, c.price_usd_foil) ELSE COALESCE(cpl.price_usd, c.price_usd) END) * ?
-				)
-				FROM cards c
-				LEFT JOIN card_prices_lang cpl ON cpl.card_id = c.id AND cpl.language = collection_cards.language
-				WHERE c.id = collection_cards.card_id
+			`UPDATE collection_cards SET purchase_currency = @currency, purchase_price = (
+				SELECT ${marketPriceSql(currency)}
+				FROM collection_cards cc
+				JOIN cards c ON c.id = cc.card_id
+				LEFT JOIN card_prices_lang cpl ON cpl.card_id = c.id AND cpl.language = cc.language
+				WHERE cc.id = collection_cards.id
 			)
-			WHERE purchase_price IS NULL AND user_id = ? AND proxy = 0`
+			WHERE purchase_price IS NULL AND user_id = @user AND proxy = 0`
 		)
-		.run(usdToEur, locals.user.id);
+		.run({ rate: usdToEur, currency, user: locals.user.id });
 
 	priceDataCache.invalidate(locals.user.id);
 	return json({ success: true, updated: result.changes });

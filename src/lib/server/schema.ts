@@ -54,7 +54,9 @@ export const users = sqliteTable('users', {
 	// Legacy, unused since the Google Vision retry was removed (2026-09-17). The column stays so existing
 	// databases and the positional INSERTs of the nightly user-data dump keep loading.
 	googleVisionApiKey: text('google_vision_api_key'),
-	createdAt: text('created_at').$defaultFn(() => new Date().toISOString())
+	createdAt: text('created_at').$defaultFn(() => new Date().toISOString()),
+	// Display currency chosen in /settings: 'EUR' (Cardmarket prices) or 'USD' (TCGplayer prices).
+	currency: text('currency').notNull().default('EUR')
 });
 
 export const sessions = sqliteTable('sessions', {
@@ -76,7 +78,9 @@ export const collectionCards = sqliteTable('collection_cards', {
 	notes: text('notes'),
 	addedAt: text('added_at').$defaultFn(() => new Date().toISOString()),
 	// A printed stand-in: counted as a card, never as collection value or profit/loss.
-	proxy: integer('proxy', { mode: 'boolean' }).notNull().default(false)
+	proxy: integer('proxy', { mode: 'boolean' }).notNull().default(false),
+	// The currency purchase_price was entered in ('EUR' or 'USD').
+	purchaseCurrency: text('purchase_currency').notNull().default('EUR')
 });
 
 export const cardPricesLang = sqliteTable(
