@@ -4,7 +4,7 @@ declare global {
 	namespace App {
 		// interface Error {}
 		interface Locals {
-			user: { id: string; name: string; email: string; avatarUrl: string | null; isAdmin: boolean } | null;
+			user: import('$lib/server/auth').SessionUser | null;
 		}
 		// interface PageData {}
 		// interface PageState {}

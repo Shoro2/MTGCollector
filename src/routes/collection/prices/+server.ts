@@ -1,8 +1,11 @@
 import { json } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { priceDataCache } from '$lib/server/cache';
-import { getUsdToEurRate } from '$lib/server/exchange-rate';
-import { parseCardtrader, parseNumber, type PriceRow } from '$lib/server/cardtrader-xls';
+import { parseCardtrader, parseNumber } from '$lib/server/cardtrader-xls';
+import type { Currency } from '$lib/currency';
+
+/** One imported purchase price, stored in the currency it was given in (never converted). */
+type PriceRow = { cardId?: string; foil: 0 | 1; price: number; currency: Currency; label: string };
 
 const MAX_CSV_BYTES = 5 * 1024 * 1024;
 const MAX_XLS_BYTES = 10 * 1024 * 1024;
@@ -15,7 +18,6 @@ async function parseTextBody(
 	findBySetNum: (set: string, num: string) => { id: string } | undefined,
 	findByName: (name: string) => { id: string } | undefined
 ): Promise<{ rows: PriceRow[]; parseErrors: string[]; parseErrorCount: number }> {
-	const usdRate = await getUsdToEurRate();
 	const parseErrors: string[] = [];
 	let parseErrorCount = 0;
 	const rows: PriceRow[] = [];
@@ -46,8 +48,8 @@ async function parseTextBody(
 			continue;
 		}
 
-		// USD → EUR for D-suffix, raw for E-suffix.
-		const priceEur = currency === 'D' ? priceRaw * usdRate : priceRaw;
+		// D = US dollars, E = euros; the price keeps its currency (collection_cards.purchase_currency).
+		const priceCurrency: Currency = currency === 'D' ? 'USD' : 'EUR';
 
 		let card = findBySetNum(setCode, collectorNumber);
 		if (!card && /^\d+$/.test(collectorNumber)) {
@@ -59,7 +61,8 @@ async function parseTextBody(
 		rows.push({
 			cardId: card?.id,
 			foil: 0,
-			priceEur,
+			price: priceRaw,
+			currency: priceCurrency,
 			label: `${name} (${setCode.toUpperCase()}) ${collectorNumber}`
 		});
 	}
@@ -108,7 +111,8 @@ async function parseCardmarket(
 		rows.push({
 			cardId: card?.id,
 			foil,
-			priceEur: price,
+			price,
+			currency: 'EUR',
 			label: `Cardmarket product #${idProduct}`
 		});
 	}
@@ -185,7 +189,9 @@ export async function POST({ request, locals }) {
 			return json({ success: false, message: 'XLS too large (>10 MB)' }, { status: 413 });
 		}
 		const bytes = await file.arrayBuffer();
-		parsed = parseCardtrader(bytes, findBySetNum, findByName, findByNameAndNum);
+		// Cardtrader's export holds "Price in EUR Cents".
+		const cardtrader = parseCardtrader(bytes, findBySetNum, findByName, findByNameAndNum);
+		parsed = { ...cardtrader, rows: cardtrader.rows.map(({ priceEur, ...row }) => ({ ...row, price: priceEur, currency: 'EUR' as const })) };
 	}
 
 	const { rows, parseErrors, parseErrorCount } = parsed;
@@ -200,11 +206,11 @@ export async function POST({ request, locals }) {
 	// cards, so proxies are never touched.
 	const updateStmt = mode === 'overwrite'
 		? sqlite.prepare(
-			`UPDATE collection_cards SET purchase_price = ?
+			`UPDATE collection_cards SET purchase_price = ?, purchase_currency = ?
 			 WHERE user_id = ? AND card_id = ? AND foil = ? AND proxy = 0`
 		)
 		: sqlite.prepare(
-			`UPDATE collection_cards SET purchase_price = ?
+			`UPDATE collection_cards SET purchase_price = ?, purchase_currency = ?
 			 WHERE user_id = ? AND card_id = ? AND foil = ? AND proxy = 0 AND purchase_price IS NULL`
 		);
 
@@ -222,7 +228,7 @@ export async function POST({ request, locals }) {
 				if (notMatchedLabels.length < 20) notMatchedLabels.push(row.label);
 				continue;
 			}
-			const result = updateStmt.run(row.priceEur, userId, row.cardId, row.foil);
+			const result = updateStmt.run(row.price, row.currency, userId, row.cardId, row.foil);
 			if (result.changes > 0) {
 				matchedCards++;
 				updatedRows += result.changes;

@@ -27,7 +27,7 @@ export async function GET({ locals, url }) {
 
 	const items = sqlite
 		.prepare(
-			`SELECT cc.id, cc.quantity, cc.condition, cc.foil, cc.proxy, cc.language, cc.added_at, cc.purchase_price, cc.location, cc.notes,
+			`SELECT cc.id, cc.quantity, cc.condition, cc.foil, cc.proxy, cc.language, cc.added_at, cc.purchase_price, cc.purchase_currency, cc.location, cc.notes,
 				c.id AS card_id, c.name, c.set_code, c.collector_number
 			FROM collection_cards cc
 			JOIN cards c ON cc.card_id = c.id
@@ -45,7 +45,7 @@ export async function GET({ locals, url }) {
 		const columns = ['Scryfall ID', 'Name', 'Set Code', 'Collector Number', 'Quantity', 'Foil', 'Proxy', 'Condition',
 			'Language', 'Purchase Price', 'Purchase Price Currency', 'Location', 'Notes', 'Tags JSON', 'Date Added'];
 		const lines = items.map(i => [i.card_id, i.name, i.set_code, i.collector_number, i.quantity, i.foil ? 'foil' : 'nonfoil',
-			i.proxy ? 'true' : 'false', i.condition, i.language, i.purchase_price, 'EUR', i.location, i.notes, JSON.stringify(tags.get(i.id as number) ?? []),
+			i.proxy ? 'true' : 'false', i.condition, i.language, i.purchase_price, i.purchase_price == null ? '' : i.purchase_currency, i.location, i.notes, JSON.stringify(tags.get(i.id as number) ?? []),
 			i.added_at ? new Date(i.added_at as string).toISOString() : ''].map(v => csvField(v as string | number | null)).join(','));
 		return new Response([columns.map(csvField).join(','), ...lines].join('\n'), { headers: {
 			'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="mtg-collector.csv"', 'Cache-Control': 'private, no-store'

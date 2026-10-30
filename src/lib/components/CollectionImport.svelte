@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { IMPORT_FIELDS, type ImportMapping, type ImportIssue } from '$lib/collection-import';
+	import { formatMoney, parseCurrency, type Currency } from '$lib/currency';
 	let { locations, onclose, onimport }: { locations: string[]; onclose: () => void; onimport: () => Promise<void> } = $props();
 	let dialog: HTMLDialogElement;
 	onMount(() => dialog.showModal());
@@ -8,7 +10,8 @@
 	let file = $state<File | null>(null);
 	let text = $state('');
 	let mode = $state('merge');
-	let currency = $state('EUR');
+	// Costs without a currency column are taken as the display currency (/settings) by default.
+	let currency = $state<string>(parseCurrency(page.data.currency));
 	let location = $state('');
 	let ignorePrices = $state(false);
 	let allProxies = $state(false);
@@ -21,7 +24,7 @@
 	type Preview = {
 		digest: string;
 		summary: { total: number; ready: number; copies: number; duplicates: number; skipped: number; issues: number; existingEntries: number; existingCopies: number };
-		rows: { line: number; name: string; set: string; number: string; quantity: number; foil: number; proxy: number; language: string; condition: string; purchasePrice: number | null; location: string; duplicate: boolean }[];
+		rows: { line: number; name: string; set: string; number: string; quantity: number; foil: number; proxy: number; language: string; condition: string; purchasePrice: number | null; purchaseCurrency: Currency; location: string; duplicate: boolean }[];
 		issues: ImportIssue[];
 	};
 	let preview = $state<Preview | null>(null);
@@ -69,12 +72,12 @@
 		<div class="grid gap-3 sm:grid-cols-2">
 			<label>Import mode<select aria-label="Import mode" bind:value={mode} onchange={changed} class="block w-full rounded border p-2 bg-[var(--color-bg)]"><option value="merge">Skip existing entries</option><option value="append">Add every matched entry</option><option value="sync">{allProxies ? 'Replace existing proxies' : 'Replace entire collection'}</option></select></label>
 			<label>Location for rows without a folder<input bind:value={location} oninput={changed} maxlength="120" list="import-locations" placeholder="Unassigned" class="block w-full rounded border p-2 bg-[var(--color-bg)]" /></label>
-			<label>Currency when not specified<select aria-label="Currency when not specified" bind:value={currency} onchange={changed} class="block w-full rounded border p-2 bg-[var(--color-bg)]"><option value="EUR">EUR</option><option value="unknown">Unknown — flag prices for review</option></select></label>
+			<label>Currency when not specified<select aria-label="Currency when not specified" bind:value={currency} onchange={changed} class="block w-full rounded border p-2 bg-[var(--color-bg)]"><option value="EUR">EUR</option><option value="USD">USD</option><option value="unknown">Unknown — flag prices for review</option></select></label>
 			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={ignorePrices} onchange={changed} />Ignore purchase prices</label>
 			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={allProxies} onchange={changed} />Import every card as a proxy</label>
 		</div>
 		<datalist id="import-locations">{#each locations as value}<option value={value}></option>{/each}</datalist>
-		<p class="text-xs text-[var(--color-text-muted)]">A duplicate has the same printing, finish, proxy status, condition, language, location and purchase price as an existing entry. Skipping it does not increase its quantity. Missing quantity defaults to 1, language to English, condition to Near Mint and finish to Non-Foil. Rows are real cards unless a Proxy column (as in Moxfield exports) says otherwise or every card is imported as a proxy; proxies count as cards, never toward value or profit. Missing costs stay empty. Only EUR costs are imported; other currencies are flagged. Etched finishes require review.</p>
+		<p class="text-xs text-[var(--color-text-muted)]">A duplicate has the same printing, finish, proxy status, condition, language, location and purchase price as an existing entry. Skipping it does not increase its quantity. Missing quantity defaults to 1, language to English, condition to Near Mint and finish to Non-Foil. Rows are real cards unless a Proxy column (as in Moxfield exports) says otherwise or every card is imported as a proxy; proxies count as cards, never toward value or profit. Missing costs stay empty. EUR and USD costs are imported in their currency; other currencies are flagged. Etched finishes require review.</p>
 		{#if headers.length && format === 'csv'}
 			<details class="rounded border p-3"><summary class="cursor-pointer">Review column mapping</summary>
 				<div class="grid gap-2 mt-3 sm:grid-cols-2">{#each IMPORT_FIELDS as [key, label]}
@@ -96,7 +99,7 @@
 				{/if}
 				<details open><summary class="cursor-pointer">Matched entries (first {preview.rows.length})</summary>
 					<div class="mt-2 space-y-2 max-h-72 overflow-y-auto">{#each preview.rows as row}
-						<div class="rounded border border-[var(--color-border)] p-2 text-sm"><p class="font-medium">{row.quantity}× {row.name} · {row.set.toUpperCase()} #{row.number}</p><p>{row.foil ? 'Foil' : 'Non-Foil'}{row.proxy ? ' · Proxy' : ''} · {row.language.toUpperCase()} · {row.condition.replaceAll('_', ' ')} · {row.location || 'Unassigned'} · Cost: {row.purchasePrice === null ? 'Unknown' : `€${row.purchasePrice.toFixed(2)}`}{row.duplicate ? ' · Already present' : ''}</p></div>
+						<div class="rounded border border-[var(--color-border)] p-2 text-sm"><p class="font-medium">{row.quantity}× {row.name} · {row.set.toUpperCase()} #{row.number}</p><p>{row.foil ? 'Foil' : 'Non-Foil'}{row.proxy ? ' · Proxy' : ''} · {row.language.toUpperCase()} · {row.condition.replaceAll('_', ' ')} · {row.location || 'Unassigned'} · Cost: {row.purchasePrice === null ? 'Unknown' : formatMoney(row.purchasePrice, row.purchaseCurrency)}{row.duplicate ? ' · Already present' : ''}</p></div>
 					{/each}</div>
 				</details>
 				{#if mode === 'sync'}

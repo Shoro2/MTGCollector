@@ -9,7 +9,8 @@ beforeEach(() => {
 	db.exec(`CREATE TABLE cards (id TEXT PRIMARY KEY, name TEXT, set_name TEXT, image_uri TEXT, local_image_path TEXT,
 		price_eur REAL, price_eur_foil REAL, price_usd REAL, price_usd_foil REAL);
 		CREATE TABLE collection_cards (id INTEGER PRIMARY KEY, card_id TEXT, user_id TEXT, quantity INTEGER,
-		foil INTEGER, language TEXT, purchase_price REAL, added_at TEXT, proxy INTEGER NOT NULL DEFAULT 0);
+		foil INTEGER, language TEXT, purchase_price REAL, added_at TEXT, proxy INTEGER NOT NULL DEFAULT 0,
+		purchase_currency TEXT NOT NULL DEFAULT 'EUR');
 		CREATE TABLE card_prices_lang (card_id TEXT, language TEXT, price_eur REAL, price_eur_foil REAL, price_usd REAL, price_usd_foil REAL);
 		CREATE TABLE price_history (id INTEGER PRIMARY KEY, card_id TEXT, language TEXT, snapshot_date TEXT, recorded_at TEXT,
 		price_eur REAL, price_eur_foil REAL, price_usd REAL, price_usd_foil REAL);
@@ -114,6 +115,27 @@ describe('portfolio totals and history', () => {
 		expect(data.profitHistory.at(-1)?.total_value).toBe(data.stats.profitValue);
 		expect(data.profitHistory.at(-1)?.total_purchase).toBe(data.stats.profitCost);
 		expect(data.profitHistory.some(p => p.recorded_at > '2026-10-04')).toBe(false);
+	});
+	it('reports everything in US dollars and keeps each purchase price in its own currency', () => {
+		card('a', 10, 12); card('b', 8);
+		own('a', 9); own('b', 4);
+		db.exec("UPDATE collection_cards SET purchase_currency = 'USD' WHERE card_id = 'a'");
+		const data = getPriceData(db, 'owner', 0.8, '2026-10-04', 'USD');
+		expect(data.currency).toBe('USD');
+		// a: TCGplayer $12, bought for $9. b: no dollar price, €8 / 0.8 = $10, bought for €4 = $5.
+		expect(data.stats).toMatchObject({ totalValue: 22, totalPurchaseValue: 14, profitValue: 22, profitCost: 14 });
+		const a = data.topCards.find(c => c.id === 'a')!;
+		expect(a).toMatchObject({ value: 12, cost: 9, purchase_currency: 'USD' });
+		expect(data.profitHistory.at(-1)).toMatchObject({ total_value: 22, total_purchase: 14 });
+		// The same collection in euros converts the dollar cost instead.
+		expect(result().stats).toMatchObject({ totalValue: 18, totalPurchaseValue: 11.2 });
+	});
+	it('marks a foreign copy as estimated when its own dollar price is missing', () => {
+		card('de', 5, 6); own('de', 3, 1, 'de');
+		db.prepare("INSERT INTO card_prices_lang VALUES ('de', 'de', 4, NULL, NULL, NULL)").run();
+		const usd = getPriceData(db, 'owner', 0.8, '2026-10-04', 'USD');
+		expect(usd.topCards[0]).toMatchObject({ value: 6, estimated: true });
+		expect(result().topCards[0]).toMatchObject({ value: 4, estimated: false });
 	});
 	it('does not manufacture a 1970 chart point for legacy rows without an added date', () => {
 		card('a', 10); own('a', 5); snap('a', '2026-10-02', 8);

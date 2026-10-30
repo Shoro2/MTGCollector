@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	allocateOwnership, ownershipRank, cardCategory, cardFrame, deckColors, deckTotals, groupDeck, isBracket, manaColors, manaCurve, pickDeckPrinting,
-	publishes, timeAgo, unitPriceEur, type Board
+	publishes, timeAgo, unitPrice, unitPriceEur, type Board
 } from './deck';
 
 const price = { price_eur: null, price_eur_foil: null, price_usd: null, price_usd_foil: null };
@@ -30,6 +30,15 @@ describe('unitPriceEur', () => {
 		// A foil-only printing has only a foil price; that is its price in a non-foil row too.
 		expect(unitPriceEur({ ...price, foil: 0, price_usd_foil: 20 }, 0.5)).toBe(10);
 		expect(unitPriceEur({ ...price, foil: 0 }, 0.9)).toBeNull();
+	});
+});
+
+describe('unitPrice in US dollars', () => {
+	it('prefers the TCGplayer price and converts the Cardmarket price only without one', () => {
+		expect(unitPrice({ ...price, foil: 0, price_eur: 2, price_usd: 3 }, 'USD', 0.8)).toBe(3);
+		expect(unitPrice({ ...price, foil: 0, price_eur: 2 }, 'USD', 0.8)).toBe(2.5);
+		expect(unitPrice({ ...price, foil: 1, price_usd: 3 }, 'USD', 0.8)).toBeNull();
+		expect(unitPrice({ ...price, foil: 0, price_usd_foil: 6 }, 'USD', 0.8)).toBe(6);
 	});
 });
 
@@ -81,6 +90,10 @@ describe('deckTotals', () => {
 		const ownership = allocateOwnership(rows.map((r) => ({ ...r, key: String(r.id) })), new Map([['1', { real: 1, proxy: 0 }], ['2', { real: 1, proxy: 2 }]]));
 		const totals = deckTotals(rows, 0.5, ownership);
 		expect(totals).toMatchObject({ missingValue: 3.25, missingCards: 4, missingUnpriced: 2, proxyValue: 2.5, proxyCards: 2 });
+	});
+	it('values the deck in US dollars for a viewer who chose them', () => {
+		// 10 / 0.5 + 4 × 1.25 / 0.5 + 4 (the sideboard's own dollar price) = 34
+		expect(deckTotals(rows, 0.5, null, 'USD').value).toBe(34);
 	});
 });
 

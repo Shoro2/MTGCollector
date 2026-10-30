@@ -114,8 +114,11 @@ export async function load({ url, locals }) {
 	const validSorts: Record<string, string> = {
 		name: 'cards.name',
 		// Foil-only printings have no price_eur; sort them by their foil price
-		// instead of pushing them to the end with the priceless cards.
-		price: 'COALESCE(cards.price_eur, cards.price_eur_foil)',
+		// instead of pushing them to the end with the priceless cards. A user who
+		// chose US dollars in /settings sorts by the TCGplayer price.
+		price: locals.user?.currency === 'USD'
+			? 'COALESCE(cards.price_usd, cards.price_usd_foil)'
+			: 'COALESCE(cards.price_eur, cards.price_eur_foil)',
 		cmc: 'cards.cmc',
 		rarity: "CASE cards.rarity WHEN 'mythic' THEN 4 WHEN 'rare' THEN 3 WHEN 'uncommon' THEN 2 ELSE 1 END",
 		set: 'cards.set_name',

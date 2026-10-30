@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { SITE_URL, cardPageUrl, jsonLd } from '$lib/seo';
-	import { formatPrice, getRarityColor } from '$lib/utils';
+	import { getRarityColor } from '$lib/utils';
+	import { formatQuote, parseCurrency } from '$lib/currency';
 	import { cardPageMeta, cheapestPrice } from '$lib/card-page';
 	import ManaCost from '$lib/components/ManaCost.svelte';
 	import ColorPips from '$lib/components/ColorPips.svelte';
@@ -24,7 +25,9 @@
 		oracle_text: (card.oracle_text || data.faces[0]?.oracle_text || null) as string | null,
 		set_name: card.set_name as string | null
 	}, data.printings));
-	let cheapest = $derived(cheapestPrice(data.printings));
+	// The viewer's display currency (/settings); the search snippet above stays in euros.
+	const currency = $derived(parseCurrency(data.currency));
+	let cheapest = $derived(cheapestPrice(data.printings, currency));
 	let image = $derived((card.local_image_path || card.image_uri || '') as string);
 	let socialImage = $derived(image ? new URL(image, SITE_URL).href : undefined);
 	let colors: string[] = $derived(card.color_identity ? JSON.parse(card.color_identity as string) : []);
@@ -185,11 +188,11 @@
 						</span>
 						<span class="text-right text-sm">
 							<span class="block text-xs text-[var(--color-text-muted)]">Price</span>
-							<span class="text-[var(--color-accent)]">{formatPrice(printing.price_eur, printing.price_usd)}</span>
+							<span class="text-[var(--color-accent)]">{formatQuote(printing.price_eur, printing.price_usd, currency)}</span>
 						</span>
 						<span class="col-start-2 text-right text-sm sm:col-start-3">
 							<span class="block text-xs text-[var(--color-text-muted)]">Foil</span>
-							<span class="text-[var(--color-accent)]">{formatPrice(printing.price_eur_foil, printing.price_usd_foil)}</span>
+							<span class="text-[var(--color-accent)]">{formatQuote(printing.price_eur_foil, printing.price_usd_foil, currency)}</span>
 						</span>
 					</a>
 				</li>

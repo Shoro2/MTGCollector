@@ -38,34 +38,34 @@ describe('pickMovers', () => {
 	});
 });
 
-const holding = (id: string, price: number | null, prev: number | null, extra: Record<string, unknown> = {}) => ({
-	id, name: id, quantity: 1, foil: 0, language: 'en', price, price_usd: null, prev_price: prev, prev_price_usd: null, ...extra
+const holding = (id: string, value: number | null, prev: number | null, extra: Record<string, unknown> = {}) => ({
+	id, name: id, quantity: 1, foil: 0, language: 'en', value, prev_value: prev, ...extra
 });
 
 describe('collectionMoves', () => {
 	it('lists the biggest rises and falls of the collection from €1', () => {
 		const moves = collectionMoves([holding('a', 12, 10), holding('b', 5, 10), holding('c', 0.8, 0.5),
-			holding('d', 3, 3), holding('e', 2, null)], 1);
+			holding('d', 3, 3), holding('e', 2, null)]);
 		expect(moves.up.map(m => [m.id, m.pct])).toEqual([['a', 20]]);
 		expect(moves.down.map(m => [m.id, m.pct])).toEqual([['b', -50]]);
 	});
-	it('converts USD prices and shows each printing, finish and language once', () => {
-		const moves = collectionMoves([holding('u', null, null, { price_usd: 20, prev_price_usd: 10 }),
-			holding('u', null, null, { price_usd: 20, prev_price_usd: 10 }),
-			holding('u', null, null, { foil: 1, price_usd: 30, prev_price_usd: 20 })], 0.5);
+	it('shows each printing, finish and language once', () => {
+		const moves = collectionMoves([holding('u', 10, 5),
+			holding('u', 10, 5),
+			holding('u', 15, 10, { foil: 1 })]);
 		expect(moves.up.map(m => [m.id, m.foil, m.price, m.pct])).toEqual([['u', 0, 10, 100], ['u', 1, 15, 50]]);
 	});
 });
 
 describe('dashboardSummary', () => {
 	const data = (topCards: ReturnType<typeof holding>[], stats: Record<string, number> = {}) => ({
-		topCards, usdToEur: 0.5, proxyCopies: 2,
+		topCards, proxyCopies: 2,
 		stats: { totalValue: 100, totalPurchaseValue: 0, profitValue: 60, profitCost: 40, profitCopies: 3,
 			uniqueCards: 4, totalCards: 9, ...stats }
 	});
 	it('reports value, today\'s change, profit and card counts', () => {
 		expect(dashboardSummary(data([holding('a', 12, 10, { quantity: 2 }),
-			holding('b', null, null, { price_usd: 8, prev_price_usd: 10 }), holding('c', 5, null)])))
+			holding('b', 4, 5), holding('c', 5, null)])))
 			.toEqual({ value: 100, change: 3, profit: 20, profitPct: 50, cards: 9, printings: 4, proxies: 2 });
 	});
 	it('has no change without earlier prices and no profit without purchase prices', () => {

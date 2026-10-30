@@ -1,14 +1,17 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { displayPrice, type PriceFields } from '$lib/utils';
+	import { parseCurrency } from '$lib/currency';
 
 	/**
 	 * Renders a printing's list price: non-foil when available, otherwise the
 	 * foil price with a small "Foil" marker (foil-only printings used to show
-	 * no price at all). `hideEmpty` renders nothing instead of "-".
+	 * no price at all), in the viewer's display currency (root layout data).
+	 * `hideEmpty` renders nothing instead of "-".
 	 */
 	type Props = { card: PriceFields; class?: string; hideEmpty?: boolean };
 	let { card, class: className = '', hideEmpty = false }: Props = $props();
-	const shown = $derived(displayPrice(card));
+	const shown = $derived(displayPrice(card, parseCurrency(page.data.currency)));
 </script>
 
 {#if shown}

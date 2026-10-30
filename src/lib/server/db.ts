@@ -382,6 +382,18 @@ const MIGRATIONS: Migration[] = [
 		// One row per deck made public, for the limit of three public decks per 24 hours.
 		id: '0031_deck_publications',
 		run: (db) => addDeckPublications(db)
+	},
+	{
+		// The display currency a user picks in /settings (EUR shows Cardmarket,
+		// USD TCGplayer prices; src/lib/currency.ts), and the currency each
+		// purchase price was entered in, so a dollar cost is never re-read as
+		// euros. Every existing price was entered as euros. Appended last on both
+		// tables: the nightly user-data dump uses positional INSERTs.
+		id: '0032_display_currency',
+		run: (db) => {
+			addColumnIfMissing(db, 'users', 'currency', "TEXT NOT NULL DEFAULT 'EUR'");
+			addColumnIfMissing(db, 'collection_cards', 'purchase_currency', "TEXT NOT NULL DEFAULT 'EUR'");
+		}
 	}
 ];
 

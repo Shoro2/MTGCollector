@@ -4,6 +4,7 @@
  * module src/lib/server/decks.ts feeds them rows; nothing here touches SQLite.
  */
 import { pickMainPrinting, type PrintingSummary } from './card-page';
+import { quoteIn, type Currency } from './currency';
 
 export const BOARDS = ['commander', 'main', 'sideboard', 'maybeboard'] as const;
 export type Board = (typeof BOARDS)[number];
@@ -71,15 +72,21 @@ export type PriceRow = {
 };
 
 /**
- * EUR price of one copy in the deck's finish, USD converted at `usdToEur` when no EUR
- * price exists. A non-foil row of a foil-only printing takes the foil price (that is the
- * only way the printing exists); a foil row never falls back to the non-foil price.
- * Null is a gap, never zero.
+ * Price of one copy in the deck's finish in `currency` (the viewer's display currency),
+ * the other market's price converted at `usdToEur` when the currency's own market has
+ * none. A non-foil row of a foil-only printing takes the foil price (that is the only way
+ * the printing exists); a foil row never falls back to the non-foil price. Null is a gap,
+ * never zero.
  */
+export function unitPrice(row: PriceRow, currency: Currency, usdToEur: number): number | null {
+	const quote = (eur: number | null, usd: number | null) => quoteIn(eur, usd, currency, usdToEur);
+	if (row.foil) return quote(row.price_eur_foil, row.price_usd_foil);
+	return quote(row.price_eur, row.price_usd) ?? quote(row.price_eur_foil, row.price_usd_foil);
+}
+
+/** unitPrice() in euros (search snippets). */
 export function unitPriceEur(row: PriceRow, usdToEur: number): number | null {
-	const eur = (value: number | null, usd: number | null) => value ?? (usd != null ? usd * usdToEur : null);
-	if (row.foil) return eur(row.price_eur_foil, row.price_usd_foil);
-	return eur(row.price_eur, row.price_usd) ?? eur(row.price_eur_foil, row.price_usd_foil);
+	return unitPrice(row, 'EUR', usdToEur);
 }
 
 export type Owned = { real: number; proxy: number };
@@ -126,15 +133,15 @@ export type TotalsRow = PriceRow & { id: number; board: Board; quantity: number 
 /**
  * Card counts per board, the deck's value (commander, main deck and sideboard; the
  * maybeboard is only being considered), and with a collection the value still to buy
- * and the value covered by proxies. Unpriced copies are counted, never valued at zero.
+ * and the value covered by proxies, in `currency`. Unpriced copies are counted, never valued at zero.
  */
-export function deckTotals(rows: TotalsRow[], usdToEur: number, ownership?: Map<number, Ownership> | null) {
+export function deckTotals(rows: TotalsRow[], usdToEur: number, ownership?: Map<number, Ownership> | null, currency: Currency = 'EUR') {
 	const counts: Record<Board, number> = { commander: 0, main: 0, sideboard: 0, maybeboard: 0 };
 	let value = 0, unpriced = 0, missingValue = 0, missingCards = 0, missingUnpriced = 0, proxyValue = 0, proxyCards = 0;
 	for (const row of rows) {
 		counts[row.board] += row.quantity;
 		if (row.board === 'maybeboard') continue;
-		const price = unitPriceEur(row, usdToEur);
+		const price = unitPrice(row, currency, usdToEur);
 		if (price == null) unpriced += row.quantity;
 		else value += price * row.quantity;
 		const own = ownership?.get(row.id);

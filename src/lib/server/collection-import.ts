@@ -5,12 +5,15 @@ import type { ImportEntry, ImportIssue, parseCollectionImport } from '../collect
 type Parsed = ReturnType<typeof parseCollectionImport>;
 type Card = { id: string; name: string; set_code: string; set_name: string; collector_number: string };
 type Existing = { id: number; card_id: string; quantity: number; condition: string; foil: number; proxy: number; language: string;
-	location: string; purchase_price: number | null; notes: string | null; added_at: string | null };
+	location: string; purchase_price: number | null; purchase_currency: string; notes: string | null; added_at: string | null };
 type Ready = ImportEntry & { card: Card; duplicate: boolean };
 export type ImportMode = 'append' | 'merge' | 'sync';
 const numberKey = (value: string) => value.toLowerCase().replace(/^0+(?=\d)/, '');
-const duplicateKey = (cardId: string, row: { condition: string; foil: number; proxy: number; language: string; location: string; purchasePrice: number | null }) =>
-	JSON.stringify([cardId, row.condition, row.foil, row.proxy, row.language, row.location, row.purchasePrice]);
+// Same printing, condition, finish, language, location and cost (a cost in another currency is another cost).
+const duplicateKey = (cardId: string, row: { condition: string; foil: number; proxy: number; language: string; location: string;
+	purchasePrice: number | null; purchaseCurrency: string }) =>
+	JSON.stringify([cardId, row.condition, row.foil, row.proxy, row.language, row.location, row.purchasePrice,
+		row.purchasePrice == null ? null : row.purchaseCurrency]);
 // The rows an import compares with and may replace. A proxies-only import never reaches real cards.
 const IN_SCOPE = 'user_id = ? AND (proxy = 1 OR ? = 0)';
 const scope = (userId: string, parsed: Parsed) => [userId, parsed.allProxies ? 1 : 0];
@@ -59,8 +62,8 @@ function cardMatcher(db: Database) {
 export function prepareCollectionImport(db: Database, userId: string, parsed: Parsed, mode: ImportMode) {
 	if (!['append', 'merge', 'sync'].includes(mode)) throw new Error('Invalid import mode.');
 	const existing = db.prepare(`SELECT id, card_id, quantity, condition, foil, proxy, COALESCE(language, 'en') AS language,
-		location, purchase_price, notes, added_at FROM collection_cards WHERE ${IN_SCOPE} ORDER BY id`).all(...scope(userId, parsed)) as Existing[];
-	const existingKeys = new Set(existing.map(r => duplicateKey(r.card_id, { ...r, purchasePrice: r.purchase_price })));
+		location, purchase_price, purchase_currency, notes, added_at FROM collection_cards WHERE ${IN_SCOPE} ORDER BY id`).all(...scope(userId, parsed)) as Existing[];
+	const existingKeys = new Set(existing.map(r => duplicateKey(r.card_id, { ...r, purchasePrice: r.purchase_price, purchaseCurrency: r.purchase_currency })));
 	const match = cardMatcher(db);
 	const issues: ImportIssue[] = [...parsed.issues];
 	const entries: Ready[] = [];
@@ -91,7 +94,7 @@ export function commitCollectionImport(db: Database, userId: string, parsed: Par
 		if (!plan.ready.length) throw new Error('No entries are ready to import.');
 		const dates = new Map<string, string>();
 		for (const row of plan.existing) {
-			const key = duplicateKey(row.card_id, { ...row, purchasePrice: row.purchase_price });
+			const key = duplicateKey(row.card_id, { ...row, purchasePrice: row.purchase_price, purchaseCurrency: row.purchase_currency });
 			if (row.added_at && (!dates.has(key) || row.added_at < dates.get(key)!)) dates.set(key, row.added_at);
 		}
 		if (mode === 'sync') {
@@ -99,15 +102,15 @@ export function commitCollectionImport(db: Database, userId: string, parsed: Par
 			db.prepare(`DELETE FROM collection_cards WHERE ${IN_SCOPE}`).run(...scope(userId, parsed));
 		}
 		const insert = db.prepare(`INSERT INTO collection_cards
-			(user_id, card_id, quantity, condition, foil, language, purchase_price, location, notes, added_at, proxy)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+			(user_id, card_id, quantity, condition, foil, language, purchase_price, location, notes, added_at, proxy, purchase_currency)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 		const tagFind = db.prepare('SELECT id FROM tags WHERE user_id = ? AND name = ?');
 		const tagInsert = db.prepare("INSERT INTO tags(user_id, name, color) VALUES (?, ?, '#3b82f6')");
 		const tagLink = db.prepare('INSERT OR IGNORE INTO collection_card_tags(collection_card_id, tag_id) VALUES (?, ?)');
 		for (const row of plan.ready) {
 			const added = row.addedAt || (mode === 'sync' ? dates.get(duplicateKey(row.card.id, row)) : null) || new Date().toISOString();
 			const entry = insert.run(userId, row.card.id, row.quantity, row.condition, row.foil, row.language,
-				row.purchasePrice, row.location, row.notes || null, added, row.proxy);
+				row.purchasePrice, row.location, row.notes || null, added, row.proxy, row.purchaseCurrency);
 			for (const tag of row.tags) {
 				const current = tagFind.get(userId, tag) as { id: number } | undefined;
 				const id = current?.id ?? tagInsert.run(userId, tag).lastInsertRowid;

@@ -77,7 +77,22 @@ describe('collection CSV and text imports', () => {
 		for (const [column, value] of [['Foil','etched'], ['Quantity','-1'], ['Date Added','2026-02-31'], ['Language','mystery']]) {
 			expect(parse(`Name,Set Code,Collector Number,${column}\nWar Horn,ori,243,${value}`).issues).toHaveLength(1);
 		}
-		expect(parse('Name,Set Code,Purchase Price,Purchase Price Currency\nWar Horn,ori,5,USD').issues[0].message).toContain('USD');
+		expect(parse('Name,Set Code,Purchase Price,Purchase Price Currency\nWar Horn,ori,5,GBP').issues[0].message).toContain('GBP');
+		expect(parseCollectionImport('Name,Set Code,Purchase Price\nWar Horn,ori,5', 'csv', { ...options, currency: 'unknown' }).issues[0].message)
+			.toContain('unknown currency');
+	});
+	it('keeps dollar costs in dollars and tells them apart from the same amount in euros', () => {
+		const db = fixture();
+		const parsed = parse('Name,Set Code,Collector Number,Purchase Price,Purchase Price Currency\nWar Horn,ori,243,5,USD\nWar Horn,ori,243,5,EUR\nWar Horn,ori,243,,USD');
+		expect(parsed.entries.map(e => [e.purchasePrice, e.purchaseCurrency])).toEqual([[5, 'USD'], [5, 'EUR'], [null, 'EUR']]);
+		// A dollar default from the dialog applies to rows without a currency column.
+		expect(parseCollectionImport('Name,Set Code,Purchase Price\nWar Horn,ori,2', 'csv', { ...options, currency: 'USD' }).entries[0].purchaseCurrency).toBe('USD');
+		const plan = prepareCollectionImport(db, 'a', parsed, 'append');
+		commitCollectionImport(db, 'a', parsed, 'append', plan.digest, false);
+		expect(db.prepare("SELECT purchase_price, purchase_currency FROM collection_cards WHERE user_id = 'a' AND purchase_price = 5 ORDER BY id").all())
+			.toEqual([{ purchase_price: 5, purchase_currency: 'USD' }, { purchase_price: 5, purchase_currency: 'EUR' }]);
+		const again = prepareCollectionImport(db, 'a', parse('Name,Set Code,Collector Number,Purchase Price,Purchase Price Currency\nWar Horn,ori,243,5,USD\nWar Horn,ori,243,5,EUR'), 'merge');
+		expect(again.summary).toMatchObject({ duplicates: 2, ready: 0 }); db.close();
 	});
 	it('never substitutes a newer printing when the specified edition is missing or ambiguous', () => {
 		const db = fixture();

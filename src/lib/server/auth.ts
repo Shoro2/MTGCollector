@@ -2,6 +2,7 @@ import { Google } from 'arctic';
 import { randomBytes } from 'node:crypto';
 import { sqlite } from './db.js';
 import { env } from '$env/dynamic/private';
+import { parseCurrency, type Currency } from '$lib/currency';
 
 export type SessionUser = {
 	id: string;
@@ -9,6 +10,8 @@ export type SessionUser = {
 	email: string;
 	avatarUrl: string | null;
 	isAdmin: boolean;
+	/** Display currency chosen in /settings (users.currency). */
+	currency: Currency;
 };
 
 export function getGoogleClient() {
@@ -56,10 +59,10 @@ export function validateSession(sessionId: string): SessionUser | null {
 	}
 
 	const row = sqlite.prepare(
-		`SELECT u.id, u.name, u.email, u.avatar_url
+		`SELECT u.id, u.name, u.email, u.avatar_url, u.currency
 		 FROM sessions s JOIN users u ON s.user_id = u.id
 		 WHERE s.id = ? AND s.expires_at > ?`
-	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null } | undefined;
+	).get(sessionId, new Date().toISOString()) as { id: string; name: string; email: string; avatar_url: string | null; currency: string | null } | undefined;
 
 	if (!row) {
 		sessionCache.delete(sessionId);
@@ -71,7 +74,8 @@ export function validateSession(sessionId: string): SessionUser | null {
 		name: row.name,
 		email: row.email,
 		avatarUrl: row.avatar_url,
-		isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail
+		isAdmin: !!adminEmail && row.email.toLowerCase() === adminEmail,
+		currency: parseCurrency(row.currency)
 	};
 	sessionCache.set(sessionId, { user, at: Date.now() });
 	cacheSweep();

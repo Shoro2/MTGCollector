@@ -1,5 +1,6 @@
 import { sqlite } from './db.js';
 import { getUsdToEurRate } from './exchange-rate.js';
+import { parseCurrency } from '../currency.js';
 import { getPriceData } from './price-data.js';
 import { priceMoverRows, printingPriceSample } from './home-data.js';
 import { pickMovers } from '../home.js';
@@ -117,9 +118,12 @@ export const setsCache = createCache(
 );
 
 // Mutations invalidate this server cache; browser responses must not outlive it.
+// The user's display currency is read with the data; /api/settings drops the entry
+// when it changes.
 export const priceDataCache = createUserCache(async (userId: string) => {
 	const rate = await getUsdToEurRate();
-	return getPriceData(sqlite, userId, rate);
+	const row = sqlite.prepare('SELECT currency FROM users WHERE id = ?').get(userId) as { currency: string } | undefined;
+	return getPriceData(sqlite, userId, rate, undefined, parseCurrency(row?.currency));
 }, 10 * 60 * 1000);
 
 // Visitor homepage: price moves of the latest snapshot day (~0.1 s over the whole
