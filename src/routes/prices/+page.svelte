@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { priceDate } from '$lib/utils';
 	import { formatMoney, parseCurrency, quoteIn, type Currency } from '$lib/currency';
@@ -543,9 +544,9 @@
 							>
 								<span class="text-[var(--color-text-muted)] w-5 sm:w-6 text-right text-xs sm:text-sm flex-shrink-0">{i + 1}.</span>
 								{#if card.image_uri || card.local_image_path}
-									<CardPreview src={(card.local_image_path || card.image_uri) as string} alt={card.name as string} scale={2.4}>
-										<img
-											src={(card.local_image_path || card.image_uri) as string}
+									<CardPreview src={(card.local_image_path as string) || cardImageSrc(card.image_uri as string)} alt={card.name as string} scale={2.4}>
+										<img onerror={cardImageError}
+											src={(card.local_image_path as string) || cardImageSrc(card.image_uri as string)}
 											alt={card.name as string}
 											class="w-8 h-12 sm:w-10 sm:h-14 object-cover rounded flex-shrink-0"
 											loading="lazy"

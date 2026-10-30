@@ -178,8 +178,14 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		// batched transactions.
 		// Legalities change with every banlist update; the deck check and the legality grid
 		// read them, so they are refreshed with the prices (identity fields stay as imported).
+		// Image URLs too: Scryfall re-versions its images (`?<timestamp>`, all of them around
+		// 2026-07-13), and the stale URLs of the first import ended in a block at Scryfall's
+		// edge (2026-10-30), so the image cache (/card-image) fetches the current one.
 		const updatePrice = sqlite.prepare(
-			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id), legalities = COALESCE(?, legalities) WHERE id = ?'
+			'UPDATE cards SET price_eur = ?, price_eur_foil = ?, price_usd = ?, price_usd_foil = ?, cardmarket_id = COALESCE(?, cardmarket_id), legalities = COALESCE(?, legalities), image_uri = COALESCE(?, image_uri) WHERE id = ?'
+		);
+		const updateFaceImage = sqlite.prepare(
+			'UPDATE card_faces SET image_uri = COALESCE(?, image_uri) WHERE card_id = ? AND face_index = ?'
 		);
 
 		const cardExists = sqlite.prepare('SELECT 1 FROM cards WHERE id = ?');
@@ -278,18 +284,21 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 						continue;
 					}
 
-					if (cardExists.get(card.id)) {
-						writeAvailability(card);
-						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId,
-							card.legalities ? JSON.stringify(card.legalities) : null, card.id);
-						if (result.changes > 0) updated++;
-						continue;
-					}
-
 					const imageUri =
 						card.image_uris?.normal ||
 						card.card_faces?.[0]?.image_uris?.normal ||
 						null;
+
+					if (cardExists.get(card.id)) {
+						writeAvailability(card);
+						const result = updatePrice.run(priceEur, priceEurFoil, priceUsd, priceUsdFoil, cardmarketId,
+							card.legalities ? JSON.stringify(card.legalities) : null, imageUri, card.id);
+						if (result.changes > 0) updated++;
+						if (card.card_faces && card.card_faces.length > 1) {
+							card.card_faces.forEach((face, fi) => updateFaceImage.run(face.image_uris?.normal || null, card.id, fi));
+						}
+						continue;
+					}
 
 					insertCard.run(
 						card.id,
