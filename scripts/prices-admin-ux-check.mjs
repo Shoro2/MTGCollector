@@ -118,6 +118,38 @@ try {
 	await page.setViewportSize({ width: 360, height: 800 });
 	await page.locator('.chart-frame').scrollIntoViewIfNeeded();
 	await page.locator('.chart-frame').screenshot({ path: resolve(dir, 'prices-chart-360.png') });
+	// Two views of the chart (owner request 2026-10-30): profit/loss alone, and
+	// market value against purchase cost. The market value line is amber.
+	const amberPixels = () => page.evaluate(() => {
+		const canvas = document.querySelector('.chart-frame canvas');
+		const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+		let count = 0;
+		for (let i = 0; i < data.length; i += 4) {
+			if (data[i + 3] > 200 && Math.abs(data[i] - 245) < 12 && Math.abs(data[i + 1] - 158) < 12 && Math.abs(data[i + 2] - 11) < 12) count++;
+		}
+		return count;
+	});
+	const viewButton = id => page.locator(`[data-chart-view="${id}"]`);
+	check(await viewButton('profit').getAttribute('aria-pressed') === 'true', 'the chart opens on the profit/loss view');
+	check(await amberPixels() === 0, 'the profit/loss view draws no market value line');
+	await viewButton('value').click();
+	await page.waitForTimeout(400);
+	check(await viewButton('value').getAttribute('aria-pressed') === 'true' && await viewButton('profit').getAttribute('aria-pressed') === 'false', 'the switch marks the value view as chosen');
+	check(await amberPixels() > 50, 'the value view draws the market value line');
+	const valueBox = await page.locator('.chart-frame canvas').boundingBox();
+	check(valueBox.height >= 240, `value chart is ${valueBox.height} px tall at 360 px`);
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'the chart switch fits a 360 px phone');
+	await page.locator('.chart-frame').screenshot({ path: resolve(dir, 'prices-chart-value-360.png') });
+	await page.reload();
+	await viewButton('value').waitFor();
+	await page.waitForFunction(() => {
+		const canvas = document.querySelector('.chart-frame canvas');
+		return canvas && canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data.some((v, i) => i % 4 === 3 && v > 0);
+	});
+	check(await viewButton('value').getAttribute('aria-pressed') === 'true' && await amberPixels() > 50, 'the chosen view survives a reload');
+	await viewButton('profit').click();
+	await page.waitForTimeout(400);
+	check(await amberPixels() === 0, 'switching back draws the profit/loss view again');
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.getByRole('button', { name: 'Profit', exact: true }).click();
 	const freeRow = page.locator('a', { has: page.getByText('Free Copy', { exact: true }) });
