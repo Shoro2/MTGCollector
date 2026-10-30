@@ -132,7 +132,7 @@
 	}
 	.status-restricted .legality-icon svg text {
 		fill: var(--color-bg);
-		font-size: 9px;
+		font-size: 0.5625rem;
 		font-weight: 700;
 	}
 	.status-banned {

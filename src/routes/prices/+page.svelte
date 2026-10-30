@@ -332,7 +332,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Portfolio analytics</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Price Tracking</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Price Tracking</h1>
 		</div>
 		<span class="chip">
 			Last update: {formatLastUpdate(data.priceStatus.lastUpdate)}
@@ -528,7 +528,11 @@
 						</div>
 					</div>
 				</div>
-				<div class="space-y-2">
+				<!-- Two columns on wide screens, ranked down the first column, then the second. -->
+				<div
+					class="grid grid-cols-1 gap-2 xl:grid-flow-col xl:grid-cols-2 xl:grid-rows-[repeat(var(--top-rows),auto)] xl:gap-x-6"
+					style="--top-rows: {Math.ceil(sortedTopCards.length / 2)}"
+				>
 					{#each sortedTopCards as card, i}
 						<div class="flex items-center gap-2 p-2 rounded hover:bg-[var(--color-surface-hover)] transition-colors">
 							<a

@@ -42,8 +42,8 @@
 	--radius-sm: 6px;
 	--radius-md: 8px;
 	--radius-lg: 12px;
-	--control-height: 36px;
-	--row-height-dense: 38px;
+	--control-height: 2.25rem;
+	--row-height-dense: 2.375rem;
 	--font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	--font-data: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
@@ -54,6 +54,39 @@ html {
 	scrollbar-color: #243246 var(--color-bg);
 }
 
+/* Display size (/settings, src/lib/ui-scale.ts). Text, spacing, images and the
+   page width are in rem, so the root font size scales the whole interface; use
+   rem, not px, for anything that should grow with it. Automatic, the default and
+   the fallback for an unknown value, keeps the browser's size up to a 1920 px
+   window and grows slowly above it (120 % at 2560 px, at most 140 %): on a large
+   monitor the pages looked small (owner report 2026-10-30). Sizes above 100 %
+   apply from 640 px up, so phones keep the normal size and fit 320 px. */
+html {
+	font-size: clamp(100%, calc(100% + (100vw - 1920px) / 200), 140%);
+}
+
+html[data-ui-scale='90'] {
+	font-size: 90%;
+}
+
+html[data-ui-scale='100'] {
+	font-size: 100%;
+}
+
+@media (min-width: 640px) {
+	html[data-ui-scale='110'] {
+		font-size: 110%;
+	}
+
+	html[data-ui-scale='125'] {
+		font-size: 125%;
+	}
+
+	html[data-ui-scale='150'] {
+		font-size: 150%;
+	}
+}
+
 body {
 	min-height: 100vh;
 	background:
@@ -61,7 +94,7 @@ body {
 		linear-gradient(180deg, #0a0e15 0%, #090c12 100%);
 	color: var(--color-text);
 	font-family: var(--font-ui);
-	font-size: 14px;
+	font-size: 0.875rem;
 	line-height: 1.5;
 	-webkit-font-smoothing: antialiased;
 	text-rendering: optimizeLegibility;
@@ -579,6 +612,9 @@ tbody tr:hover {
 	.chart-frame {
 		height: auto;
 		aspect-ratio: 2 / 1;
+		/* A wide window or a large display size would make a 2:1 chart taller
+		   than the screen; the plot then gets wider instead. */
+		max-height: 70vh;
 	}
 }
 
@@ -623,6 +659,6 @@ tbody tr:hover {
 	}
 
 	.btn {
-		min-height: 34px;
+		min-height: 2.125rem;
 	}
 }

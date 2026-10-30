@@ -215,7 +215,7 @@
 		{/if}
 	</nav>
 
-	<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-8">
+	<div class="grid grid-cols-1 md:grid-cols-[16.25rem_1fr] gap-4 md:gap-8">
 		<!-- Card Image -->
 		<div>
 			{#if getImageSrc()}

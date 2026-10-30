@@ -66,9 +66,9 @@
 
 <div class="min-h-screen flex flex-col">
 	<nav class="app-nav sticky top-0 z-40 border-b border-[var(--color-border)]">
-		<div class="mx-auto flex h-[53px] max-w-[1320px] items-center gap-4 px-4 md:px-6">
+		<div class="mx-auto flex h-[3.3125rem] max-w-[82.5rem] items-center gap-4 px-4 md:px-6">
 			<a href="/" class="flex shrink-0 items-center gap-2 no-underline" aria-label="MTG Collector home">
-				<span class="brand-mark flex h-7 w-7 items-center justify-center rounded-[7px]">
+				<span class="brand-mark flex h-7 w-7 items-center justify-center rounded-[0.4375rem]">
 					<span class="flex gap-0.5">
 						<span class="h-1 w-1 rounded-full bg-[var(--pip-w)]"></span>
 						<span class="h-1 w-1 rounded-full bg-[var(--pip-u)]"></span>
@@ -84,7 +84,7 @@
 				{#each visibleNavItems as item}
 					<a
 						href={item.href}
-						class="relative flex h-full items-center px-3 text-[13px] font-medium no-underline transition-colors {isActive(item.href) ? 'text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+						class="relative flex h-full items-center px-3 text-[0.8125rem] font-medium no-underline transition-colors {isActive(item.href) ? 'text-[var(--color-text)] shadow-[inset_0_-2px_0_var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
 					>
 						{item.label}
 					</a>
@@ -95,7 +95,7 @@
 				{#if data.user}
 					<a
 						href="/settings"
-						class="flex h-[30px] w-[30px] items-center justify-center rounded-[7px] border border-transparent text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border)] hover:bg-white/5 hover:text-[var(--color-text)]"
+						class="flex h-[1.875rem] w-[1.875rem] items-center justify-center rounded-[0.4375rem] border border-transparent text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border)] hover:bg-white/5 hover:text-[var(--color-text)]"
 						aria-label="Settings"
 						title="Settings"
 					>
@@ -108,19 +108,19 @@
 						{#if data.user.avatarUrl}
 							<img src={data.user.avatarUrl} alt="" class="h-7 w-7 rounded-full" referrerpolicy="no-referrer" />
 						{:else}
-							<span class="user-initials flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold">
+							<span class="user-initials flex h-7 w-7 items-center justify-center rounded-full text-[0.6875rem] font-semibold">
 								{initials(data.user.name)}
 							</span>
 						{/if}
-						<span class="hidden max-w-36 truncate text-[13px] font-medium text-[var(--color-text-muted)] lg:inline">{data.user.name}</span>
+						<span class="hidden max-w-36 truncate text-[0.8125rem] font-medium text-[var(--color-text-muted)] lg:inline">{data.user.name}</span>
 					</div>
 					<form method="POST" action="/auth/logout">
-						<button type="submit" class="text-[13px] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]">
+						<button type="submit" class="text-[0.8125rem] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]">
 							Logout
 						</button>
 					</form>
 				{:else}
-					<a href="/login" class="btn btn-primary min-h-[32px]">Sign in</a>
+					<a href="/login" class="btn btn-primary min-h-[2rem]">Sign in</a>
 				{/if}
 			</div>
 
@@ -152,7 +152,7 @@
 		</div>
 
 		{#if mobileMenuOpen}
-			<div class="mx-auto flex max-w-[1320px] flex-col gap-1 border-t border-[var(--color-border)] px-3 py-3 md:hidden">
+			<div class="mx-auto flex max-w-[82.5rem] flex-col gap-1 border-t border-[var(--color-border)] px-3 py-3 md:hidden">
 				{#each visibleNavItems as item}
 					<a
 						href={item.href}
@@ -183,7 +183,7 @@
 		{/if}
 	</nav>
 
-	<main class="mx-auto w-full max-w-[1320px] flex-1 px-4 py-5 md:px-6 md:py-6">
+	<main class="mx-auto w-full max-w-[82.5rem] flex-1 px-4 py-5 md:px-6 md:py-6">
 		{@render children()}
 	</main>
 

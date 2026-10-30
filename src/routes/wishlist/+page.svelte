@@ -92,7 +92,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Planning</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Wishlist</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Wishlist</h1>
 		</div>
 		<span class="chip tabular">{data.items.length} cards</span>
 	</div>

@@ -12,7 +12,7 @@
 <div class="flex min-h-[70vh] items-center justify-center">
 	<div class="panel-raised w-full max-w-sm space-y-6 p-8 text-center">
 		<div>
-			<div class="brand-mark mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-[10px]">
+			<div class="brand-mark mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-[0.625rem]">
 				<span class="flex gap-1">
 					<span class="h-1.5 w-1.5 rounded-full bg-[var(--pip-w)]"></span>
 					<span class="h-1.5 w-1.5 rounded-full bg-[var(--pip-u)]"></span>
