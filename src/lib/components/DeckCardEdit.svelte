@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { BOARDS, BOARD_LABELS, type Board } from '$lib/deck';
+	import { page } from '$app/state';
 	import { displayPrice } from '$lib/utils';
+	import { parseCurrency } from '$lib/currency';
 
 	type Row = { id: number; board: Board; quantity: number; foil: number; card_id: string; name: string; set_code: string; collector_number: string };
 	type Printing = {
@@ -36,7 +38,7 @@
 	});
 
 	function label(p: Printing) {
-		const price = displayPrice(p);
+		const price = displayPrice(p, parseCurrency(page.data.currency));
 		const year = p.released_at ? ` (${p.released_at.slice(0, 4)})` : '';
 		return `${p.set_name}${year} · ${p.set_code.toUpperCase()} #${p.collector_number}${p.is_paper === 0 ? ' · digital' : ''}${price ? ` · ${price.text}${price.foil ? ' foil' : ''}` : ''}`;
 	}

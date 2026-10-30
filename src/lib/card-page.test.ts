@@ -28,6 +28,11 @@ describe('cheapestPrice', () => {
 		expect(cheapestPrice([p('a', { price_usd: 4 }), p('b', { price_usd: 2.5 })])).toEqual({ text: '$2.50', foil: false });
 		expect(cheapestPrice([p('a')])).toBeNull();
 	});
+	it('takes the lowest dollar price first for a viewer who chose dollars', () => {
+		expect(cheapestPrice([p('a', { price_eur: 5.02, price_usd: 6 }), p('b', { price_usd: 4 })], 'USD')).toEqual({ text: '$4.00', foil: false });
+		expect(cheapestPrice([p('a', { price_usd_foil: 7, price_eur: 1 })], 'USD')).toEqual({ text: '$7.00', foil: true });
+		expect(cheapestPrice([p('a', { price_eur: 1 })], 'USD')).toEqual({ text: '€1.00', foil: false });
+	});
 });
 
 describe('cardPageMeta', () => {

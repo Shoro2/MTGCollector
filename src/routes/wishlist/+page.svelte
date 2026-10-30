@@ -3,6 +3,7 @@
 	import { goto, invalidate } from '$app/navigation';
 	import { scryfallSrcset, type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
+	import { currencySymbol, parseCurrency } from '$lib/currency';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import ManaCost from '$lib/components/ManaCost.svelte';
 
@@ -186,7 +187,8 @@
 						{#if !inCollection}
 							{#if collectingItem?.cardId === item.card_id}
 								<form onsubmit={(e) => { e.preventDefault(); confirmCollect(); }} class="flex items-center gap-1.5">
-									<span class="text-xs text-[var(--color-text-muted)]">€</span>
+									<!-- The purchase price is stored in the display currency (/settings). -->
+									<span class="text-xs text-[var(--color-text-muted)]">{currencySymbol(parseCurrency(data.currency))}</span>
 									<input
 										type="number"
 										step="0.01"

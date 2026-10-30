@@ -1,5 +1,6 @@
 import { CONDITIONS, cleanLocation } from './collection-fields';
 import { LANGUAGES } from './utils';
+import { isCurrency, type Currency } from './currency';
 
 export const IMPORT_FIELDS = [
 	['id', 'Scryfall ID'], ['name', 'Card name'], ['set', 'Set code'], ['setName', 'Set name'],
@@ -15,6 +16,8 @@ export type ImportOptions = { mapping?: ImportMapping; currency: string; locatio
 export type ImportEntry = {
 	line: number; id: string; name: string; set: string; setName: string; number: string; quantity: number;
 	foil: number; proxy: number; condition: string; language: string; purchasePrice: number | null;
+	/** The currency the purchase price is in (EUR when there is none). */
+	purchaseCurrency: Currency;
 	location: string; notes: string; tags: string[]; addedAt: string | null;
 };
 export type ImportIssue = { line: number; name: string; message: string };
@@ -120,7 +123,7 @@ export function parseCollectionImport(text: string, format: 'csv' | 'text', opti
 			if (!language) throw new Error(`Unknown language: ${rawLang}.`);
 			const price = options.ignorePrices ? '' : get('price');
 			const currency = (get('currency') || options.currency).toUpperCase();
-			if (price && currency !== 'EUR') throw new Error(`Purchase price is ${currency || 'in an unknown currency'}. Convert it to EUR or choose Ignore purchase prices.`);
+			if (price && !isCurrency(currency)) throw new Error(`Purchase price is ${currency === 'UNKNOWN' || !currency ? 'in an unknown currency' : currency}. Convert it to EUR or USD, or choose Ignore purchase prices.`);
 			const added = get('added');
 			if (added && (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?$/.test(added) || !Number.isFinite(Date.parse(added)) || new Date(added).toISOString().slice(0, 10) !== added.slice(0, 10))) {
 				throw new Error('Date added must use YYYY-MM-DD or an ISO UTC timestamp. Leave the column unmapped to use today.');
@@ -132,6 +135,7 @@ export function parseCollectionImport(text: string, format: 'csv' | 'text', opti
 				number: get('number'), quantity, foil: ['foil', 'true', '1', 'yes'].includes(finish) ? 1 : 0,
 				proxy: options.allProxies || ['true', '1', 'yes'].includes(proxy) ? 1 : 0,
 				condition: conditionOf(get('condition')), language, purchasePrice: price ? decimal(price) : null,
+				purchaseCurrency: price && isCurrency(currency) ? currency : 'EUR',
 				location: cleanLocation(get('location') || options.location), notes: get('notes'), tags,
 				addedAt: added ? new Date(added).toISOString() : null });
 		} catch (error) { issues.push({ line: i + 1, name: get('name'), message: (error as Error).message }); }

@@ -1,5 +1,5 @@
 /** Pure helpers for the card page (/cards/<slug>): one card, all of its printings. */
-import { formatPrice } from './utils';
+import { formatMoney, type Currency } from './currency';
 
 export type PrintingSummary = {
 	id: string;
@@ -30,20 +30,24 @@ export function pickMainPrinting<T extends PrintingSummary>(printings: T[]): T {
 	return [...printings].sort((a, b) => rank(a) - rank(b) || (b.released_at ?? '').localeCompare(a.released_at ?? '') || a.id.localeCompare(b.id))[0];
 }
 
-/** Lowest list price over all printings: EUR non-foil, else EUR foil, else USD. */
-export function cheapestPrice(printings: PrintingSummary[]): { text: string; foil: boolean } | null {
+/**
+ * Lowest list price over all printings: the currency's own market non-foil, then foil,
+ * then the other market (EUR first for search snippets and visitors; a signed-in user
+ * may pick USD in /settings).
+ */
+export function cheapestPrice(printings: PrintingSummary[], currency: Currency = 'EUR'): { text: string; foil: boolean } | null {
 	const min = (values: Array<number | null>) => {
 		const v = values.filter(has);
 		return v.length ? Math.min(...v) : null;
 	};
-	const eur = min(printings.map((x) => x.price_eur));
-	if (eur !== null) return { text: formatPrice(eur), foil: false };
-	const eurFoil = min(printings.map((x) => x.price_eur_foil));
-	if (eurFoil !== null) return { text: formatPrice(eurFoil), foil: true };
-	const usd = min(printings.map((x) => x.price_usd));
-	if (usd !== null) return { text: formatPrice(null, usd), foil: false };
-	const usdFoil = min(printings.map((x) => x.price_usd_foil));
-	return usdFoil !== null ? { text: formatPrice(null, usdFoil), foil: true } : null;
+	const other: Currency = currency === 'USD' ? 'EUR' : 'USD';
+	const column = (c: Currency, foil: boolean) => (x: PrintingSummary) =>
+		c === 'USD' ? (foil ? x.price_usd_foil : x.price_usd) : foil ? x.price_eur_foil : x.price_eur;
+	for (const [c, foil] of [[currency, false], [currency, true], [other, false], [other, true]] as const) {
+		const lowest = min(printings.map(column(c, foil)));
+		if (lowest !== null) return { text: formatMoney(lowest, c), foil };
+	}
+	return null;
 }
 
 // Search results cut titles and snippets to the device width: keep the facts within these.

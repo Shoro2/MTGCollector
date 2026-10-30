@@ -1,3 +1,5 @@
+import { formatMoneyGrouped } from './currency';
+
 // Homepage figures: price moves for visitors, the collection dashboard for signed-in
 // users. Pure functions; the database reads are in $lib/server/home-data.ts.
 
@@ -41,30 +43,29 @@ export function pickMovers(rows: MoverRow[], { rate, minPrice = 2, maxRatio = 2,
 	};
 }
 
-/** The fields of a getPriceData() top card the homepage reads. */
+/**
+ * The fields of a getPriceData() top card the homepage reads: one copy's market price now
+ * and before today, already in the user's display currency.
+ */
 export type Holding = {
 	id: string;
 	name: string;
 	quantity: number;
 	foil: number;
 	language: string;
-	price: number | null;
-	price_usd: number | null;
-	prev_price: number | null;
-	prev_price_usd: number | null;
+	value: number | null;
+	prev_value: number | null;
 };
-
-const inEur = (eur: number | null, usd: number | null, rate: number) => eur ?? (usd == null ? null : usd * rate);
 
 export type CollectionMove = { id: string; name: string; foil: number; language: string; price: number; pct: number };
 
-/** Largest moves of the user's own copies since the price before today. */
-export function collectionMoves(cards: Holding[], rate: number, { minPrice = 1, limit = 3 } = {}) {
+/** Largest moves of the user's own copies since the price before today (from 1 in the display currency). */
+export function collectionMoves(cards: Holding[], { minPrice = 1, limit = 3 } = {}) {
 	const seen = new Set<string>();
 	const moves: CollectionMove[] = [];
 	for (const c of cards) {
-		const now = inEur(c.price, c.price_usd, rate);
-		const prev = inEur(c.prev_price, c.prev_price_usd, rate);
+		const now = c.value;
+		const prev = c.prev_value;
 		const key = `${c.id}/${c.foil}/${c.language}`;
 		if (now == null || prev == null || now < minPrice || prev < minPrice || now === prev || seen.has(key)) continue;
 		seen.add(key);
@@ -79,13 +80,11 @@ export function collectionMoves(cards: Holding[], rate: number, { minPrice = 1, 
 type Stats = { totalValue: number; profitValue: number; profitCost: number; profitCopies: number; uniqueCards: number; totalCards: number };
 
 /** The dashboard's figures, from the same getPriceData() result as /prices. */
-export function dashboardSummary(data: { topCards: Holding[]; stats: Stats; proxyCopies: number; usdToEur: number }) {
+export function dashboardSummary(data: { topCards: Holding[]; stats: Stats; proxyCopies: number }) {
 	let change: number | null = null;
 	for (const c of data.topCards) {
-		const now = inEur(c.price, c.price_usd, data.usdToEur);
-		const prev = inEur(c.prev_price, c.prev_price_usd, data.usdToEur);
-		if (now == null || prev == null) continue;
-		change = (change ?? 0) + (now - prev) * c.quantity;
+		if (c.value == null || c.prev_value == null) continue;
+		change = (change ?? 0) + (c.value - c.prev_value) * c.quantity;
 	}
 	const { stats } = data;
 	const profit = stats.profitCopies ? stats.profitValue - stats.profitCost : null;
@@ -145,9 +144,7 @@ export function movesHeading(date: string, previousDate: string | null) {
 	return `Price moves on ${monthDay(date)}`;
 }
 
-const euroFormat = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/** €1,248.30: grouped thousands for dashboard totals. */
+/** €1,248.30: grouped thousands for the visitor homepage (Cardmarket prices). */
 export function euro(amount: number) {
-	return `€${euroFormat.format(amount)}`;
+	return formatMoneyGrouped(amount, 'EUR');
 }

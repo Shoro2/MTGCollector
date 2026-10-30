@@ -42,4 +42,9 @@ describe('lineChartOptions', () => {
 		const plain = lineChartOptions({ euro: false }).scales?.y?.ticks as { callback?: unknown };
 		expect(plain.callback).toBeUndefined();
 	});
+
+	it('labels the y axis in the chosen currency', () => {
+		const dollars = lineChartOptions({ currency: 'USD' }).scales?.y?.ticks as { callback?: (v: number) => string };
+		expect(dollars.callback?.(1500)).toBe('$1.5k');
+	});
 });

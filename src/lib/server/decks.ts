@@ -9,7 +9,7 @@
 import type { Database } from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import {
-	BOARDS, VISIBILITIES, isBoard, isBracket, ownershipKey, pickDeckPrinting, publishes, unitPriceEur, deckColors,
+	BOARDS, VISIBILITIES, isBoard, isBracket, ownershipKey, pickDeckPrinting, publishes, unitPrice, deckColors,
 	type Board, type Bracket, type CardSuggestion, type Owned, type Visibility
 } from '../deck';
 import { canHavePartner, canLead, canPair, deckFormat, isDeckFormat, type RuleCard } from '../deck-formats';
@@ -17,6 +17,7 @@ import { CONTACT_MESSAGE, cleanUserText, hasContact } from '../user-text';
 import { parseDeckList, type DeckLine, type DeckLineIssue } from '../deck-text';
 import { slugifyCardName } from '../card-slug';
 import type { PrintingSummary } from '../card-page';
+import type { Currency } from '../currency';
 import { cardSlugIndex } from './card-slugs';
 import { INDEX_MIN_CARDS } from '../deck-seo';
 
@@ -615,12 +616,12 @@ export type DeckSummary = {
 };
 
 type DeckHead = Omit<DeckSummary, 'cards' | 'sideboard' | 'value' | 'unpriced' | 'colors' | 'commander'>;
-type SummaryRow = Parameters<typeof unitPriceEur>[0] & { deck_id: string; board: Board; quantity: number; name: string; image_uri: string | null; color_identity: string | null };
+type SummaryRow = Parameters<typeof unitPrice>[0] & { deck_id: string; board: Board; quantity: number; name: string; image_uri: string | null; color_identity: string | null };
 const SUMMARY_COLUMNS = `dc.deck_id, dc.board, dc.quantity, dc.foil, c.name, c.image_uri, c.color_identity,
 	c.price_eur, c.price_eur_foil, c.price_usd, c.price_usd_foil`;
 
-/** Card counts, value, colors and the commanders ("A & B" for partners) of each deck. */
-function summarize(decks: DeckHead[], rows: SummaryRow[], usdToEur: number): DeckSummary[] {
+/** Card counts, value (in `currency`), colors and the commanders ("A & B" for partners) of each deck. */
+function summarize(decks: DeckHead[], rows: SummaryRow[], usdToEur: number, currency: Currency): DeckSummary[] {
 	const byDeck = new Map<string, SummaryRow[]>();
 	for (const row of rows) {
 		const list = byDeck.get(row.deck_id);
@@ -632,7 +633,7 @@ function summarize(decks: DeckHead[], rows: SummaryRow[], usdToEur: number): Dec
 		let value = 0, unpriced = 0;
 		for (const row of list) {
 			if (row.board === 'maybeboard') continue;
-			const price = unitPriceEur(row, usdToEur);
+			const price = unitPrice(row, currency, usdToEur);
 			if (price == null) unpriced += row.quantity;
 			else value += price * row.quantity;
 		}
@@ -650,13 +651,13 @@ function summarize(decks: DeckHead[], rows: SummaryRow[], usdToEur: number): Dec
 	});
 }
 
-/** The owner's decks, newest change first. */
-export function listDecks(db: Database, userId: string, usdToEur: number): DeckSummary[] {
+/** The owner's decks, newest change first, valued in `currency`. */
+export function listDecks(db: Database, userId: string, usdToEur: number, currency: Currency = 'EUR'): DeckSummary[] {
 	const decks = db.prepare('SELECT id, name, format, visibility, bracket, author_name, created_at, updated_at FROM decks WHERE user_id = ? ORDER BY updated_at DESC')
 		.all(userId) as DeckHead[];
 	const rows = db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM deck_cards dc JOIN decks d ON d.id = dc.deck_id JOIN cards c ON c.id = dc.card_id
 		WHERE d.user_id = ? ORDER BY dc.id`).all(userId) as SummaryRow[];
-	return summarize(decks, rows, usdToEur);
+	return summarize(decks, rows, usdToEur, currency);
 }
 
 export const PUBLIC_DECK_SORTS = ['updated', 'name', 'cards'] as const;
@@ -673,7 +674,8 @@ const likePattern = (text: string) => `%${text.replace(/[\\%_]/g, (c) => `\\${c}
  * Everybody's public decks, for visitors too: never the owner, never a hidden deck (see
  * reportDeck), never an empty one. `q` searches deck names, author names and commanders.
  */
-export function publicDecks(db: Database, query: { q?: string; format?: string; sort?: PublicDeckSort; page?: number }, usdToEur: number) {
+export function publicDecks(db: Database, query: { q?: string; format?: string; sort?: PublicDeckSort; page?: number }, usdToEur: number,
+	currency: Currency = 'EUR') {
 	const q = (query.q ?? '').trim().slice(0, 100);
 	const format = query.format && isDeckFormat(query.format) ? query.format : '';
 	const sort = query.sort && PUBLIC_DECK_SORTS.includes(query.sort) ? query.sort : 'updated';
@@ -697,7 +699,7 @@ export function publicDecks(db: Database, query: { q?: string; format?: string; 
 		? (db.prepare(`SELECT ${SUMMARY_COLUMNS} FROM deck_cards dc JOIN cards c ON c.id = dc.card_id
 			WHERE dc.deck_id IN (SELECT value FROM json_each(?)) ORDER BY dc.id`).all(JSON.stringify(heads.map((d) => d.id))) as SummaryRow[])
 		: [];
-	return { decks: summarize(heads, rows, usdToEur), total, page, pages, q, format, sort };
+	return { decks: summarize(heads, rows, usdToEur, currency), total, page, pages, q, format, sort };
 }
 
 /**

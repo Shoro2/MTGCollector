@@ -3,7 +3,8 @@
 	import { goto, invalidate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { formatPrice, conditionLabel, priceDate, scryfallSrcset, LANGUAGES, languageLabel, histEur } from '$lib/utils';
+	import { conditionLabel, priceDate, scryfallSrcset, LANGUAGES, languageLabel } from '$lib/utils';
+	import { CURRENCIES, costIn, currencySymbol, formatMoney, formatQuote, parseCurrency, quoteIn, type Currency } from '$lib/currency';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import CollectionImport from '$lib/components/CollectionImport.svelte';
 	import CollectionBulkEdit from '$lib/components/CollectionBulkEdit.svelte';
@@ -57,20 +58,20 @@
 					labels: result.history.map((h: Record<string, unknown>) => priceDate(h.recorded_at as string)),
 					datasets: [
 						{
-							label: 'Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur as number | null, h.price_usd as number | null, data.usdToEur)),
+							label: `Price (${data.currency})`,
+							data: result.history.map((h: Record<string, unknown>) => quoteIn(h.price_eur as number | null, h.price_usd as number | null, data.currency, data.usdToEur)),
 							borderColor: '#3b82f6',
 							tension: 0.3
 						},
 						{
-							label: 'Foil Price (EUR)',
-							data: result.history.map((h: Record<string, unknown>) => histEur(h.price_eur_foil as number | null, h.price_usd_foil as number | null, data.usdToEur)),
+							label: `Foil Price (${data.currency})`,
+							data: result.history.map((h: Record<string, unknown>) => quoteIn(h.price_eur_foil as number | null, h.price_usd_foil as number | null, data.currency, data.usdToEur)),
 							borderColor: '#f59e0b',
 							tension: 0.3
 						}
 					]
 				},
-				options: lineChartOptions()
+				options: lineChartOptions({ currency: data.currency })
 			});
 		}, 0);
 	}
@@ -123,6 +124,8 @@
 	let editLocation = $state('');
 	let editError = $state('');
 	let editPurchasePrice = $state('');
+	// The currency the purchase price is entered in; a new price defaults to the display currency.
+	let editPurchaseCurrency = $state<Currency>('EUR');
 	let saving = $state(false);
 
 	function openEdit(item: Record<string, unknown>) {
@@ -136,6 +139,7 @@
 		editLocation = (item.location as string) || '';
 		editError = '';
 		editPurchasePrice = item.purchase_price != null ? String(item.purchase_price) : '';
+		editPurchaseCurrency = item.purchase_price != null ? parseCurrency(item.purchase_currency) : data.currency;
 	}
 
 	function closeEdit() {
@@ -158,7 +162,8 @@
 					language: editLanguage,
 					notes: editNotes || null,
 					location: editLocation,
-					purchasePrice: editPurchasePrice ? parseFloat(editPurchasePrice) : null
+					purchasePrice: editPurchasePrice ? parseFloat(editPurchasePrice) : null,
+					purchaseCurrency: editPurchaseCurrency
 				})
 			});
 			if (!response.ok) throw new Error((await response.json()).message || 'Could not save changes.');
@@ -387,15 +392,23 @@
 		}
 	}
 
+	// One copy's market price in its finish, as shown: its own currency's market first, else the other one.
+	function itemQuote(item: Record<string, unknown>, quantity = 1): string {
+		const eur = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
+		const usd = (item.foil ? item.price_usd_foil : item.price_usd) as number | null;
+		return formatQuote(eur == null ? null : eur * quantity, usd == null ? null : usd * quantity, data.currency);
+	}
+
 	function priceChange(item: Record<string, unknown>): { percent: number; direction: string; color: string } | null {
 		if (item.proxy) return null; // a proxy has no market value to gain or lose
-		const purchasePrice = item.purchase_price as number | null;
-		let currentPrice = (item.foil ? item.price_eur_foil : item.price_eur) as number | null;
-		// Fallback: convert USD to EUR if no EUR price available
-		if (currentPrice == null) {
-			const usdPrice = (item.foil ? item.price_usd_foil : item.price_usd) as number | null;
-			if (usdPrice != null) currentPrice = usdPrice * data.usdToEur;
-		}
+		// Both sides in the display currency: the other market's price and a purchase price
+		// entered in the other currency are converted at today's rate.
+		const purchasePrice = costIn(item.purchase_price as number | null, item.purchase_currency, data.currency, data.usdToEur);
+		const currentPrice = quoteIn(
+			(item.foil ? item.price_eur_foil : item.price_eur) as number | null,
+			(item.foil ? item.price_usd_foil : item.price_usd) as number | null,
+			data.currency, data.usdToEur
+		);
 		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
 		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
 		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };
@@ -525,16 +538,27 @@
 
 					<!-- Purchase Price -->
 					<div>
-						<label for="edit-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price (EUR)</label>
-						<input
-							id="edit-purchase-price"
-							type="number"
-							bind:value={editPurchasePrice}
-							step="0.01"
-							min="0"
-							placeholder="e.g. 3.50"
-							class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-[var(--color-primary)]"
-						/>
+						<label for="edit-purchase-price" class="block text-xs text-[var(--color-text-muted)] mb-1">Purchase Price per copy</label>
+						<div class="flex min-w-0 gap-2">
+							<input
+								id="edit-purchase-price"
+								type="number"
+								bind:value={editPurchasePrice}
+								step="0.01"
+								min="0"
+								placeholder="e.g. 3.50"
+								class="min-w-0 flex-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-[var(--color-primary)]"
+							/>
+							<select
+								bind:value={editPurchaseCurrency}
+								aria-label="Purchase price currency"
+								class="bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-[var(--color-primary)]"
+							>
+								{#each CURRENCIES as currency (currency)}
+									<option value={currency}>{currencySymbol(currency)} {currency}</option>
+								{/each}
+							</select>
+						</div>
 					</div>
 
 					<!-- Price Info -->
@@ -550,7 +574,7 @@
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
 							<span class="text-xs text-[var(--color-text-muted)]">{editProxy ? 'Original Price' : 'Current Price'}</span>
 							<p class="font-medium {editProxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-accent)]'}">
-								{formatPrice((editItem.foil ? editItem.price_eur_foil : editItem.price_eur) as number | null, (editItem.foil ? editItem.price_usd_foil : editItem.price_usd) as number | null)}
+								{itemQuote(editItem)}
 							</p>
 						</div>
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
@@ -688,7 +712,7 @@
 		</div>
 		<div class="kpi-card">
 			<p class="kpi-label">Total Value</p>
-			<p class="kpi-value text-[var(--color-accent)]">{formatPrice(data.stats.totalValue)}</p>
+			<p class="kpi-value text-[var(--color-accent)]">{formatMoney(data.stats.totalValue, data.currency)}</p>
 			{#if data.stats.proxyCards}<p class="text-xs text-[var(--color-text-muted)]">Proxies not counted</p>{/if}
 		</div>
 	</div>
@@ -743,7 +767,7 @@
 			<button type="submit" class="bg-[var(--color-primary-button)] px-4 py-2 rounded-lg text-sm">Search</button>
 		</form>
 		<div class="flex flex-wrap gap-1">
-			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit %'], ['profit_total', 'Profit €'], ['quantity', 'Amount'], ['set_name', 'Set']] as [key, label]}
+			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit %'], ['profit_total', `Profit ${currencySymbol(data.currency)}`], ['quantity', 'Amount'], ['set_name', 'Set']] as [key, label]}
 				<button
 					onclick={() => setSort(key)}
 					class="px-3 py-2 rounded-lg text-xs transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)]'}"
@@ -837,7 +861,7 @@
 							<!-- Price -->
 							<div class="text-left sm:text-right">
 								<p class="font-medium {item.proxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-accent)]'}">
-									{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) as number | null, (item.foil ? item.price_usd_foil : item.price_usd) as number | null)}
+									{itemQuote(item)}
 								</p>
 								{#if item.proxy}
 									<p class="text-xs text-[var(--color-text-muted)]">original price</p>
@@ -847,7 +871,7 @@
 									</p>
 								{:else if (item.quantity as number) > 1}
 									<p class="text-xs text-[var(--color-text-muted)]">
-										{formatPrice((item.foil ? item.price_eur_foil : item.price_eur) != null ? ((item.foil ? item.price_eur_foil : item.price_eur) as number) * (item.quantity as number) : null, (item.foil ? item.price_usd_foil : item.price_usd) != null ? ((item.foil ? item.price_usd_foil : item.price_usd) as number) * (item.quantity as number) : null)} total
+										{itemQuote(item, item.quantity as number)} total
 									</p>
 								{/if}
 							</div>
@@ -1034,7 +1058,7 @@
 				{#if priceImportFormat === 'text'}
 					<div class="bg-[var(--color-bg)] rounded-lg p-3 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] space-y-1">
 						<p class="font-medium text-[var(--color-text)]">Format: <code>count Name (SET) number price E|D</code></p>
-						<p><code>E</code> = EUR, <code>D</code> = USD (converted to EUR using the current rate).</p>
+						<p><code>E</code> = EUR, <code>D</code> = USD. Each price keeps its currency; totals convert at the current rate.</p>
 						<p>Example: <code>1 An Offer You Can't Refuse (SNC) 51 1.51E</code></p>
 					</div>
 					<div>
