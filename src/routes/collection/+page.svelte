@@ -10,6 +10,7 @@
 	import MoveCollectionCopies from '$lib/components/MoveCollectionCopies.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
+	import { lineChartOptions } from '$lib/chart-options';
 
 	let { data }: { data: PageData } = $props();
 	let selectedIds = $state<number[]>([]);
@@ -69,14 +70,7 @@
 						}
 					]
 				},
-				options: {
-					responsive: true,
-					plugins: { legend: { labels: { color: '#94a3b8' } } },
-					scales: {
-						x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#94a3b8', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
-					}
-				}
+				options: lineChartOptions()
 			});
 		}, 0);
 	}
@@ -1184,7 +1178,7 @@
 		onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
 		onkeydown={(e) => { if (e.key === 'Escape') closeModal(); }}
 	>
-		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[80vh] overflow-auto p-6">
+		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[80vh] overflow-auto p-4 sm:p-6">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold">
 					{#if modalCard}
@@ -1199,7 +1193,9 @@
 			{#if modalLoading}
 				<p class="text-[var(--color-text-muted)] text-center py-8">Loading price data...</p>
 			{:else if modalCard}
-				<canvas bind:this={modalChartCanvas}></canvas>
+				<div class="chart-frame">
+					<canvas bind:this={modalChartCanvas}></canvas>
+				</div>
 			{/if}
 		</div>
 	</div>

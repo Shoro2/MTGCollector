@@ -7,6 +7,7 @@
 	import { onMount } from 'svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
+	import { lineChartOptions } from '$lib/chart-options';
 	import ManaCost from '$lib/components/ManaCost.svelte';
 	import ColorPips from '$lib/components/ColorPips.svelte';
 	import FormatLegality from '$lib/components/FormatLegality.svelte';
@@ -136,14 +137,7 @@
 		priceChart = new ChartCtor(priceChartCanvas, {
 			type: 'line',
 			data: { labels, datasets },
-			options: {
-				responsive: true,
-				plugins: { legend: { labels: { color: '#b0bec5' } } },
-				scales: {
-					x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
-					y: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } }
-				}
-			}
+			options: lineChartOptions({ euro: false })
 		});
 	}
 
@@ -342,7 +336,9 @@
 							</button>
 						</div>
 					</div>
-					<canvas bind:this={priceChartCanvas}></canvas>
+					<div class="chart-frame">
+						<canvas bind:this={priceChartCanvas}></canvas>
+					</div>
 				</div>
 			{/if}
 

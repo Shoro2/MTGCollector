@@ -4,6 +4,7 @@
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
+	import { lineChartOptions } from '$lib/chart-options';
 	import { onMount, tick } from 'svelte';
 	import type { ProfitPoint } from '$lib/server/price-data';
 
@@ -148,14 +149,7 @@
 						}
 					]
 				},
-				options: {
-					responsive: true,
-					plugins: { legend: { labels: { color: '#b0bec5' } } },
-					scales: {
-						x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#b0bec5', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
-					}
-				}
+				options: lineChartOptions()
 			});
 		} catch (err) {
 			if (active && request === modalRequest) modalError = err instanceof Error ? err.message : 'Price history unavailable.';
@@ -265,7 +259,9 @@
 							borderColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e' : '#ef4444',
 							backgroundColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e22' : '#ef444422',
 							fill: true,
-							tension: 0.3
+							tension: 0.3,
+							// Dots only while there are few days; on a phone dozens of them hide the line.
+							pointRadius: profitData.length > 30 ? 0 : 3
 						},
 						{
 							label: 'Purchase Price (EUR)',
@@ -284,14 +280,7 @@
 						}
 					]
 				},
-				options: {
-					responsive: true,
-					plugins: { legend: { labels: { color: '#b0bec5' } } },
-					scales: {
-						x: { ticks: { color: '#b0bec5' }, grid: { color: '#334155' } },
-						y: { ticks: { color: '#b0bec5', callback: (v) => `€${v}` }, grid: { color: '#334155' } }
-					}
-				}
+				options: lineChartOptions()
 			});
 		}
 	}
@@ -343,9 +332,9 @@
 			{/each}
 		</div>
 
-		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] animate-pulse">
+		<div class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 border border-[var(--color-border)] animate-pulse">
 			<div class="h-5 bg-[var(--color-bg)] rounded w-32 mb-4"></div>
-			<div style="aspect-ratio: 2/1;" class="bg-[var(--color-bg)] rounded"></div>
+			<div class="chart-frame bg-[var(--color-bg)] rounded"></div>
 		</div>
 
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)] animate-pulse">
@@ -429,7 +418,7 @@
 			<p class="text-sm text-[var(--color-text-muted)]">{proxyCopies} {proxyCopies === 1 ? 'proxy counts' : 'proxies count'} as {proxyCopies === 1 ? 'a card' : 'cards'} but not toward value or profit/loss.</p>
 		{/if}
 		{#if profitHistory.length > 0}
-			<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
+			<div class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 border border-[var(--color-border)]">
 				<div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
 					<h2 class="text-lg font-semibold">Profit / Loss</h2>
 					{@render restoreControl()}
@@ -448,7 +437,7 @@
 				{/if}
 				{#if chartError}<p class="text-sm text-yellow-400">{chartError}</p>{/if}
 
-				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
+				<div class="chart-frame">
 					<canvas bind:this={profitChartCanvas}></canvas>
 				</div>
 			</div>
@@ -584,7 +573,7 @@
 		onclick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
 		onkeydown={(e) => { if (e.key === 'Escape') closeModal(); }}
 	>
-		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[80vh] overflow-auto p-6">
+		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[80vh] overflow-auto p-4 sm:p-6">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold">
 					{#if modalCard}
@@ -604,7 +593,7 @@
 				<p class="text-[var(--color-text-muted)] py-4">No recorded prices for this printing yet.</p>
 			{:else if modalCard}
 				{#if modalEstimated}<p class="text-xs text-[var(--color-text-muted)] mb-3">Includes English reference prices where prices in the card's language are missing.</p>{/if}
-				<div style="position: relative; width: 100%; aspect-ratio: 2/1;">
+				<div class="chart-frame">
 					<canvas bind:this={modalChartCanvas}></canvas>
 				</div>
 			{/if}

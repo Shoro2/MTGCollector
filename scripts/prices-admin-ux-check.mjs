@@ -88,6 +88,37 @@ try {
 	check(await page.getByText('market value compared with', { exact: false }).isVisible(), 'profit states the matching market value and purchase cost');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'prices fit the mobile viewport');
 	await page.screenshot({ path: resolve(dir, 'prices-mobile.png'), fullPage: true });
+	// Until 2026-10-30 the chart kept a 2:1 box: on a phone the legend and the
+	// date labels took its whole height and the plot collapsed into one line.
+	// Count the horizontal grid lines Chart.js draws across the plot area.
+	for (const width of [320, 360, 390]) {
+		await page.setViewportSize({ width, height: 800 });
+		await page.waitForTimeout(400);
+		const plot = await page.evaluate(() => {
+			const canvas = document.querySelector('.chart-frame canvas') ?? document.querySelector('canvas');
+			if (!canvas) return null;
+			const { data, width: w, height: h } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+			const scale = canvas.width / canvas.getBoundingClientRect().width;
+			const grid = [51, 65, 85];
+			const rows = [];
+			for (let y = 0; y < h; y++) {
+				let run = 0;
+				for (let x = 0; x < w; x++) {
+					const i = (y * w + x) * 4;
+					if (data[i + 3] > 200 && grid.every((c, k) => Math.abs(data[i + k] - c) < 12)) run++;
+				}
+				if (run > w * 0.4) rows.push(y);
+			}
+			const lines = rows.filter((y, i) => i === 0 || y - rows[i - 1] > 1);
+			return { height: canvas.getBoundingClientRect().height, lines: lines.length, span: lines.length ? (lines.at(-1) - lines[0]) / scale : 0 };
+		});
+		check(plot && plot.height >= 240, `profit chart is ${plot?.height} px tall at ${width} px`);
+		check(plot.lines >= 3 && plot.span >= 120, `profit chart plot area spans ${Math.round(plot.span)} px with ${plot.lines} grid lines at ${width} px`);
+	}
+	await page.setViewportSize({ width: 360, height: 800 });
+	await page.locator('.chart-frame').scrollIntoViewIfNeeded();
+	await page.locator('.chart-frame').screenshot({ path: resolve(dir, 'prices-chart-360.png') });
+	await page.setViewportSize({ width: 390, height: 844 });
 	await page.getByRole('button', { name: 'Profit', exact: true }).click();
 	const freeRow = page.locator('a', { has: page.getByText('Free Copy', { exact: true }) });
 	check((await freeRow.innerText()).includes('+€9.00'), 'zero purchase price still shows the absolute profit');
