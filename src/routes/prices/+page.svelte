@@ -2,9 +2,10 @@
 	import type { PageData } from './$types';
 	import { formatPrice, priceDate, histEur } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
-	import type { Chart } from 'chart.js';
+	import type { Chart, ChartDataset, ScriptableLineSegmentContext } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
 	import { lineChartOptions } from '$lib/chart-options';
+	import { PROFIT_CHART_VIEWS, PROFIT_CHART_VIEW_KEY, parseProfitChartView, profitChartSeries, type ProfitChartView } from '$lib/profit-chart';
 	import { onMount, tick } from 'svelte';
 	import type { ProfitPoint } from '$lib/server/price-data';
 
@@ -30,6 +31,8 @@
 
 	let profitChartCanvas = $state<HTMLCanvasElement>(null!);
 	let profitChart: Chart | null = null;
+	// Profit/loss alone, or market value against purchase cost.
+	let chartView = $state<ProfitChartView>('profit');
 
 	// Card price modal
 	let modalOpen = $state(false);
@@ -238,55 +241,77 @@
 		return `${diffD} day${diffD > 1 ? 's' : ''} ago (${d.toLocaleDateString()})`;
 	}
 
+	const GAIN = '#22c55e';
+	const LOSS = '#ef4444';
+
 	async function buildProfitChart() {
 		profitChart?.destroy();
 		profitChart = null;
 		if (profitHistory.length > 0 && profitChartCanvas) {
 			const ChartCtor = await loadChart();
 			if (!active || !profitChartCanvas?.isConnected) return;
-			const profitData = profitHistory.map((h) => ({
-				date: priceDate(h.recorded_at),
-				profit: h.total_value == null || h.total_purchase == null ? null : h.total_value - h.total_purchase
-			}));
-			profitChart = new ChartCtor(profitChartCanvas, {
-				type: 'line',
-				data: {
-					labels: profitData.map((h) => h.date),
-					datasets: [
+			const series = profitChartSeries(profitHistory);
+			// Dots only while there are few days; on a phone dozens of them hide the line.
+			const pointRadius = profitHistory.length > 30 ? 0 : 3;
+			const options = lineChartOptions();
+			const datasets: ChartDataset<'line', Array<number | null>>[] = chartView === 'profit'
+				? [
 						{
 							label: 'Profit / Loss (EUR)',
-							data: profitData.map((h) => h.profit),
-							borderColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e' : '#ef4444',
-							backgroundColor: (profitData.at(-1)?.profit ?? 0) >= 0 ? '#22c55e22' : '#ef444422',
-							fill: true,
-							tension: 0.3,
-							// Dots only while there are few days; on a phone dozens of them hide the line.
-							pointRadius: profitData.length > 30 ? 0 : 3
-						},
+							data: series.profit,
+							// Green above zero, red below, per segment and per dot.
+							borderColor: GAIN,
+							segment: { borderColor: (ctx: ScriptableLineSegmentContext) => ((ctx.p1.parsed.y ?? 0) >= 0 ? GAIN : LOSS) },
+							pointBackgroundColor: series.profit.map((p) => ((p ?? 0) >= 0 ? GAIN : LOSS)),
+							pointBorderColor: series.profit.map((p) => ((p ?? 0) >= 0 ? GAIN : LOSS)),
+							fill: { target: 'origin', above: `${GAIN}22`, below: `${LOSS}22` },
+							// Smooth, but never above or below the day's real values.
+							cubicInterpolationMode: 'monotone',
+							pointRadius
+						}
+					]
+				: [
 						{
 							label: 'Purchase Price (EUR)',
-							data: profitHistory.map((h) => h.total_purchase),
+							data: series.purchase,
 							borderColor: '#b0bec5',
 							borderDash: [5, 5],
-							tension: 0.3,
+							cubicInterpolationMode: 'monotone',
 							pointRadius: 0
 						},
 						{
 							label: 'Market Value (EUR)',
-							data: profitHistory.map((h) => h.total_value),
+							data: series.value,
 							borderColor: '#f59e0b',
-							tension: 0.3,
-							pointRadius: 0
+							backgroundColor: '#f59e0b',
+							// The area between the two lines: green while the market value is above the cost.
+							fill: { target: '-1', above: `${GAIN}1f`, below: `${LOSS}1f` },
+							cubicInterpolationMode: 'monotone',
+							pointRadius
 						}
-					]
-				},
-				options: lineChartOptions()
+					];
+			// One series needs no legend: the switch above the chart names it.
+			if (chartView === 'profit' && options.plugins?.legend) options.plugins.legend.display = false;
+			profitChart = new ChartCtor(profitChartCanvas, {
+				type: 'line',
+				data: { labels: profitHistory.map((h) => priceDate(h.recorded_at)), datasets },
+				options
 			});
 		}
 	}
 
+	async function showChartView(view: ProfitChartView) {
+		if (view === chartView) return;
+		chartView = view;
+		try { localStorage.setItem(PROFIT_CHART_VIEW_KEY, view); } catch { /* storage blocked: the choice lasts for this visit */ }
+		chartError = null;
+		try { await buildProfitChart(); }
+		catch { chartError = 'The chart could not be loaded. Your totals are still available.'; }
+	}
+
 	onMount(() => {
 		active = true;
+		try { chartView = parseProfitChartView(localStorage.getItem(PROFIT_CHART_VIEW_KEY)); } catch { /* keep the default */ }
 		void loadPricesData();
 
 		return () => {
@@ -420,8 +445,20 @@
 		{#if profitHistory.length > 0}
 			<div class="bg-[var(--color-surface)] rounded-lg p-4 sm:p-6 border border-[var(--color-border)]">
 				<div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-					<h2 class="text-lg font-semibold">Profit / Loss</h2>
+					<h2 class="text-lg font-semibold">Collection history</h2>
 					{@render restoreControl()}
+				</div>
+				<!-- Two views of the same history (owner request 2026-10-30): profit/loss alone, and
+				     market value against purchase cost, whose scale hid the profit line when all
+				     three shared one chart. -->
+				<div role="group" aria-label="Chart view"
+					class="mb-3 grid grid-cols-2 gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 sm:inline-grid">
+					{#each PROFIT_CHART_VIEWS as view (view.id)}
+						<button type="button" aria-pressed={chartView === view.id} data-chart-view={view.id} onclick={() => showChartView(view.id)}
+							class="rounded-md px-3 py-1.5 text-sm transition-colors {chartView === view.id
+								? 'bg-[var(--color-primary)] text-white'
+								: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}">{view.label}</button>
+					{/each}
 				</div>
 
 				{#if restoreMessage}
