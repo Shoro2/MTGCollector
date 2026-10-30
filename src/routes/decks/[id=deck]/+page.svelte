@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { goto, invalidate } from '$app/navigation';
 	import { page } from '$app/state';
@@ -33,7 +34,7 @@
 	const lead = $derived(data.rows.find((r) => r.board === 'commander') ?? data.rows.find((r) => r.board === 'main') ?? null);
 	let hovered = $state<Row | null>(null);
 	const preview = $derived(hovered ?? lead);
-	const image = (row: Row | null) => (row ? row.local_image_path || row.image_uri : null);
+	const image = (row: Row | null) => (row ? row.local_image_path || cardImageSrc(row.image_uri) || null : null);
 	// Social previews need an absolute URL; a locally stored image is a path on this site.
 	const socialImage = $derived.by(() => {
 		const src = image(lead);
@@ -166,7 +167,7 @@
 <div class="space-y-5" data-deck={deck.id}>
 	<div class="panel flex flex-col gap-4 p-4 sm:flex-row sm:items-start">
 		{#if image(lead)}
-			<img src={image(lead)} alt={lead?.name} class="hidden w-24 shrink-0 rounded-lg sm:block lg:hidden" loading="lazy" />
+			<img onerror={cardImageError} src={image(lead)} alt={lead?.name} class="hidden w-24 shrink-0 rounded-lg sm:block lg:hidden" loading="lazy" />
 		{/if}
 		<div class="min-w-0 flex-1">
 			<p class="eyebrow">{data.check.formatLabel} deck</p>
@@ -380,7 +381,7 @@
 
 			<aside class="space-y-4 lg:sticky lg:top-4 lg:self-start">
 				{#if image(preview)}
-					<img src={image(preview)} alt={preview?.name} class="hidden w-full rounded-xl shadow-lg lg:block" />
+					<img onerror={cardImageError} src={image(preview)} alt={preview?.name} class="hidden w-full rounded-xl shadow-lg lg:block" />
 				{/if}
 				<div class="panel p-4">
 					<h2 class="text-sm font-semibold">Mana curve</h2>

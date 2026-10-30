@@ -41,8 +41,10 @@ db.transaction(() => {
 	}
 })();
 db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('/favicon.ico', printingId(1));
-// Card images come from Scryfall's image server, as in production (the privacy check below expects it).
-db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run('https://cards.scryfall.io/normal/front/0/0/fixture.jpg', printingId(84));
+// Card images are Scryfall URLs in the catalogue, as in production; the pages show them through
+// this host's /card-image route (the privacy check below fails when the browser contacts Scryfall).
+const killianImage = `https://cards.scryfall.io/normal/front/0/0/${printingId(84)}.jpg?1783903901`;
+db.prepare('UPDATE cards SET image_uri = ? WHERE id = ?').run(killianImage, printingId(84));
 // The FTS triggers only exist once the app has booted; index the fixture rows now.
 db.exec("INSERT INTO cards_fts(cards_fts) VALUES('rebuild')");
 db.close();
@@ -175,6 +177,14 @@ try {
 	check(digitalSnippet.includes('(Legendary Creature, Human Bard): digital card from Alchemy: Reality Fracture. Whenever') && !/price|€|\$/i.test(digitalSnippet) && digitalSnippet.length <= 155,
 		'a digital-only card snippet promises no price and quotes the rules');
 	check(!/[–—]/.test(digitalTitle + digitalSnippet), 'card snippets use no dashes, even where the type line has one');
+	const cardImage = page.locator('main img[alt^="Magic: The Gathering - Killian"]');
+	check((await cardImage.getAttribute('src')) === `/card-image/normal/front/${printingId(84)}.jpg?v=1783903901`,
+		'a card image is served by this host with Scryfall\'s image version as cache key');
+	const imageStatus = async (path) => (await fetch(origin + path)).status;
+	check(await imageStatus(`/card-image/normal/front/${printingId(999)}.jpg`) === 404 && await imageStatus(`/card-image/huge/front/${printingId(84)}.jpg`) === 404
+		&& await imageStatus(`/card-image/normal/back/${printingId(84)}.jpg`) === 404 && await imageStatus(`/card-image/normal/front/${printingId(1)}.jpg`) === 404
+		&& await imageStatus('/card-image/normal/front/..%2F..%2Fmtg.db') === 404,
+		'the image route only fetches printings of the catalogue (unknown ids, sizes, sides and paths are 404)');
 	await page.screenshot({ path: resolve(dir, 'card-mobile.png'), fullPage: true });
 	await page.goto(origin + '/cards/' + printingId(82));
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'printing page points its canonical to the card page');
@@ -328,7 +338,6 @@ try {
 	// A new external host fails here until the policy and this list name it.
 	const providers = {
 		'analytics.mtg-collector.com': 'Plausible',
-		'cards.scryfall.io': 'Scryfall',
 		'docs.opencv.org': 'OpenCV',
 		'cdn.jsdelivr.net': 'jsDelivr',
 		'lh3.googleusercontent.com': 'Google',
@@ -349,8 +358,16 @@ try {
 	await visitor.getByRole('button', { name: 'Live camera', exact: true }).first().click();
 	await visitor.waitForLoadState('networkidle');
 	await visitor.waitForFunction(() => performance.getEntriesByType('resource').some(e => e.name.includes('opencv')), null, { timeout: 15000 }).catch(() => {});
-	check(['cards.scryfall.io', 'docs.opencv.org', 'cdn.jsdelivr.net'].every(host => external.has(host)),
-		`the check sees card images and scanner libraries load from third parties (seen: ${[...external].join(', ')})`);
+	check(['docs.opencv.org', 'cdn.jsdelivr.net'].every(host => external.has(host)),
+		`the check sees the scanner libraries load from third parties (seen: ${[...external].join(', ')})`);
+	check(!external.has('cards.scryfall.io'), 'the browser never loads card images from Scryfall');
+	// The fixture image does not exist at Scryfall (and this check may run offline): the page shows the placeholder.
+	await visitor.goto(origin + '/cards/killian-spotlight-chaser');
+	const killianImg = visitor.locator('main img[alt^="Magic: The Gathering - Killian"]');
+	await visitor.waitForFunction(() => document.querySelector('main img[alt^="Magic: The Gathering - Killian"]')?.getAttribute('src')?.startsWith('data:image/svg+xml'), null, { timeout: 20000 }).catch(() => {});
+	check((await killianImg.getAttribute('src')).startsWith('data:image/svg+xml') && (await killianImg.getAttribute('data-image-fallback') ?? '').startsWith(`${origin}/card-image/`)
+		&& await killianImg.evaluate((img) => img.complete && img.naturalWidth > 0),
+		'a card image that cannot be loaded becomes a placeholder with the card name, not a broken image');
 	await visitor.goto(origin + '/datenschutz');
 	const policyEn = await visitor.locator('main').innerText();
 	await visitor.getByRole('button', { name: 'Deutsch', exact: true }).click();

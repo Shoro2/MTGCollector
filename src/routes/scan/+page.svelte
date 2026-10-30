@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
@@ -2399,7 +2400,7 @@
 
 	function getImageSrc(card: Record<string, unknown>): string {
 		if (card.local_image_path) return card.local_image_path as string;
-		if (card.image_uri) return card.image_uri as string;
+		if (card.image_uri) return cardImageSrc(card.image_uri as string);
 		return '';
 	}
 </script>
@@ -2743,7 +2744,7 @@
 									>
 										{#if imgSrc}
 											<CardPreview src={imgSrc} alt={result.name as string} scale={2}>
-												<img src={imgSrc} alt={result.name as string} class="w-12 h-16 object-cover rounded" loading="lazy" />
+												<img onerror={cardImageError} src={imgSrc} alt={result.name as string} class="w-12 h-16 object-cover rounded" loading="lazy" />
 											</CardPreview>
 										{/if}
 										<div class="flex-1 min-w-0">
@@ -2799,7 +2800,7 @@
 										{@const sugImg = getImageSrc(sug)}
 										<div class="flex items-center gap-3 p-2 mb-2 rounded-lg border border-yellow-500/30 bg-[var(--color-bg)]">
 											{#if sugImg}
-												<img src={sugImg} alt={sug.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
+												<img onerror={cardImageError} src={sugImg} alt={sug.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
 											{/if}
 											<div class="flex-1 min-w-0">
 												<p class="text-sm font-medium truncate">{sug.name}</p>
@@ -2846,7 +2847,7 @@
 													<div class="flex items-center gap-3 p-1.5 rounded hover:bg-[var(--color-surface-hover)]">
 														{#if imgSrc}
 															<CardPreview src={imgSrc} alt={result.name as string} scale={2}>
-																<img src={imgSrc} alt={result.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
+																<img onerror={cardImageError} src={imgSrc} alt={result.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
 															</CardPreview>
 														{/if}
 														<div class="flex-1 min-w-0">

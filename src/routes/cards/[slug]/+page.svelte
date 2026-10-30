@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { SITE_URL, cardPageUrl, jsonLd } from '$lib/seo';
 	import { getRarityColor } from '$lib/utils';
@@ -28,7 +29,7 @@
 	// The viewer's display currency (/settings); the search snippet above stays in euros.
 	const currency = $derived(parseCurrency(data.currency));
 	let cheapest = $derived(cheapestPrice(data.printings, currency));
-	let image = $derived((card.local_image_path || card.image_uri || '') as string);
+	let image = $derived((card.local_image_path as string) || cardImageSrc(card.image_uri as string | null));
 	let socialImage = $derived(image ? new URL(image, SITE_URL).href : undefined);
 	let colors: string[] = $derived(card.color_identity ? JSON.parse(card.color_identity as string) : []);
 	let sets = $derived(new Set(data.printings.map((p) => p.set_code)).size);
@@ -86,7 +87,7 @@
 	<div class="grid grid-cols-1 md:grid-cols-[16.25rem_1fr] gap-4 md:gap-8">
 		<div>
 			{#if image}
-				<img src={image} alt="Magic: The Gathering - {name}" width="488" height="680" class="w-full rounded-lg shadow-lg aspect-[488/680] object-cover" loading="eager" fetchpriority="high" />
+				<img onerror={cardImageError} src={image} alt="Magic: The Gathering - {name}" width="488" height="680" class="w-full rounded-lg shadow-lg aspect-[488/680] object-cover" loading="eager" fetchpriority="high" />
 			{:else}
 				<div class="w-full aspect-[488/680] bg-[var(--color-surface)] rounded-lg flex items-center justify-center text-[var(--color-text-muted)]">
 					No image
