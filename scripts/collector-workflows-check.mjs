@@ -102,6 +102,18 @@ try {
 		await recent.locator('a', { hasText: 'Box A' }).filter({ hasText: '€5.00' }).count() === 1, 'recently added shows locations, prices and unvalued proxies');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'dashboard fits mobile width');
 	await page.screenshot({ path: resolve(dir, 'home-dashboard-mobile.png'), fullPage: true });
+	// The dashboard's Import button linked to the POST-only endpoint and answered "GET method not allowed" (2026-10-30).
+	await page.getByRole('link', { name: 'Import', exact: true }).click();
+	await page.getByRole('heading', { name: 'Import collection' }).waitFor();
+	check(await page.locator('dialog[open]').count() === 1, 'dashboard Import button opens the import dialog');
+	await page.waitForFunction(() => location.pathname === '/collection' && location.search === '');
+	check(true, 'the dialog parameter leaves the address bar');
+	await page.getByRole('button', { name: 'Close import', exact: true }).click();
+	await page.reload();
+	check(await page.locator('dialog[open]').count() === 0, 'a reload does not reopen the import dialog');
+	const oldLink = await page.goto(origin + '/collection/import');
+	check(oldLink.ok() && new URL(page.url()).pathname === '/collection' && await page.locator('dialog[open]').count() === 1, 'old /collection/import links open the dialog instead of a 405');
+	await page.getByRole('button', { name: 'Close import', exact: true }).click();
 	await page.goto(origin + '/collection');
 	const forbidden = await context.request.post(origin + '/collection/bulk', { data: { action: 'edit', ids: [1, 2], changes: { location: 'Wrong' } } });
 	check(forbidden.status() === 400 && db.prepare('SELECT location FROM collection_cards WHERE id=1').get().location === 'Box A', 'mixed-owner request fails atomically');

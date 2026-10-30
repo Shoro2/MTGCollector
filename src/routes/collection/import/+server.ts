@@ -1,9 +1,17 @@
-import { json, error } from '@sveltejs/kit';
+import { json, error, redirect } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
 import { priceDataCache, tagsCache } from '$lib/server/cache';
 import { ensureForeignPricesSequential } from '$lib/server/foreign-prices';
 import { parseCollectionImport } from '$lib/collection-import';
 import { prepareCollectionImport, commitCollectionImport, type ImportMode } from '$lib/server/collection-import';
+
+// The import is a dialog on /collection; this endpoint only accepts its POSTs.
+// A plain link here (the homepage had two until 2026-10-30, and old copies may
+// still be cached or bookmarked) answered "GET method not allowed", so it is
+// sent to the collection with the dialog open instead.
+export function GET() {
+	throw redirect(303, '/collection?import=1');
+}
 
 export async function POST({ request, locals }) {
 	if (!locals.user) throw error(401, 'Not authenticated');

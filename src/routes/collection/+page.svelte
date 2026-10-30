@@ -108,6 +108,15 @@
 		if (data.editCard) {
 			openEdit(data.editCard);
 		}
+		// `?import=1` (the homepage's Import buttons) opens the import dialog.
+		// The parameter is dropped again so a reload or a filter change does
+		// not reopen it; no load reads it, so this does not refetch the page.
+		if (page.url.searchParams.get('import') === '1') {
+			openImportModal();
+			const url = new URL(page.url);
+			url.searchParams.delete('import');
+			goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+		}
 		return () => modalChart?.destroy();
 	});
 
