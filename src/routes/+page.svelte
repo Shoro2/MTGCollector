@@ -138,7 +138,7 @@
 			</div>
 			<div class="flex flex-wrap gap-2">
 				<a href="/scan" class="btn btn-primary min-h-[44px] px-4">Scan cards</a>
-				<a href="/collection/import" class="btn min-h-[44px] px-4">Import</a>
+				<a href="/collection?import=1" class="btn min-h-[44px] px-4">Import</a>
 			</div>
 		</div>
 
@@ -183,7 +183,7 @@
 				<p class="text-sm text-[var(--color-text-muted)]">Scan your cards or import a list from Moxfield. What you add shows up here with its prices.</p>
 				<div class="flex flex-wrap gap-2">
 					<a href="/scan" class="btn btn-primary">Scan cards</a>
-					<a href="/collection/import" class="btn">Import a list</a>
+					<a href="/collection?import=1" class="btn">Import a list</a>
 				</div>
 			</section>
 		{:else}
