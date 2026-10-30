@@ -138,6 +138,62 @@ try {
 	await page.getByText('Includes English reference prices', { exact: false }).waitFor();
 	await page.getByRole('button', { name: 'Close price history' }).click();
 
+	// Display size (/settings, src/lib/ui-scale.ts; owner report 2026-10-30: the
+	// prices page looked small on a large monitor). Everything is in rem, so the
+	// root font size scales text, images and the page width together.
+	const rootPx = () => page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+	const mainWidth = () => page.evaluate(() => document.querySelector('main').getBoundingClientRect().width);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(origin + '/prices');
+	await page.locator('.kpi-value').first().waitFor();
+	check(await page.evaluate(() => document.documentElement.dataset.uiScale) === 'auto', 'without a cookie the server renders the automatic size');
+	check(await rootPx() === 16, 'automatic keeps the normal size in a 1440 px window');
+	check(Math.round(await mainWidth()) === 1320, 'the page is 1320 px wide at the normal size');
+	await page.setViewportSize({ width: 2560, height: 1440 });
+	await page.waitForTimeout(400);
+	check(Math.abs(await rootPx() - 19.2) < 0.05, `automatic grows to 120 % in a 2560 px window (${await rootPx()} px)`);
+	check(Math.round(await mainWidth()) === 1584, `the page grows with it (${Math.round(await mainWidth())} px)`);
+	const chartHeight = await page.evaluate(() => document.querySelector('.chart-frame').getBoundingClientRect().height);
+	check(chartHeight <= 1440 * 0.7 + 1, `the profit chart stays within 70 % of the window (${Math.round(chartHeight)} px)`);
+	const topRows = await page.evaluate(() => [...document.querySelectorAll('a[href^="/collection?edit="]')].map(a => Math.round(a.getBoundingClientRect().left)));
+	check(topRows.length === 5 && topRows[3] > topRows[0] && topRows[0] === topRows[2], 'top cards run down two columns on a wide screen');
+	await page.screenshot({ path: resolve(dir, 'prices-2560-auto.png') });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(origin + '/settings');
+	const sizes = page.locator('[data-ui-scale-setting]');
+	check(await sizes.getByRole('button', { name: 'Automatic' }).getAttribute('aria-pressed') === 'true', 'settings show automatic as the current size');
+	await sizes.getByRole('button', { name: '125 %' }).click();
+	check(await rootPx() === 20 && await page.evaluate(() => document.documentElement.dataset.uiScale) === '125', 'choosing 125 % applies at once');
+	check(await page.locator('[data-ui-scale-effective]').innerText() === 'Now: 125 %.', 'the panel states the size in use');
+	const cookie = (await context.cookies()).find(c => c.name === 'mtg_ui_scale');
+	check(cookie?.value === '125' && cookie.expires > Date.now() / 1000 + 300 * 86400, 'the size is stored in a cookie for a year');
+	const html = await (await context.request.get(origin + '/prices')).text();
+	check(html.includes('<html lang="en" data-ui-scale="125">'), 'the server renders the stored size into the first paint');
+	await page.goto(origin + '/prices');
+	await page.locator('.kpi-value').first().waitFor();
+	check(Math.round(await mainWidth()) === 1440, `125 % widens the page up to the window (${Math.round(await mainWidth())} px)`);
+	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'prices at 125 % do not scroll sideways in a 1440 px window');
+	await page.waitForFunction(() => document.querySelector('.chart-frame canvas'));
+	await page.screenshot({ path: resolve(dir, 'prices-1440-125.png') });
+	await context.addCookies([{ name: 'mtg_ui_scale', value: '150', url: origin }]);
+	for (const width of [320, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		await page.goto(origin + '/prices');
+		await page.locator('.kpi-value').first().waitFor();
+		check(await rootPx() === 16, `150 % keeps the normal size on a ${width} px phone`);
+		check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `prices fit ${width} px with 150 % chosen`);
+	}
+	await context.addCookies([{ name: 'mtg_ui_scale', value: '90', url: origin }]);
+	await page.reload();
+	check(await rootPx() === 14.4, '90 % also shrinks a phone');
+	await context.addCookies([{ name: 'mtg_ui_scale', value: 'bogus"><b>', url: origin }]);
+	check((await (await context.request.get(origin + '/prices')).text()).includes('data-ui-scale="auto"'), 'an unknown cookie value renders as automatic');
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto(origin + '/settings');
+	await page.locator('[data-ui-scale-setting]').getByRole('button', { name: 'Automatic' }).click();
+	check(!(await context.cookies()).some(c => c.name === 'mtg_ui_scale'), 'choosing automatic deletes the cookie');
+	await page.setViewportSize({ width: 390, height: 844 });
+
 	// Insert after boot so initDb's cleanup cannot mask the admin comparison.
 	const fixture = new Database(dbPath);
 	fixture.prepare('INSERT INTO sessions VALUES (?,?,?)').run('expired-after-boot', 'fixture-owner', new Date(Date.now() - 1000).toISOString());

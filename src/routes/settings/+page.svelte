@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import UiScaleSetting from '$lib/components/UiScaleSetting.svelte';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -41,7 +42,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Account</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Settings</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Settings</h1>
 		</div>
 	</div>
 
@@ -63,6 +64,8 @@
 		</div>
 		<p class="text-xs text-[var(--color-text-muted)]">Signed in via Google. Account details can only be changed at Google.</p>
 	</div>
+
+	<UiScaleSetting initial={data.uiScale} />
 
 	<!-- Collection Stats -->
 	<div class="panel p-6">

@@ -66,7 +66,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Deck building</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">{data.view === 'public' ? 'Public decks' : 'Your decks'}</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">{data.view === 'public' ? 'Public decks' : 'Your decks'}</h1>
 		</div>
 		{#if data.signedIn}
 			<button type="button" onclick={() => (creating = true)} class="btn btn-primary">New deck</button>
