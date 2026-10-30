@@ -565,6 +565,23 @@ tbody tr:hover {
 	font-family: var(--font-data);
 }
 
+/* Line charts (src/lib/chart-options.ts): a fixed height on phones, where a
+   2:1 box left no room for the plot beside the legend and the axes, and 2:1
+   from sm up. Chart.js fills the box (maintainAspectRatio: false). */
+.chart-frame {
+	position: relative;
+	width: 100%;
+	min-width: 0;
+	height: 17rem;
+}
+
+@media (min-width: 640px) {
+	.chart-frame {
+		height: auto;
+		aspect-ratio: 2 / 1;
+	}
+}
+
 .skeleton {
 	position: relative;
 	overflow: hidden;
