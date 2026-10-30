@@ -2436,7 +2436,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Scanner</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">MTG Card Scanner</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">MTG Card Scanner</h1>
 			<p class="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">Use your live camera or a photo to identify English and German Magic: The Gathering cards. Review the edition and collector number before saving.</p>
 		</div>
 		{#if !loggedIn}

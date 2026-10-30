@@ -17,6 +17,8 @@ Global tokens live in `src/app.css`.
 
 Numbers and prices should use the `tabular`, `numeric`, `price`, or `kpi-value` classes so columns do not visually drift.
 
+Sizes: write text, spacing, image and layout sizes in `rem` (Tailwind's scale or `-[1.375rem]`), never `px`. The display size in `/settings` scales the root font size, so only rem grows with it; borders, shadows and radii may stay px (CLAUDE.md §5.8).
+
 ## Components And Classes
 
 - `panel` and `panel-raised`: standard framed surfaces.

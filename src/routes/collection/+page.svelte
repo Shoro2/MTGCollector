@@ -637,7 +637,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Portfolio</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">My Collection</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">My Collection</h1>
 			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">{data.stats.uniqueCards} unique - {data.stats.totalCards} total cards</p>
 		</div>
 		<div class="flex flex-wrap gap-2">

@@ -38,19 +38,19 @@
 	<div class="space-y-8">
 		<section class="mx-auto flex max-w-3xl flex-col items-center gap-3.5 pt-3 text-center md:pt-8">
 			<p class="eyebrow text-[var(--color-accent)]">Free for Magic: The Gathering players</p>
-			<h1 class="text-[28px] font-semibold leading-tight text-[var(--color-text-strong)] md:text-[40px]">
+			<h1 class="text-[1.75rem] font-semibold leading-tight text-[var(--color-text-strong)] md:text-[2.5rem]">
 				Scan, look up and track your Magic cards
 			</h1>
 			<p class="max-w-xl text-base text-[var(--color-text-muted)]">MTG Collector is free to use. Pick where you want to start.</p>
-			<a href="/login" class="btn btn-primary min-h-[44px] px-5 text-sm">Start your collection</a>
+			<a href="/login" class="btn btn-primary min-h-[2.75rem] px-5 text-sm">Start your collection</a>
 			<p class="text-xs text-[var(--color-text-muted)]">You sign in with your Google account.</p>
 		</section>
 
 		<section aria-label="Where to start" class="grid gap-4 md:grid-cols-3">
-			<a href="/portfolio-tracker" class="entry panel flex flex-col gap-3 p-[18px] no-underline">
+			<a href="/portfolio-tracker" class="entry panel flex flex-col gap-3 p-[1.125rem] no-underline">
 				<div class="entry-visual flex flex-col gap-2 p-3" aria-hidden="true">
 					<span class="kpi-label">Collection value</span>
-					<svg viewBox="0 0 320 120" class="block h-[90px] w-full" preserveAspectRatio="none">
+					<svg viewBox="0 0 320 120" class="block h-[5.625rem] w-full" preserveAspectRatio="none">
 						<path d="M0,104.5 L26.7,104.5 L53.3,100.8 L80,94.5 L106.7,94.5 L133.3,90.1 L160,82.6 L186.7,82.6 L213.3,77 L240,72 L266.7,67 L293.3,63.3 L320,57.9" fill="none" stroke="var(--color-text-muted)" stroke-width="2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>
 						<path d="M0,99.8 L26.7,96.9 L53.3,94.5 L80,88.5 L106.7,86.8 L133.3,82.6 L160,73.8 L186.7,70.9 L213.3,65.3 L240,58.1 L266.7,47.3 L293.3,36.8 L320,18.5" fill="none" stroke="var(--color-accent)" stroke-width="2.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
 					</svg>
@@ -60,11 +60,11 @@
 				<span class="mt-auto text-sm font-semibold text-[var(--color-primary)]">Portfolio tracker</span>
 			</a>
 
-			<a href="/cards" class="entry panel flex flex-col gap-3 p-[18px] no-underline">
+			<a href="/cards" class="entry panel flex flex-col gap-3 p-[1.125rem] no-underline">
 				<div class="entry-visual flex flex-col gap-1.5 p-3" aria-hidden="true">
 					<span class="flex min-h-8 items-center rounded-md border border-[var(--color-border-strong)] px-2.5 text-xs text-[var(--color-text-muted)]">Lightning Bolt</span>
 					{#each visitor.sample as printing}
-						<span class="flex min-h-[22px] items-center justify-between gap-2 text-xs">
+						<span class="flex min-h-[1.375rem] items-center justify-between gap-2 text-xs">
 							<span class="truncate text-[var(--color-text)]">{printing.set_name}</span>
 							<span class="price text-[var(--color-accent)]">{euro(printing.price)}</span>
 						</span>
@@ -77,9 +77,9 @@
 				<span class="mt-auto text-sm font-semibold text-[var(--color-primary)]">Card database</span>
 			</a>
 
-			<a href="/scan" class="entry panel flex flex-col gap-3 p-[18px] no-underline">
+			<a href="/scan" class="entry panel flex flex-col gap-3 p-[1.125rem] no-underline">
 				<div class="entry-visual entry-visual-dark flex items-center justify-center gap-3.5" aria-hidden="true">
-					<span class="h-[89px] w-16 rounded-md border-2 border-[var(--color-accent)] bg-[rgba(245,166,35,0.06)]"></span>
+					<span class="h-[5.5625rem] w-16 rounded-md border-2 border-[var(--color-accent)] bg-[rgba(245,166,35,0.06)]"></span>
 					<span class="flex flex-col gap-1.5">
 						<span class="scan-chip scan-chip-ok">Lightning Bolt</span>
 						<span class="scan-chip scan-chip-ok">Kriegshorn</span>
@@ -109,8 +109,8 @@
 											<svelte:element this={move.href ? 'a' : 'div'} href={move.href} class="move-row">
 												<span class="min-w-0 flex-1 truncate">{move.name}</span>
 												<span class="chip set-code">{move.setCode}</span>
-												<span class="price w-[76px] text-right">{euro(move.price)}</span>
-												<span class="price w-[68px] text-right {move.pct > 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}">{change(move.pct)}</span>
+												<span class="price w-[4.75rem] text-right">{euro(move.price)}</span>
+												<span class="price w-[4.25rem] text-right {move.pct > 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}">{change(move.pct)}</span>
 											</svelte:element>
 										</li>
 									{/each}
@@ -131,14 +131,14 @@
 	<div class="space-y-5">
 		<div class="page-heading">
 			<div>
-				<h1 class="text-[22px] font-semibold text-[var(--color-text-strong)] md:text-[26px]">
+				<h1 class="text-[1.375rem] font-semibold text-[var(--color-text-strong)] md:text-[1.625rem]">
 					Welcome back{data.user?.name ? `, ${data.user.name}` : ''}
 				</h1>
 				<p class="mt-1 text-sm text-[var(--color-text-muted)]">Your collection with today's prices.</p>
 			</div>
 			<div class="flex flex-wrap gap-2">
-				<a href="/scan" class="btn btn-primary min-h-[44px] px-4">Scan cards</a>
-				<a href="/collection?import=1" class="btn min-h-[44px] px-4">Import</a>
+				<a href="/scan" class="btn btn-primary min-h-[2.75rem] px-4">Scan cards</a>
+				<a href="/collection?import=1" class="btn min-h-[2.75rem] px-4">Import</a>
 			</div>
 		</div>
 
@@ -197,7 +197,7 @@
 						viewBox="0 0 320 120"
 						role="img"
 						aria-label="Value from {euro(dash.chart.first.value)} to {euro(dash.chart.last.value)}, purchase cost from {euro(dash.chart.first.cost)} to {euro(dash.chart.last.cost)}"
-						class="block h-[160px] w-full md:h-[220px]"
+						class="block h-[10rem] w-full md:h-[13.75rem]"
 						preserveAspectRatio="none"
 					>
 						<path d={dash.chart.cost} fill="none" stroke="var(--color-text-muted)" stroke-width="2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></path>
@@ -227,10 +227,10 @@
 								<li>
 									<a href="/cards/{move.id}" class="move-row">
 										<span class="min-w-0 flex-1 truncate">{move.name}</span>
-										{#if move.foil}<span class="chip text-[11px]">Foil</span>{/if}
+										{#if move.foil}<span class="chip text-[0.6875rem]">Foil</span>{/if}
 										<span class="chip set-code">{move.setCode}</span>
-										<span class="price w-[76px] text-right">{euro(move.price)}</span>
-										<span class="price w-[68px] text-right {move.pct > 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}">{change(move.pct)}</span>
+										<span class="price w-[4.75rem] text-right">{euro(move.price)}</span>
+										<span class="price w-[4.25rem] text-right {move.pct > 0 ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}">{change(move.pct)}</span>
 									</a>
 								</li>
 							{/each}
@@ -254,7 +254,7 @@
 										{entry.name}{#if entry.quantity > 1}<span class="ml-1 text-[var(--color-text-muted)]">×{entry.quantity}</span>{/if}
 									</span>
 									<span class="max-w-[40%] truncate text-xs text-[var(--color-text-muted)]">{[entry.proxy ? 'Proxy' : '', entry.location].filter(Boolean).join(', ')}</span>
-									<span class="price w-[84px] shrink-0 text-right {entry.proxy ? 'text-xs text-[var(--color-text-muted)]' : ''}">
+									<span class="price w-[5.25rem] shrink-0 text-right {entry.proxy ? 'text-xs text-[var(--color-text-muted)]' : ''}">
 										{entry.proxy ? 'not valued' : unitPrice(entry.price, entry.price_usd)}
 									</span>
 								</a>
@@ -289,7 +289,7 @@
 		background: var(--color-surface-hover);
 	}
 	.entry-visual {
-		height: 150px;
+		height: 9.375rem;
 		border: 1px solid var(--color-border);
 		border-radius: 10px;
 		background: #0d131c;
@@ -300,8 +300,8 @@
 	.scan-chip {
 		border: 1px solid;
 		border-radius: 6px;
-		padding: 2px 8px;
-		font-size: 11px;
+		padding: 0.125rem 0.5rem;
+		font-size: 0.6875rem;
 		font-weight: 600;
 	}
 	.scan-chip-ok {
@@ -316,7 +316,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.6rem;
-		min-height: 40px;
+		min-height: 2.5rem;
 		border-bottom: 1px solid var(--color-border-subtle);
 		color: var(--color-text);
 		font-size: 0.875rem;

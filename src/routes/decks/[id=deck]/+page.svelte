@@ -167,7 +167,7 @@
 		{/if}
 		<div class="min-w-0 flex-1">
 			<p class="eyebrow">{data.check.formatLabel} deck</p>
-			<h1 class="mt-1 break-words text-[22px] font-semibold text-[var(--color-text-strong)]">
+			<h1 class="mt-1 break-words text-[1.375rem] font-semibold text-[var(--color-text-strong)]">
 				{deck.name}
 				{#if data.check.kind === 'commander'}<DeckBracket bracket={deck.bracket} />{/if}
 				{#if data.isOwner}<span class="chip ml-1 min-h-0 px-1.5 py-0 align-middle text-[0.62rem] uppercase">{VISIBILITY_LABELS[deck.visibility]}</span>{/if}

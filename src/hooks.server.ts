@@ -7,6 +7,7 @@ import {
 import { validateSession } from '$lib/server/auth';
 import { isDecodablePath } from '$lib/server/request-path';
 import { CSP } from '$lib/server/csp';
+import { parseUiScale, UI_SCALE_COOKIE } from '$lib/ui-scale';
 import { error, redirect, text, type Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 
@@ -154,5 +155,10 @@ export const handle: Handle = async ({ event, resolve }) => {
 		throw redirect(302, '/');
 	}
 
-	return withSecurityHeaders(await resolve(event));
+	// The display size the browser chose in /settings (src/lib/ui-scale.ts) goes into
+	// <html data-ui-scale> so the first paint has it; parseUiScale() lets only known values through.
+	const uiScale = parseUiScale(event.cookies.get(UI_SCALE_COOKIE));
+	return withSecurityHeaders(await resolve(event, {
+		transformPageChunk: ({ html }) => html.replace('%mtg.ui_scale%', uiScale)
+	}));
 };

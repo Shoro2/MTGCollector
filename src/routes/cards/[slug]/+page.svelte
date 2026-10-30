@@ -80,7 +80,7 @@
 		<span aria-current="page">{name}</span>
 	</nav>
 
-	<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4 md:gap-8">
+	<div class="grid grid-cols-1 md:grid-cols-[16.25rem_1fr] gap-4 md:gap-8">
 		<div>
 			{#if image}
 				<img src={image} alt="Magic: The Gathering - {name}" width="488" height="680" class="w-full rounded-lg shadow-lg aspect-[488/680] object-cover" loading="eager" fetchpriority="high" />

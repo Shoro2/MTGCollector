@@ -221,7 +221,7 @@
 	<div class="page-heading">
 		<div>
 			<p class="eyebrow">Card database</p>
-			<h1 class="mt-1 text-[22px] font-semibold text-[var(--color-text-strong)]">Browse Cards</h1>
+			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Browse Cards</h1>
 			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">
 				{data.totalCards.toLocaleString()} cards - page {data.page} of {data.totalPages}
 			</p>
@@ -230,7 +230,7 @@
 	</div>
 
 	<form onsubmit={(e) => { e.preventDefault(); search(); }} class="toolbar">
-		<div class="relative flex min-w-[240px] flex-1 items-center">
+		<div class="relative flex min-w-[15rem] flex-1 items-center">
 			<svg class="pointer-events-none absolute left-3 h-4 w-4 text-[var(--color-text-faint)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="11" cy="11" r="8"></circle>
 				<path d="m21 21-4.3-4.3"></path>
@@ -239,7 +239,7 @@
 				type="text"
 				bind:value={query}
 				placeholder="Search cards by name, type, or text..."
-				class="control h-[38px] w-full pl-9 pr-3 text-sm placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-primary)]"
+				class="control h-[2.375rem] w-full pl-9 pr-3 text-sm placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-primary)]"
 			/>
 		</div>
 		<div class="flex items-center gap-1">
@@ -248,7 +248,7 @@
 					type="button"
 					onclick={() => toggleColor(color.code)}
 					aria-label={color.name}
-					class="color-pip pip-{color.code.toLowerCase()} h-[30px] w-[30px] transition-all {selectedColors.includes(color.code) ? 'scale-105 bg-white/10 opacity-100' : selectedColors.length ? 'opacity-45' : 'opacity-100'}"
+					class="color-pip pip-{color.code.toLowerCase()} h-[1.875rem] w-[1.875rem] transition-all {selectedColors.includes(color.code) ? 'scale-105 bg-white/10 opacity-100' : selectedColors.length ? 'opacity-45' : 'opacity-100'}"
 				>
 					{color.code}
 				</button>
