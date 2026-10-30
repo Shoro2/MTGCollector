@@ -1,7 +1,8 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc, cardImageSrcset } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { goto, invalidate } from '$app/navigation';
-	import { scryfallSrcset, type PriceFields } from '$lib/utils';
+	import { type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import ManaCost from '$lib/components/ManaCost.svelte';
@@ -78,7 +79,7 @@
 
 	function getImageSrc(item: Record<string, unknown>): string {
 		if (item.local_image_path) return item.local_image_path as string;
-		if (item.image_uri) return item.image_uri as string;
+		if (item.image_uri) return cardImageSrc(item.image_uri as string);
 		return '';
 	}
 </script>
@@ -136,14 +137,14 @@
 		<div class="space-y-2">
 			{#each data.items as item (item.id)}
 				{@const imgSrc = getImageSrc(item)}
-				{@const srcset = item.local_image_path ? null : scryfallSrcset(item.image_uri as string | null)}
+				{@const srcset = item.local_image_path ? null : cardImageSrcset(item.image_uri as string | null)}
 				{@const inCollection = collectedSet.has(item.card_id as string)}
 				<div class="panel flex items-start gap-3 p-3 transition-colors hover:bg-[var(--color-surface-hover)] sm:items-center sm:gap-4">
 					<!-- Card Image -->
 					{#if imgSrc}
 						<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
 							<a href="/cards/{item.card_id}">
-								<img src={imgSrc} srcset={srcset ?? undefined} sizes="80px" alt={item.name as string} class="w-12 h-16 sm:w-14 sm:h-20 object-cover rounded flex-shrink-0" loading="lazy" />
+								<img onerror={cardImageError} src={imgSrc} srcset={srcset ?? undefined} sizes="80px" alt={item.name as string} class="w-12 h-16 sm:w-14 sm:h-20 object-cover rounded flex-shrink-0" loading="lazy" />
 							</a>
 						</CardPreview>
 					{/if}

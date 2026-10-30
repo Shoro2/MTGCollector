@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc } from '$lib/card-image';
 	import { onMount } from 'svelte';
 	import { BOARDS, BOARD_LABELS, type Board } from '$lib/deck';
 	import { displayPrice } from '$lib/utils';
@@ -21,7 +22,7 @@
 	// The printing under the pointer or the keyboard focus, else the chosen one, is shown beside the list.
 	let pointed = $state<string | null>(null);
 	const shown = $derived(printings.find((p) => p.id === (pointed ?? cardId)) ?? null);
-	const image = (p: Printing | null) => (p ? p.local_image_path || p.image_uri : null);
+	const image = (p: Printing | null) => (p ? p.local_image_path || cardImageSrc(p.image_uri) || null : null);
 	let busy = $state(false);
 	let message = $state('');
 
@@ -113,7 +114,7 @@
 					</div>
 					<div class="w-24 shrink-0 sm:w-40">
 						{#if image(shown)}
-							<img src={image(shown)} alt="{row.name}, {shown?.set_code.toUpperCase()} #{shown?.collector_number}" class="w-full rounded-lg shadow-lg" data-printing-preview={shown?.id} />
+							<img onerror={cardImageError} src={image(shown)} alt="{row.name}, {shown?.set_code.toUpperCase()} #{shown?.collector_number}" class="w-full rounded-lg shadow-lg" data-printing-preview={shown?.id} />
 						{/if}
 					</div>
 				</div>

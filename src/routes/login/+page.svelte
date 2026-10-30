@@ -46,7 +46,7 @@
 			Sign in to create and manage your personal card collection.
 		</p>
 
-		<!-- Keep this accurate: Google, Cloudflare and Scryfall (card images) still see technical data such as the IP address. -->
+		<!-- Keep this accurate: Google (sign in) and Cloudflare (in front of the site) still see technical data such as the IP address; card images come from this host since 2026-10-30. -->
 		<p class="text-xs text-[var(--color-text-muted)]">
 			MTG Collector is free to use. There are no ads, and we never sell your data or share your collection. When you
 			sign in, Google passes us your name, email address and profile picture.

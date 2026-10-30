@@ -1,4 +1,6 @@
 <script lang="ts" module>
+	import { cardImageError, FALLBACK_ATTRIBUTE } from '$lib/card-image';
+
 	// Share one body portal, including its dismiss control, across all thumbnails.
 	type Portal = { root: HTMLDivElement; img: HTMLImageElement; close: HTMLButtonElement; backdrop: HTMLDivElement; owner: symbol };
 	let shared: Omit<Portal, 'owner'> | null = null;
@@ -16,6 +18,7 @@
 			root.style.cssText = 'position:fixed;z-index:9999;border-radius:0.5rem;box-shadow:0 25px 50px -12px rgba(0,0,0,.5);display:none;';
 			const img = document.createElement('img');
 			img.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;border-radius:0.5rem;';
+			img.addEventListener('error', cardImageError);
 			const close = document.createElement('button');
 			close.type = 'button'; close.textContent = '×';
 			close.setAttribute('aria-label', 'Close preview');
@@ -133,8 +136,13 @@
 		if (pinned) { root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-label', alt); }
 		else { root.removeAttribute('aria-modal'); root.removeAttribute('aria-label'); }
 		backdrop.style.display = pinned ? 'block' : 'none'; close.style.display = pinned ? 'block' : 'none';
-		if (img.getAttribute('src') !== src) img.src = src;
 		img.alt = alt;
+		// Compare with the requested URL: after a failed load the element shows the placeholder instead.
+		if (img.dataset.requested !== src) {
+			img.dataset.requested = src;
+			img.removeAttribute(FALLBACK_ATTRIBUTE);
+			img.src = src;
+		}
 		if (pinned) close.focus({ preventScroll: true });
 	});
 </script>

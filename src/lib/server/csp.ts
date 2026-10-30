@@ -15,7 +15,9 @@ export const CSP_DIRECTIVES = [
 	"default-src 'self'",
 	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://docs.opencv.org https://cdn.jsdelivr.net https://analytics.mtg-collector.com https://challenges.cloudflare.com",
 	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' data: blob: https://cards.scryfall.io https://c1.scryfall.com https://c2.scryfall.com https://lh3.googleusercontent.com",
+	// Card images come from this host (/card-image, src/lib/server/card-image-cache.ts), never
+	// from Scryfall's CDN; data: is the placeholder of an image that failed (src/lib/card-image.ts).
+	"img-src 'self' data: blob: https://lh3.googleusercontent.com",
 	// data: is for OpenCV.js, whose single-file build fetches its embedded WASM
 	// from a data: URL (it silently falls back to a slower path when refused).
 	// docs.opencv.org: turning on the scanner's offline mode fetches OpenCV.js

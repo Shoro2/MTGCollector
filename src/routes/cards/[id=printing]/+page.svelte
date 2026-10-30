@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { SITE_URL, cardPageUrl, jsonLd } from '$lib/seo';
 	import { formatPrice, getRarityColor, conditionLabel, priceDate, priceDivergence, isSuspiciousDivergence, type PriceFields } from '$lib/utils';
@@ -90,7 +91,7 @@
 
 	function getImageSrc(): string {
 		if (card.local_image_path) return card.local_image_path as string;
-		if (card.image_uri) return card.image_uri as string;
+		if (card.image_uri) return cardImageSrc(card.image_uri as string);
 		return '';
 	}
 
@@ -219,7 +220,7 @@
 		<!-- Card Image -->
 		<div>
 			{#if getImageSrc()}
-				<img src={getImageSrc()} alt="Magic: The Gathering - {card.name} ({card.set_name})" width="488" height="680" class="w-full rounded-lg shadow-lg aspect-[488/680] object-cover" loading="eager" fetchpriority="high" />
+				<img onerror={cardImageError} src={getImageSrc()} alt="Magic: The Gathering - {card.name} ({card.set_name})" width="488" height="680" class="w-full rounded-lg shadow-lg aspect-[488/680] object-cover" loading="eager" fetchpriority="high" />
 			{:else}
 				<div class="w-full aspect-[488/680] bg-[var(--color-surface)] rounded-lg flex items-center justify-center text-[var(--color-text-muted)]">
 					No image
@@ -231,7 +232,7 @@
 				<div class="mt-4 grid grid-cols-2 gap-2">
 					{#each data.faces as face}
 						{#if face.image_uri}
-							<img src={face.image_uri as string} alt="Magic: The Gathering - {face.name}" width="488" height="680" class="w-full rounded aspect-[488/680] object-cover" loading="lazy" />
+							<img onerror={cardImageError} src={cardImageSrc(face.image_uri as string)} alt="Magic: The Gathering - {face.name}" width="488" height="680" class="w-full rounded aspect-[488/680] object-cover" loading="lazy" />
 						{/if}
 					{/each}
 				</div>

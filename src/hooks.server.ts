@@ -100,7 +100,7 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 // /api/scan-log is public like /scan itself (its GET side checks for an admin on its own).
 // '/decks' opens the public deck list, shared deck pages and their export to visitors; the
 // deck loads hide private decks and show a visitor only the public list.
-const publicRoutes = ['/login', '/auth/', '/cards', '/scan', '/portfolio-tracker', '/impressum', '/datenschutz', '/contact', '/api/health', '/api/scan-log', '/decks'];
+const publicRoutes = ['/login', '/auth/', '/cards', '/card-image', '/scan', '/portfolio-tracker', '/impressum', '/datenschutz', '/contact', '/api/health', '/api/scan-log', '/decks'];
 
 // The CSP lives in src/lib/server/csp.ts (unit-tested against the scanner library hosts).
 

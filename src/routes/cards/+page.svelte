@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc, cardImageSrcset } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { catalogSeo } from '$lib/seo';
-	import { scryfallSrcset, type PriceFields } from '$lib/utils';
+	import { type PriceFields } from '$lib/utils';
 	import PriceTag from '$lib/components/PriceTag.svelte';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 
@@ -201,7 +202,7 @@
 
 	function getImageSrc(card: Record<string, unknown>): string {
 		if (card.local_image_path) return card.local_image_path as string;
-		if (card.image_uri) return card.image_uri as string;
+		if (card.image_uri) return cardImageSrc(card.image_uri as string);
 		return '';
 	}
 </script>
@@ -407,14 +408,14 @@
 		<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
 			{#each data.cards as card, i (card.id)}
 				{@const imgSrc = getImageSrc(card)}
-				{@const srcset = card.local_image_path ? null : scryfallSrcset(card.image_uri as string | null)}
+				{@const srcset = card.local_image_path ? null : cardImageSrcset(card.image_uri as string | null)}
 				{@const inCollection = collectedSet.has(card.id as string)}
 				{@const onWishlist = wishlistSet.has(card.id as string)}
 				<a href="/cards/{card.slug ?? card.id}" class="card-shell group no-underline {inCollection ? 'card-shell-owned' : ''}">
 					<div class="relative">
 						{#if imgSrc}
 							<CardPreview src={imgSrc} alt={"Magic: The Gathering - " + (card.name as string)} scale={2}>
-								<img
+								<img onerror={cardImageError}
 									src={imgSrc}
 									srcset={srcset ?? undefined}
 									sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, 16vw"

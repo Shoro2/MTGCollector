@@ -1,9 +1,10 @@
 <script lang="ts">
+	import { cardImageError, cardImageSrc, cardImageSrcset } from '$lib/card-image';
 	import type { PageData } from './$types';
 	import { goto, invalidate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { formatPrice, conditionLabel, priceDate, scryfallSrcset, LANGUAGES, languageLabel, histEur } from '$lib/utils';
+	import { formatPrice, conditionLabel, priceDate, LANGUAGES, languageLabel, histEur } from '$lib/utils';
 	import CardPreview from '$lib/components/CardPreview.svelte';
 	import CollectionImport from '$lib/components/CollectionImport.svelte';
 	import CollectionBulkEdit from '$lib/components/CollectionBulkEdit.svelte';
@@ -405,7 +406,7 @@
 
 	function getImageSrc(item: Record<string, unknown>): string {
 		if (item.local_image_path) return item.local_image_path as string;
-		if (item.image_uri) return item.image_uri as string;
+		if (item.image_uri) return cardImageSrc(item.image_uri as string);
 		return '';
 	}
 
@@ -444,7 +445,7 @@
 				<div class="flex-shrink-0 w-40 sm:w-48 mx-auto sm:mx-0">
 					{#if getImageSrc(editItem)}
 						<CardPreview src={getImageSrc(editItem)} alt={editItem.name as string} scale={1.7}>
-							<img src={getImageSrc(editItem)} alt={editItem.name as string} class="w-full rounded-lg shadow-lg" />
+							<img onerror={cardImageError} src={getImageSrc(editItem)} alt={editItem.name as string} class="w-full rounded-lg shadow-lg" />
 						</CardPreview>
 					{:else}
 						<div class="w-full aspect-[488/680] bg-[var(--color-bg)] rounded-lg flex items-center justify-center text-[var(--color-text-muted)] text-sm p-2 text-center">
@@ -781,7 +782,7 @@
 		<div class="space-y-2">
 			{#each data.items as item (item.id)}
 				{@const imgSrc = getImageSrc(item)}
-				{@const srcset = item.local_image_path ? null : scryfallSrcset(item.image_uri as string | null)}
+				{@const srcset = item.local_image_path ? null : cardImageSrcset(item.image_uri as string | null)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -793,7 +794,7 @@
 					<div class="flex-shrink-0">
 						{#if imgSrc}
 							<CardPreview src={imgSrc} alt={item.name as string} scale={2.4}>
-								<img src={imgSrc} srcset={srcset ?? undefined} sizes="80px" alt={item.name as string} class="w-14 h-20 sm:w-16 sm:h-22 object-cover rounded" loading="lazy" />
+								<img onerror={cardImageError} src={imgSrc} srcset={srcset ?? undefined} sizes="80px" alt={item.name as string} class="w-14 h-20 sm:w-16 sm:h-22 object-cover rounded" loading="lazy" />
 							</CardPreview>
 						{:else}
 							<div class="w-14 h-20 sm:w-16 sm:h-22 bg-[var(--color-bg)] rounded"></div>
