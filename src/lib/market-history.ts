@@ -98,12 +98,33 @@ export function pointsInFilter(points: MarketPoint[], filter: Pick<MarketFilter,
 }
 
 const cents = (n: number) => Math.round(n * 100) / 100;
-const percentOf = (change: number, base: number) => base > 0 ? Math.round((change / base) * 10000) / 100 : null;
+/**
+ * The percent of a run of like-for-like moves, chained day by day: each day's move
+ * against the total of the update before it, multiplied up. Dividing the summed
+ * moves by the first day's total instead put printings priced later into the
+ * numerator but not the denominator: a set with a few early prices showed −135.79 %
+ * for a month and +2848.02 % for the next (SOS on the host, 2026-11-01). Chained,
+ * a percent never falls below −100 %, and printings priced later neither raise nor
+ * bend it. `days[i].moved` is against `days[i - 1]`; `before` is the update before
+ * the first counted day. Null without a counted day or a priced day before one.
+ */
+function chainedPct(before: MarketPoint, days: MarketPoint[]): number | null {
+	if (!days.length) return null;
+	let factor = 1, prev = before, counted = 0;
+	for (const day of days) {
+		if (prev.value > 0) {
+			factor *= 1 + day.moved / prev.value;
+			counted++;
+		}
+		prev = day;
+	}
+	return counted ? Math.round((factor - 1) * 10000) / 100 : null;
+}
 
 /**
  * The figures of the days shown. The first day is the baseline, so its own move
  * (against an update outside the view) does not count; the change is like-for-like,
- * as on the homepage. `newPrintings` is the net of printings that gained or lost a
+ * as on the homepage, and its percent is chained day by day (`chainedPct()`). `newPrintings` is the net of printings that gained or lost a
  * price, which the change leaves out. Null without a day.
  */
 export function marketPeriod(points: MarketPoint[]) {
@@ -117,7 +138,7 @@ export function marketPeriod(points: MarketPoint[]) {
 		value: last.value,
 		printings: last.printings,
 		change,
-		changePct: change == null ? null : percentOf(change, first.value),
+		changePct: change == null ? null : chainedPct(first, points.slice(1)),
 		newPrintings: last.printings - first.printings,
 		high: Math.max(...values),
 		low: Math.min(...values),
@@ -165,7 +186,7 @@ export function marketMonths(points: MarketPoint[]): MarketMonth[] {
 			lastDate: last.date,
 			printings: last.printings,
 			change,
-			changePct: change == null ? null : percentOf(change, base.value),
+			changePct: change == null ? null : chainedPct(base, counted),
 			newPrintings: last.printings - base.printings,
 			high: Math.max(...values),
 			low: Math.min(...values),
