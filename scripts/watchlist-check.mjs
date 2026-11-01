@@ -61,7 +61,7 @@ try {
 		try { if ((await fetch(origin + '/api/health')).ok) break; } catch {}
 		await new Promise((r) => setTimeout(r, 200));
 	}
-	// The server has run migration 0034 now; give the other account its list.
+	// The server has run migration 0035 now; give the other account its list.
 	const live = new Database(dbPath);
 	live.prepare("INSERT INTO watchlists(user_id,name,created_at,updated_at) VALUES ('other','Private',?,?)").run(new Date().toISOString(), new Date().toISOString());
 	const otherListId = live.prepare("SELECT id FROM watchlists WHERE user_id = 'other'").get().id;

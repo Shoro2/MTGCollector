@@ -410,7 +410,9 @@ const MIGRATIONS: Migration[] = [
 		// Price watchlists (/watchlist, src/lib/server/watchlists.ts): a user's named
 		// lists of printings with a finish, an optional target price and a note.
 		// User data: the nightly user-data dump must list watchlists and watchlist_cards.
-		id: '0034_watchlists',
+		// 0034 is taken by the per-set market value (MTGCollector#140); both only add
+		// tables, so they can run in either order.
+		id: '0035_watchlists',
 		run: (db) => db.exec(WATCHLISTS_SQL)
 	}
 ];

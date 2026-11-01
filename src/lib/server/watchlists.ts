@@ -5,7 +5,7 @@ import {
 	type PriceRefs, type PriceRow, type WatchEntry, type WatchRow
 } from '../watchlist.js';
 
-// Price watchlists (/watchlist, migration 0034_watchlists): a user's named lists of
+// Price watchlists (/watchlist, migration 0035_watchlists): a user's named lists of
 // printings with a finish, an optional target price and a note. The database is
 // injected so the unit tests never open the application database (CLAUDE.md §8.1).
 // User data: the nightly user-data dump must list both tables.
