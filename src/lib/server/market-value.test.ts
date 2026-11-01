@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SCHEMA_SQL } from './schema-sql';
-import { MARKET_VALUE_SQL, marketValueHistory, rebuildMarketValue, updateMarketValue, type MarketValueDay } from './market-value';
+import { MARKET_VALUE_SET_SQL, MARKET_VALUE_SQL, marketValueHistory, marketValueSetHistory, marketValueSets, rebuildMarketValue, updateMarketValue, type MarketValueDay } from './market-value';
 
 let db: Database.Database;
 beforeEach(() => {
@@ -9,6 +9,7 @@ beforeEach(() => {
 	db.pragma('foreign_keys = OFF'); // price rows without card rows keep the fixtures short
 	db.exec(SCHEMA_SQL);
 	db.exec(MARKET_VALUE_SQL);
+	db.exec(MARKET_VALUE_SET_SQL);
 	db.exec('CREATE UNIQUE INDEX idx_price_history_card_snapshot_lang ON price_history(card_id, snapshot_date, language)'); // migration 0018
 });
 afterEach(() => db.close());
@@ -136,5 +137,125 @@ describe('marketValueHistory', () => {
 		history();
 		rebuildMarketValue(db);
 		expect(marketValueHistory(db, '2026-10-02').map(d => d.snapshot_date)).toEqual(['2026-10-02', '2026-10-04']);
+	});
+});
+
+describe('the sums per set', () => {
+	function card(id: string, setCode: string, setName: string) {
+		db.prepare('INSERT INTO cards (id, name, set_code, set_name) VALUES (?, ?, ?, ?)').run(id, id, setCode, setName);
+	}
+	const setRows = () => db.prepare('SELECT * FROM market_value_set_daily ORDER BY snapshot_date, set_code').all() as Array<MarketValueDay & { set_code: string }>;
+
+	/** The slow way for one set: the brute force over its printings only. */
+	function bruteForceSet(code: string): MarketValueDay[] {
+		const all = bruteForce();
+		const ids = new Set(db.prepare('SELECT id FROM cards WHERE set_code = ?').pluck().all(code) as string[]);
+		const others = db.prepare('SELECT DISTINCT card_id FROM price_history').pluck().all() as string[];
+		// Hide every other printing's rows, compute, put them back.
+		db.exec('CREATE TEMP TABLE hidden AS SELECT * FROM price_history WHERE 0');
+		for (const id of others) if (!ids.has(id)) {
+			db.prepare('INSERT INTO hidden SELECT * FROM price_history WHERE card_id = ?').run(id);
+			db.prepare('DELETE FROM price_history WHERE card_id = ?').run(id);
+		}
+		const mine = bruteForce();
+		db.exec('INSERT INTO price_history SELECT * FROM hidden; DROP TABLE hidden');
+		// Every market day from the set's first price on (later days carry it forward).
+		const first = mine.find(d => d.eur_printings + d.usd_printings > 0)?.snapshot_date;
+		if (!first) return [];
+		return all.filter(d => d.snapshot_date >= first).map(d => {
+			const own = [...mine].reverse().find(m => m.snapshot_date <= d.snapshot_date)!;
+			return own.snapshot_date === d.snapshot_date ? own : { ...own, snapshot_date: d.snapshot_date, eur_moved: 0, usd_moved: 0 };
+		});
+	}
+
+	function sets() {
+		card('bolt', 'm10', 'Magic 2010');
+		card('ring', 'ltr', 'The Lord of the Rings');
+		card('promo', 'ltr', 'The Lord of the Rings');
+		card('new', 'blb', 'Bloomburrow');
+		history();
+	}
+
+	it('adds up to the whole market on every day and matches the slow computation per set', () => {
+		sets();
+		rebuildMarketValue(db);
+		const rows = setRows();
+		for (const day of stored()) {
+			// Every set on that day, carried forward where its printings did not change.
+			const value = ['m10', 'ltr', 'blb']
+				.map(code => marketValueSetHistory(db, code, day.snapshot_date)[0])
+				.filter(d => d?.snapshot_date === day.snapshot_date)
+				.reduce((sum, d) => sum + d.eur, 0);
+			expect(Math.round(value * 100) / 100).toBe(day.eur);
+			const moved = rows.filter(r => r.snapshot_date === day.snapshot_date).reduce((sum, r) => sum + r.eur_moved, 0);
+			expect(moved).toBeCloseTo(day.eur_moved, 6);
+		}
+		for (const code of ['m10', 'ltr', 'blb']) expect(marketValueSetHistory(db, code, '')).toEqual(bruteForceSet(code));
+	});
+
+	it('writes a set only on the days its printings changed and carries it forward between them', () => {
+		sets();
+		rebuildMarketValue(db);
+		expect(setRows().filter(r => r.set_code === 'm10').map(r => r.snapshot_date)).toEqual(['2026-10-01', '2026-10-04']);
+		expect(marketValueSetHistory(db, 'm10', '')).toEqual([
+			{ snapshot_date: '2026-10-01', eur: 1.5, eur_printings: 1, eur_moved: 0, usd: 2, usd_printings: 1, usd_moved: 0 },
+			{ snapshot_date: '2026-10-02', eur: 1.5, eur_printings: 1, eur_moved: 0, usd: 2, usd_printings: 1, usd_moved: 0 },
+			{ snapshot_date: '2026-10-04', eur: 1, eur_printings: 1, eur_moved: -0.5, usd: 5, usd_printings: 1, usd_moved: 3 }
+		]);
+		// A set released later starts on its first day, and its first prices are not a move.
+		expect(marketValueSetHistory(db, 'blb', '')).toEqual([
+			{ snapshot_date: '2026-10-02', eur: 7, eur_printings: 1, eur_moved: 0, usd: 8, usd_printings: 1, usd_moved: 0 },
+			{ snapshot_date: '2026-10-04', eur: 7, eur_printings: 1, eur_moved: 0, usd: 8, usd_printings: 1, usd_moved: 0 }
+		]);
+		expect(marketValueSetHistory(db, 'm10', '2026-10-02').map(d => d.snapshot_date)).toEqual(['2026-10-02', '2026-10-04']);
+		expect(marketValueSetHistory(db, 'xyz', '')).toEqual([]);
+	});
+
+	it('counts a printing without a cards row under no set, so the sums still add up', () => {
+		card('bolt', 'm10', 'Magic 2010');
+		snap('bolt', '2026-10-01', { eur: 2, usd: 3 });
+		snap('ghost', '2026-10-01', { eur: 5, usd: 6 });
+		rebuildMarketValue(db);
+		expect(setRows().map(r => [r.set_code, r.eur])).toEqual([['', 5], ['m10', 2]]);
+		expect(marketValueSets(db)).toEqual([{ code: 'm10', name: 'Magic 2010' }]);
+	});
+
+	it('extends day by day exactly like a rebuild, also after a second run on the same day', () => {
+		sets();
+		snap('bolt', '2026-10-01', { eur: 1.5, usd: 2 });
+		snap('ring', '2026-10-01', { eur: 100, usd: 120 });
+		db.exec("DELETE FROM price_history WHERE snapshot_date > '2026-10-01'");
+		expect(updateMarketValue(db).mode).toBe('rebuilt');
+		snap('ring', '2026-10-02', { eur: 110, usd: 118 });
+		snap('new', '2026-10-02', { eur: 7, usd: 8 });
+		snap('bolt', '2026-10-02', { eur: 2, usd: 2 });
+		expect(updateMarketValue(db)).toEqual({ mode: 'extended', days: 2 });
+		// A second run: bolt is back at its old price, so m10 no longer changed that day.
+		db.exec("DELETE FROM price_history WHERE card_id = 'bolt' AND snapshot_date = '2026-10-02'");
+		snap('promo', '2026-10-02', { eurFoil: 9, usdFoil: 11 });
+		expect(updateMarketValue(db)).toEqual({ mode: 'extended', days: 1 });
+		const extended = setRows();
+		rebuildMarketValue(db);
+		expect(extended).toEqual(setRows());
+		expect(extended.filter(r => r.snapshot_date === '2026-10-02').map(r => r.set_code)).toEqual(['blb', 'ltr']);
+	});
+
+	it('rebuilds when the per-set table is empty (the first start after migration 0034)', () => {
+		sets();
+		rebuildMarketValue(db);
+		const before = setRows();
+		db.exec('DELETE FROM market_value_set_daily');
+		expect(updateMarketValue(db)).toEqual({ mode: 'rebuilt', days: 3 });
+		expect(setRows()).toEqual(before);
+	});
+
+	it('lists the sets with a stored day by name', () => {
+		sets();
+		rebuildMarketValue(db);
+		expect(marketValueSets(db)).toEqual([
+			{ code: 'blb', name: 'Bloomburrow' },
+			{ code: 'm10', name: 'Magic 2010' },
+			{ code: 'ltr', name: 'The Lord of the Rings' }
+		]);
 	});
 });

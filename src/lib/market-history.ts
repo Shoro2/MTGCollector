@@ -24,6 +24,8 @@ export type MarketView = (typeof MARKET_VIEWS)[number]['id'];
 
 export type MarketFilter = {
 	currency: Currency;
+	/** One set's printings (cards.set_code, lower case), null: every printing. */
+	set: string | null;
 	range: MarketRange;
 	view: MarketView;
 	/** First and last day shown (YYYY-MM-DD), null: no limit. */
@@ -42,15 +44,23 @@ function validDate(value: string | null): string | null {
 	return Number.isFinite(day) && dateOf(day) === value ? value : null;
 }
 
+/** A set code as Scryfall writes them (lower case letters and digits), or null. */
+function setCode(value: string | null): string | null {
+	const code = (value ?? '').trim().toLowerCase();
+	return /^[a-z0-9]{2,8}$/.test(code) ? code : null;
+}
+
 /**
- * The filters from the URL; anything unknown falls back to the default: all days,
- * the market value, `currency` (the viewer's). Dates win over a named range, and
- * reversed dates are swapped.
+ * The filters from the URL; anything unknown falls back to the default: every
+ * printing, all days, the market value, `currency` (the viewer's). Dates win over a
+ * named range, and reversed dates are swapped. A set is kept only when `sets`
+ * knows it.
  */
-export function parseMarketFilter(search: URLSearchParams, { currency, today }: { currency: Currency; today: string }): MarketFilter {
+export function parseMarketFilter(search: URLSearchParams, { currency, today, sets }: { currency: Currency; today: string; sets?: ReadonlySet<string> }): MarketFilter {
 	const asked = (search.get('currency') ?? '').trim().toUpperCase();
 	const view = MARKET_VIEWS.find(v => v.id === search.get('view'))?.id ?? 'value';
-	const base = { currency: isCurrency(asked) ? asked : currency, view };
+	const set = setCode(search.get('set'));
+	const base = { currency: isCurrency(asked) ? asked : currency, set: set && (!sets || sets.has(set)) ? set : null, view };
 	let from = validDate(search.get('from')), to = validDate(search.get('to'));
 	if (from || to) {
 		if (from && to && from > to) [from, to] = [to, from];
@@ -61,8 +71,9 @@ export function parseMarketFilter(search: URLSearchParams, { currency, today }: 
 }
 
 /** The link to the page with these filters; defaults stay out of the URL. */
-export function marketHref(filter: Pick<MarketFilter, 'currency' | 'range' | 'view' | 'from' | 'to'>, viewerCurrency: Currency): string {
+export function marketHref(filter: Pick<MarketFilter, 'currency' | 'set' | 'range' | 'view' | 'from' | 'to'>, viewerCurrency: Currency): string {
 	const params = new URLSearchParams();
+	if (filter.set) params.set('set', filter.set);
 	if (filter.range === 'custom') {
 		if (filter.from) params.set('from', filter.from);
 		if (filter.to) params.set('to', filter.to);
@@ -75,7 +86,7 @@ export function marketHref(filter: Pick<MarketFilter, 'currency' | 'range' | 'vi
 /** Only the page without filters is a landing page; a filtered one keeps its own canonical (as catalogSeo()). */
 export function marketSeo(search: URLSearchParams) {
 	const params = new URLSearchParams();
-	for (const key of ['range', 'from', 'to', 'currency', 'view']) {
+	for (const key of ['set', 'range', 'from', 'to', 'currency', 'view']) {
 		const value = (search.get(key) ?? '').trim();
 		if (value) params.set(key, value);
 	}
