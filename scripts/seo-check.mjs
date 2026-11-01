@@ -107,7 +107,7 @@ try {
 		const xml = await response.text();
 		urls.push(...locations(xml));
 	}
-	check(urls.length === 38 && new Set(urls).size === 38, 'all 29 cards, eight public pages and the one indexable deck appear exactly once');
+	check(urls.length === 39 && new Set(urls).size === 39, 'all 29 cards, nine public pages and the one indexable deck appear exactly once');
 	check(urls.includes(`${publicOrigin}/decks/${decks.indexed}`) && urls.includes(`${publicOrigin}/decks`)
 		&& !Object.values(decks).filter((id) => id !== decks.indexed).some((id) => urls.some((url) => url.includes(id))),
 		'the sitemap lists the public deck list and the indexable deck, never a small, unlisted, hidden or private one');
@@ -219,6 +219,7 @@ try {
 	check(await market.locator('[data-market-value]').innerText() === '€338', 'home page shows the market value of every printing');
 	check((await market.locator('[data-market-change]').innerText()).replace(/\s+/g, ' ') === '▲ €305 (+924.24%) since October 1',
 		'the market value is compared with the update before');
+	check(await market.locator('a[href="/market-value"]').count() === 1, 'the market value panel links its detail page');
 	const moves = page.locator('section[aria-labelledby="price-moves"]');
 	check(await moves.getByRole('heading').innerText() === 'Price moves from October 1 to October 9', 'price moves name the span between the two price updates');
 	check(await moves.locator('a[href="/cards/teferis-protection"]', { hasText: '▲ 50.0%' }).count() === 1, 'a rising card links its card page');
@@ -322,7 +323,7 @@ try {
 		}
 		return failed;
 	};
-	for (const path of ['/', '/cards', '/cards/teferis-protection', `/cards/${printingId(82)}`, '/portfolio-tracker', '/decks', '/login', '/contact', '/impressum', '/datenschutz']) {
+	for (const path of ['/', '/cards', '/cards/teferis-protection', `/cards/${printingId(82)}`, '/portfolio-tracker', '/market-value', '/decks', '/login', '/contact', '/impressum', '/datenschutz']) {
 		await narrow.goto(origin + path);
 		const failed = await overflowingSizes();
 		check(failed.length === 0, `${path} never scrolls sideways at phone widths${failed.length ? ` (${failed.join(', ')})` : ''}`);
@@ -357,7 +358,7 @@ try {
 		if (url.origin !== origin && url.protocol.startsWith('http')) external.add(url.hostname);
 	});
 	const visitor = await privacy.newPage();
-	for (const path of ['/', '/cards', '/cards/killian-spotlight-chaser', '/portfolio-tracker', '/login', '/contact', '/scan']) {
+	for (const path of ['/', '/cards', '/cards/killian-spotlight-chaser', '/portfolio-tracker', '/market-value', '/login', '/contact', '/scan']) {
 		await visitor.goto(origin + path);
 		await visitor.waitForLoadState('networkidle');
 	}
