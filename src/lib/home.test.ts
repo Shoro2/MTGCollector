@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chartPaths, collectionMoves, dashboardSummary, euro, movesHeading, pickMovers, type MoverRow } from './home';
+import { chartPaths, collectionMoves, dashboardSummary, euro, marketSummary, movesHeading, pickMovers, type MarketDay, type MoverRow } from './home';
 
 const row = (oracle: string, now: number, prev: number, extra: Partial<MoverRow> = {}): MoverRow => ({
 	oracle_id: oracle, name: oracle, set_code: 'tst', now, usd: now, prev, prevUsd: prev, ...extra
@@ -115,5 +115,39 @@ describe('euro', () => {
 	it('groups thousands and keeps two decimals', () => {
 		expect(euro(1248.3)).toBe('€1,248.30');
 		expect(euro(0)).toBe('€0.00');
+	});
+});
+
+describe('marketSummary', () => {
+	const day = (date: string, eur: number, eurN: number, eurMoved: number, usd = eur * 1.1, usdN = eurN, usdMoved = eurMoved * 1.1): MarketDay =>
+		({ snapshot_date: date, eur, eur_printings: eurN, eur_moved: eurMoved, usd, usd_printings: usdN, usd_moved: usdMoved });
+
+	it('shows the latest total and the like-for-like change against the update before', () => {
+		const m = marketSummary([day('2026-10-29', 1000, 10, 0), day('2026-10-30', 1100, 12, 20), day('2026-10-31', 1090, 13, -15)], 'EUR', { today: '2026-11-01' })!;
+		expect(m).toMatchObject({ date: '2026-10-31', value: 1090, printings: 13, change: -15, changePct: -1.36, previousDate: '2026-10-30', newPrintings: 1 });
+		expect(m.chart).toMatchObject({ low: 1000, high: 1100, from: '2026-10-29', to: '2026-10-31' });
+		expect(m.chart!.line.startsWith('M0,')).toBe(true);
+		expect(m.chart!.area.endsWith('L320,80 L0,80 Z')).toBe(true);
+	});
+
+	it('reads the TCGplayer sums in US dollars, never converted euros', () => {
+		const m = marketSummary([day('2026-10-30', 1000, 10, 0, 1500, 9, 0), day('2026-10-31', 1010, 10, 10, 1470, 9, -30)], 'USD', { today: '2026-10-31' })!;
+		expect(m).toMatchObject({ value: 1470, printings: 9, change: -30, changePct: -2 });
+	});
+
+	it('has no change on the first day and no chart with one point', () => {
+		const m = marketSummary([day('2026-10-31', 1000, 10, 0)], 'EUR', { today: '2026-10-31' })!;
+		expect(m).toMatchObject({ change: null, changePct: null, previousDate: null, newPrintings: 0, chart: null });
+	});
+
+	it('keeps the chart to the window but the change to the update before', () => {
+		const m = marketSummary([day('2026-06-01', 900, 10, 0), day('2026-10-30', 1000, 10, 5), day('2026-10-31', 1010, 10, 10)], 'EUR', { today: '2026-10-31' })!;
+		expect(m.chart).toMatchObject({ from: '2026-10-30', low: 1000, high: 1010 });
+		expect(m.previousDate).toBe('2026-10-30');
+	});
+
+	it('is null without any priced day', () => {
+		expect(marketSummary([], 'EUR', { today: '2026-10-31' })).toBeNull();
+		expect(marketSummary([day('2026-10-31', 0, 0, 0)], 'EUR', { today: '2026-10-31' })).toBeNull();
 	});
 });

@@ -33,6 +33,12 @@ db.exec(`INSERT INTO users(id,google_id,email,name) VALUES ('owner','owner','fix
 	INSERT INTO collection_cards(id,user_id,card_id,quantity,condition,language,foil,purchase_price,added_at) VALUES
 	(1,'owner','${HORN}',2,'near_mint','en',0,2,'2026-01-01T00:00:00.000Z');`);
 db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(token, 'owner', new Date(Date.now() + 86400000).toISOString());
+// Two price updates for the homepage's market value of every printing (market_value_daily is
+// built from them at boot): Cardmarket €7 then €8, TCGplayer $5.50 then $6 (Lightning Bolt has
+// no dollar price, so it is never part of the dollar sum).
+const snapshot = db.prepare("INSERT INTO price_history(card_id,language,snapshot_date,recorded_at,price_eur,price_usd) VALUES (?,'en',?,?,?,?)");
+const day = (offset) => new Date(Date.now() - offset * 86400000).toISOString().slice(0, 10);
+for (const [id, d, eur, usd] of [[HORN, day(2), 4, 5.5], [BOLT, day(2), 3, null], [HORN, day(1), 5, 6]]) snapshot.run(id, d, `${d}T18:00:00Z`, eur, usd);
 
 const port = Number(process.env.CURRENCY_CHECK_PORT || 5197), origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ['build/index.js'], { windowsHide: true,
@@ -98,6 +104,13 @@ try {
 
 	await page.goto(origin + '/');
 	check(await page.locator('.kpi-value', { hasText: '$' }).count() > 0 && await page.locator('.kpi-value', { hasText: '€' }).count() === 0, 'homepage dashboard in dollars');
+	const market = page.locator('[data-market-panel]');
+	check(await market.getAttribute('data-currency') === 'USD' && await market.locator('[data-market-value]').innerText() === '$6'
+		&& (await market.locator('[data-market-change]').innerText()).replace(/\s+/g, ' ').startsWith('▲ $1 (+9.09%) since'),
+		'homepage market value of every printing: the TCGplayer sum in dollars, never converted');
+	check((await market.innerText()).includes('1 printing with a TCGplayer market price'), 'the dollar market counts only printings with a dollar price');
+	check(await market.locator('[data-market-chart] path').count() === 2 && await fits(), 'the market value has its chart and fits a 360 px phone');
+	await market.screenshot({ path: resolve(dir, 'market-usd-mobile.png') });
 	await page.goto(origin + '/prices');
 	await page.locator('.kpi-value', { hasText: '$' }).first().waitFor();
 	check(await page.locator('.kpi-value', { hasText: '€' }).count() === 0, 'prices page in dollars');
@@ -125,6 +138,8 @@ try {
 	const visitor = await browser.newPage();
 	await visitor.goto(origin + '/cards/war-horn');
 	check(/from\s+€5\.00/.test(await visitor.locator('main').innerText()), 'visitors see euros');
+	await visitor.goto(origin + '/');
+	check(await visitor.locator('[data-market-panel] [data-market-value]').innerText() === '€8', 'visitors see the market value in euros');
 	await visitor.close();
 
 	await page.goto(origin + '/settings', { waitUntil: 'networkidle' });

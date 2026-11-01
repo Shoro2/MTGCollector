@@ -1,6 +1,7 @@
 import { invalidateArtIndex } from './art-index.js';
 import { invalidateNameIndex } from './card-search.js';
 import { availabilityWriter } from './card-availability.js';
+import { updateMarketValue } from './market-value.js';
 import { sqlite } from './db.js';
 import { homeCatalogueCache, priceDataCache, setsCache } from './cache.js';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -426,6 +427,14 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 
 		const snapshotted = snapshotResult.changes;
 		console.log(`[price-updater] Snapshotted prices for ${snapshotted} cards (change-only)`);
+
+		try {
+			const { mode, days } = updateMarketValue(sqlite);
+			console.log(`[price-updater] Market value of all printings: ${mode} ${days} day(s)`);
+		} catch (err) {
+			// The homepage chart misses a day; the prices themselves are written.
+			console.error('[price-updater] Market value update failed:', err);
+		}
 
 		writeFileSync(lastBulkUpdatePath, bulk.updatedAt, 'utf-8');
 		lastSuccessfulSnapshotDate = snapshotDate;
