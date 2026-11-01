@@ -7,6 +7,7 @@ import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
 import { DECKS_SQL, addDeckAuthor, addDeckPublications, addDeckBracket, addDeckReports } from './decks.js';
 import { MARKET_VALUE_SET_SQL, MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
+import { WATCHLISTS_SQL } from './watchlists.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -408,9 +409,19 @@ const MIGRATIONS: Migration[] = [
 	{
 		// The same sums per set (the set filter of /market-value). Derived and
 		// re-creatable like 0033; empty here, the first start after it rebuilds both
-		// tables in updateMarketValue() below.
+		// tables in updateMarketValue() below. It reached the host after 0035, which
+		// the runner allows: it applies every id not yet recorded, in list order.
 		id: '0034_market_value_set_daily',
 		run: (db) => db.exec(MARKET_VALUE_SET_SQL)
+	},
+	{
+		// Price watchlists (/watchlist, src/lib/server/watchlists.ts): a user's named
+		// lists of printings with a finish, an optional target price and a note.
+		// User data: the nightly user-data dump must list watchlists and watchlist_cards.
+		// 0034 is taken by the per-set market value (MTGCollector#140); both only add
+		// tables, so they can run in either order.
+		id: '0035_watchlists',
+		run: (db) => db.exec(WATCHLISTS_SQL)
 	}
 ];
 
