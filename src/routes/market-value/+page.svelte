@@ -186,7 +186,7 @@
 				{:else if filter.view === 'printings'}
 					New sets add printings, and a printing can lose its price.
 				{:else}
-					The total also rises when a new set adds printings. The change above and in the table counts only printings priced on both updates.
+					The total also rises when printings get their first price, from a new set or an older printing. The change above and in the table counts only printings priced on both updates.
 				{/if}
 			</p>
 		</section>
@@ -209,7 +209,7 @@
 					<tbody>
 						{#each data.months as row (row.month)}
 							<tr class="border-b border-[var(--color-border-subtle)] last:border-0" data-market-month={row.month}>
-								<th scope="row" class="px-3 py-2.5 text-left text-sm font-medium normal-case tracking-normal text-[var(--color-text)] sm:px-4">{monthLabel(row.month)}</th>
+								<th scope="row" class="px-3 py-2.5 text-left sm:px-4">{monthLabel(row.month)}</th>
 								<td class="tabular px-3 py-2.5 text-right text-[var(--color-accent)]" data-month-value>{whole(row.value)}</td>
 								<td class="tabular px-3 py-2.5 text-right sm:px-4 md:px-3 {changeClass(row.change)}" data-month-change>
 									{#if row.change == null}
