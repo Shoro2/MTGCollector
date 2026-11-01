@@ -14,7 +14,7 @@ const filterOf = (query: string, currency: 'EUR' | 'USD' = 'EUR') => parseMarket
 
 describe('parseMarketFilter', () => {
 	it('shows everything in the viewer\'s market by default', () => {
-		expect(filterOf('')).toEqual({ currency: 'EUR', range: 'all', view: 'value', from: null, to: null });
+		expect(filterOf('')).toEqual({ currency: 'EUR', set: null, range: 'all', view: 'value', from: null, to: null });
 		expect(filterOf('', 'USD').currency).toBe('USD');
 	});
 
@@ -30,25 +30,37 @@ describe('parseMarketFilter', () => {
 	});
 
 	it('falls back on unknown values', () => {
-		expect(filterOf('range=week&view=pie&currency=GBP', 'USD')).toEqual({ currency: 'USD', range: 'all', view: 'value', from: null, to: null });
+		expect(filterOf('range=week&view=pie&currency=GBP', 'USD')).toEqual({ currency: 'USD', set: null, range: 'all', view: 'value', from: null, to: null });
 		expect(filterOf('currency=usd&view=change')).toMatchObject({ currency: 'USD', view: 'change' });
+	});
+
+	it('reads a set code, in lower case, and keeps it only when the set is known', () => {
+		const sets = new Set(['ltr', 'm10']);
+		const read = (query: string) => parseMarketFilter(new URLSearchParams(query), { currency: 'EUR', today: '2026-11-01', sets });
+		expect(read('set=LTR&range=90d')).toMatchObject({ set: 'ltr', range: '90d' });
+		expect(read('set=xyz').set).toBeNull();
+		expect(read('set=ltr%27--').set).toBeNull();
+		expect(read('set=').set).toBeNull();
+		expect(filterOf('set=m10').set).toBe('m10'); // without a list every well-formed code passes
 	});
 });
 
 describe('marketHref and marketSeo', () => {
-	const base = { currency: 'EUR', range: 'all', view: 'value', from: null, to: null } as const;
+	const base = { currency: 'EUR', set: null, range: 'all', view: 'value', from: null, to: null } as const;
 
 	it('keeps defaults out of the URL, relative to the viewer', () => {
 		expect(marketHref(base, 'EUR')).toBe('/market-value');
 		expect(marketHref(base, 'USD')).toBe('/market-value?currency=EUR');
 		expect(marketHref({ ...base, range: '90d', view: 'change' }, 'EUR')).toBe('/market-value?range=90d&view=change');
 		expect(marketHref({ ...base, range: 'custom', from: '2026-10-01', to: '2026-10-31' }, 'EUR')).toBe('/market-value?from=2026-10-01&to=2026-10-31');
+		expect(marketHref({ ...base, set: 'ltr', range: '30d' }, 'EUR')).toBe('/market-value?set=ltr&range=30d');
 	});
 
 	it('indexes only the page without filters', () => {
 		expect(marketSeo(new URLSearchParams(''))).toEqual({ canonical: 'https://mtg-collector.com/market-value', noindex: false });
 		expect(marketSeo(new URLSearchParams('from=&to='))).toMatchObject({ noindex: false });
 		expect(marketSeo(new URLSearchParams('range=30d&utm_source=x'))).toEqual({ canonical: 'https://mtg-collector.com/market-value?range=30d', noindex: true });
+		expect(marketSeo(new URLSearchParams('set=ltr'))).toEqual({ canonical: 'https://mtg-collector.com/market-value?set=ltr', noindex: true });
 	});
 });
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
 	import type { Chart } from 'chart.js';
 	import { loadChart } from '$lib/chart-loader';
 	import { lineChartOptions } from '$lib/chart-options';
@@ -23,6 +24,9 @@
 	const signedPct = (n: number | null) => n == null ? '' : `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(2)}%`;
 	const href = (change: Partial<MarketFilter>) => marketHref({ ...filter, ...change }, data.viewerCurrency);
 	const source = $derived(currency === 'USD' ? `${currencyMarket(currency)} market price` : `${currencyMarket(currency)} trend price`);
+	// "every Magic card" or "The Lord of the Rings (LTR)"
+	const subject = $derived(data.setName ? `${data.setName} (${filter.set?.toUpperCase()})` : 'every Magic card');
+	const title = $derived(data.setName ? `Market value of ${data.setName} (${filter.set?.toUpperCase()}) per month` : 'Market value of every Magic card per month');
 
 	let canvas = $state<HTMLCanvasElement>();
 	let chart: Chart | null = null;
@@ -90,18 +94,20 @@
 </script>
 
 <svelte:head>
-	<title>Market value of every Magic card per month</title>
-	<meta name="description" content="The value of one copy of every Magic: The Gathering printing over time, from Cardmarket and TCGplayer prices, as a chart and a table per month." />
+	<title>{title}</title>
+	<meta name="description" content={data.setName
+		? `The value of one copy of every printing of ${data.setName} over time, from Cardmarket and TCGplayer prices, as a chart and a table per month.`
+		: 'The value of one copy of every Magic: The Gathering printing over time, from Cardmarket and TCGplayer prices, as a chart and a table per month.'} />
 	<link rel="canonical" href={data.seo.canonical} />
 	{#if data.seo.noindex}<meta name="robots" content="noindex, follow" />{/if}
 </svelte:head>
 
-<div class="flex min-w-0 flex-col gap-5" data-market-page data-currency={currency}>
+<div class="flex min-w-0 flex-col gap-5" data-market-page data-currency={currency} data-market-set={filter.set ?? ''}>
 	<header class="flex flex-col gap-1">
 		<a href="/" class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">‹ Home</a>
-		<h1 class="text-2xl font-semibold text-[var(--color-text-strong)]">Market value of every Magic card</h1>
+		<h1 class="text-2xl font-semibold text-[var(--color-text-strong)]">Market value of {subject}</h1>
 		<p class="text-sm text-[var(--color-text-muted)]">
-			One copy of each printing with a {source} (non foil, or foil when it only exists in foil), added up on every price update. {currencyMarket(currency)} prices in {currencySymbol(currency)}, never converted.
+			One copy of each {data.setName ? 'English printing of the set' : 'printing'} with a {source} (non foil, or foil when it only exists in foil), added up on every price update. {currencyMarket(currency)} prices in {currencySymbol(currency)}, never converted.
 		</p>
 	</header>
 
@@ -121,6 +127,28 @@
 				{/each}
 			</div>
 		</div>
+		<!-- The set: a GET form like the dates; with JavaScript a choice opens its link at once. -->
+		<form method="GET" action="/market-value" class="flex flex-wrap items-end gap-3" data-market-set-form data-sveltekit-noscroll>
+			<label class="flex min-w-0 flex-1 flex-col gap-1 text-xs text-[var(--color-text-muted)] sm:max-w-sm">
+				Set
+				<select name="set" value={filter.set ?? ''} class="control min-w-0 px-2 text-sm" data-market-set-select
+					onchange={(e) => goto(href({ set: e.currentTarget.value || null }), { noScroll: true, keepFocus: true })}>
+					<option value="">Every set</option>
+					{#each data.sets as set (set.code)}
+						<option value={set.code}>{set.name} ({set.code.toUpperCase()})</option>
+					{/each}
+				</select>
+			</label>
+			{#if filter.range === 'custom'}
+				{#if filter.from}<input type="hidden" name="from" value={filter.from} />{/if}
+				{#if filter.to}<input type="hidden" name="to" value={filter.to} />{/if}
+			{:else if filter.range !== 'all'}
+				<input type="hidden" name="range" value={filter.range} />
+			{/if}
+			{#if currency !== data.viewerCurrency}<input type="hidden" name="currency" value={currency} />{/if}
+			{#if filter.view !== 'value'}<input type="hidden" name="view" value={filter.view} />{/if}
+			<noscript><button type="submit" class="btn">Show set</button></noscript>
+		</form>
 		<form method="GET" action="/market-value" class="flex flex-wrap items-end gap-3" data-market-dates data-sveltekit-noscroll>
 			<label class="flex min-w-0 flex-col gap-1 text-xs text-[var(--color-text-muted)]">
 				From
@@ -130,6 +158,7 @@
 				To
 				<input type="date" name="to" value={filter.range === 'custom' ? filter.to : ''} min={data.firstDate} max={data.lastDate} class="control px-2 text-sm" />
 			</label>
+			{#if filter.set}<input type="hidden" name="set" value={filter.set} />{/if}
 			{#if currency !== data.viewerCurrency}<input type="hidden" name="currency" value={currency} />{/if}
 			{#if filter.view !== 'value'}<input type="hidden" name="view" value={filter.view} />{/if}
 			<button type="submit" class="btn">Apply dates</button>
@@ -184,7 +213,9 @@
 				{#if filter.view === 'change'}
 					What the printings priced on both updates gained or lost since the update before.
 				{:else if filter.view === 'printings'}
-					New sets add printings, and a printing can lose its price.
+					{data.setName ? 'Printings of the set gain a price, and a printing can lose its price.' : 'New sets add printings, and a printing can lose its price.'}
+				{:else if data.setName}
+					The total also rises when printings of the set get their first price. The change above and in the table counts only printings priced on both updates.
 				{:else}
 					The total also rises when printings get their first price, from a new set or an older printing. The change above and in the table counts only printings priced on both updates.
 				{/if}
@@ -236,7 +267,7 @@
 		</section>
 	{:else}
 		<p class="panel p-5 text-sm text-[var(--color-text-muted)]" data-market-empty>
-			{data.lastDate ? 'No price update in this period.' : 'The values fill in with the next price updates.'}
+			{data.lastDate ? 'No price update in this period.' : filter.set ? 'This set has no prices yet.' : 'The values fill in with the next price updates.'}
 		</p>
 	{/if}
 </div>

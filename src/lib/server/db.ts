@@ -6,7 +6,7 @@ import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
 import { DECKS_SQL, addDeckAuthor, addDeckPublications, addDeckBracket, addDeckReports } from './decks.js';
-import { MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
+import { MARKET_VALUE_SET_SQL, MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -404,6 +404,13 @@ const MIGRATIONS: Migration[] = [
 		// inside a migration transaction.
 		id: '0033_market_value_daily',
 		run: (db) => db.exec(MARKET_VALUE_SQL)
+	},
+	{
+		// The same sums per set (the set filter of /market-value). Derived and
+		// re-creatable like 0033; empty here, the first start after it rebuilds both
+		// tables in updateMarketValue() below.
+		id: '0034_market_value_set_daily',
+		run: (db) => db.exec(MARKET_VALUE_SET_SQL)
 	}
 ];
 
@@ -443,7 +450,7 @@ export function initDb() {
 
 	runMigrations(sqlite, MIGRATIONS);
 
-	// The daily market value of every printing: the first start after 0033 builds it
+	// The daily market value of every printing: the first start after 0033 (and 0034) builds it
 	// from the whole price history (seconds on the production history), later starts
 	// only check that the latest day is current. A failure must not stop the server.
 	try {

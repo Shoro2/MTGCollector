@@ -1,7 +1,7 @@
 // Build first. The detail page of the market value of every printing (/market-value) on a
 // fresh synthetic database, never the application database: the homepage panel opens it, the
 // chart is drawn, the filters change chart and table, the table works without JavaScript, and
-// the page fits a phone.
+// the page fits a phone. The set filter shows one set's printings (market_value_set_daily).
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -136,6 +136,41 @@ try {
 	check(await page.locator('[data-market-dates] input[name="from"]').inputValue() === dayAt(100) && await page.locator('[data-market-range][aria-current]').count() === 0,
 		'the dates stay in their fields and no named range is marked');
 
+	// The set filter (owner request 2026-11-01): War Horn is Magic Origins, Lightning Bolt the test set.
+	await page.goto(origin + '/market-value');
+	await settled();
+	const options = await page.locator('[data-market-set-select] option').allInnerTexts();
+	check(options.join('|') === 'Every set|Magic Origins (ORI)|Test Set (TST)', `the set filter lists the sets with prices by name (${options.join(', ')})`);
+	await page.locator('[data-market-set-select]').selectOption('ori');
+	await page.waitForURL('**/market-value?set=ori');
+	await settled();
+	check(await page.locator('h1').innerText() === 'Market value of Magic Origins (ORI)' && await page.locator('[data-market-page]').getAttribute('data-market-set') === 'ori',
+		'choosing a set opens its page and names it');
+	check(await page.locator('[data-period-value]').innerText() === '€210' && await page.locator('[data-period-change]').innerText() === '+€110'
+		&& await page.locator('[data-period-printings]').innerText() === '1', 'the set shows only its printings: War Horn');
+	check(await months() === expectedMonths && await amberPixels() > 50, 'its chart and table follow the set');
+	check(await page.locator('meta[name="robots"]').getAttribute('content') === 'noindex, follow'
+		&& await page.locator('link[rel="canonical"]').getAttribute('href') === 'https://mtg-collector.com/market-value?set=ori', 'a set page is noindex with its own canonical');
+	await page.locator('[data-market-range="30d"]').click();
+	await page.waitForURL('**/market-value?set=ori&range=30d');
+	await settled();
+	check(await page.locator('[data-market-set-select]').inputValue() === 'ori' && await page.locator('[data-period-change]').innerText() === '+€40', 'the period links keep the set');
+	await page.locator('[data-market-set-select]').selectOption('tst');
+	await page.waitForURL('**/market-value?set=tst&range=30d');
+	await settled();
+	await page.locator('[data-market-range="all"]').click();
+	await page.waitForURL('**/market-value?set=tst');
+	await settled();
+	const bolt = new Set(offsets.filter((o) => o <= 40).map((o) => dayAt(o).slice(0, 7))).size;
+	check(await page.locator('[data-period-value]').innerText() === '€50' && await page.locator('[data-period-change]').innerText() === '€0' && await months() === bolt,
+		`a set priced later starts with its first price, which is no change, and keeps its value on the days it did not change (${bolt} months)`);
+	await page.locator('[data-market-set-select]').selectOption('');
+	await page.waitForURL('**/market-value');
+	await settled();
+	check(await page.locator('[data-period-value]').innerText() === '€260', 'every set again: the sets add up to the whole market (€210 + €50)');
+	await page.goto(`${origin}/market-value?set=zzz`);
+	check(await page.locator('[data-period-value]').innerText() === '€260' && await page.locator('[data-market-set-select]').inputValue() === '', 'an unknown set falls back to every set');
+
 	await page.goto(`${origin}/market-value?from=2000-01-01&to=2000-02-01`);
 	check(await page.locator('[data-market-empty]').innerText() === 'No price update in this period.' && await months() === 0, 'an empty period says so');
 	await page.goto(`${origin}/market-value?range=nonsense&view=pie&currency=GBP&from=soon`);
@@ -156,6 +191,11 @@ try {
 	const plain = await noScript.newPage();
 	await plain.goto(origin + '/market-value?range=30d');
 	check(await months(plain) <= 2 && await plain.locator('[data-period-change]').innerText() === '+€40', 'the table and figures work without JavaScript');
+	await plain.locator('[data-market-set-select]').selectOption('ori');
+	await plain.locator('[data-market-set-form] button').click();
+	await plain.waitForURL('**/market-value?set=ori&range=30d');
+	check(await plain.locator('h1').innerText() === 'Market value of Magic Origins (ORI)' && await plain.locator('[data-period-change]').innerText() === '+€40',
+		'the set filter works without JavaScript through its button, and keeps the range');
 	await noScript.close();
 
 	// Phones (owner rule 2026-10-29: no sideways scrolling, measured against clientWidth).
@@ -168,6 +208,15 @@ try {
 		await small.waitForTimeout(250);
 		check(await fits(small), `no sideways scrolling at ${width}×${height}`);
 	}
+	await small.goto(origin + '/market-value?set=ori&range=90d');
+	await settled(small);
+	for (const width of [320, 360]) {
+		await small.setViewportSize({ width, height: 800 });
+		await small.waitForTimeout(250);
+		check(await fits(small), `a set page has no sideways scrolling at ${width} px`);
+	}
+	await small.goto(origin + '/market-value');
+	await settled(small);
 	await small.setViewportSize({ width: 360, height: 800 });
 	await small.waitForTimeout(400);
 	const frame = await small.locator('[data-market-canvas]').boundingBox();

@@ -22,7 +22,7 @@
  *
  * Safe to re-run: writes go through the UNIQUE(card_id, snapshot_date, language)
  * upsert. It only ever touches `price_history` and the derived `market_value_daily`
- * (rebuilt at the end) — current prices in `cards` and every user table are left alone.
+ * and `market_value_set_daily` (rebuilt at the end) — current prices in `cards` and every user table are left alone.
  */
 
 import Database from 'better-sqlite3';
@@ -32,7 +32,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { parseScryfallBulkStream } from './bulk-stream.js';
 import { scryfallFetch } from './scryfall.js';
-import { MARKET_VALUE_SQL, rebuildMarketValue } from './market-value.js';
+import { MARKET_VALUE_SET_SQL, MARKET_VALUE_SQL, rebuildMarketValue } from './market-value.js';
 
 const dataDir = join(process.cwd(), 'data');
 const dbPath = join(dataDir, 'mtg.db');
@@ -293,6 +293,7 @@ async function main() {
 	// Days written into the past change every later day's market value (homepage chart).
 	if (totalWritten > 0) {
 		sqlite.exec(MARKET_VALUE_SQL);
+		sqlite.exec(MARKET_VALUE_SET_SQL);
 		const { days: rebuilt } = rebuildMarketValue(sqlite);
 		console.log(`\nMarket value rebuilt for ${rebuilt} day(s).`);
 	}
