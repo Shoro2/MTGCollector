@@ -13,6 +13,7 @@
 	import ManaCost from '$lib/components/ManaCost.svelte';
 	import ColorPips from '$lib/components/ColorPips.svelte';
 	import FormatLegality from '$lib/components/FormatLegality.svelte';
+	import WatchPrice from '$lib/components/WatchPrice.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -322,7 +323,7 @@
 
 			<!-- Price History Chart -->
 			{#if data.priceHistory.length > 0}
-				<div class="bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
+				<div id="price-history" class="scroll-mt-20 bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
 					<div class="flex items-center justify-between mb-3">
 						<h3 class="font-semibold">Price History</h3>
 						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-0.5">
@@ -356,6 +357,17 @@
 
 			<!-- Legalities -->
 			<FormatLegality legalities={card.legalities as string | null} headingLevel={3} />
+
+			<!-- Price watchlist (signed-in users) -->
+			{#if data.user}
+				<WatchPrice
+					cardId={card.id as string}
+					hasRegularPrice={card.price_eur != null || card.price_usd != null}
+					hasFoilPrice={card.price_eur_foil != null || card.price_usd_foil != null}
+					watches={data.watches}
+					lists={data.watchlists}
+				/>
+			{/if}
 
 			<!-- Wishlist Button -->
 			<button

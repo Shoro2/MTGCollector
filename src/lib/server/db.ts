@@ -7,6 +7,7 @@ import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
 import { DECKS_SQL, addDeckAuthor, addDeckPublications, addDeckBracket, addDeckReports } from './decks.js';
 import { MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
+import { WATCHLISTS_SQL } from './watchlists.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -404,6 +405,13 @@ const MIGRATIONS: Migration[] = [
 		// inside a migration transaction.
 		id: '0033_market_value_daily',
 		run: (db) => db.exec(MARKET_VALUE_SQL)
+	},
+	{
+		// Price watchlists (/watchlist, src/lib/server/watchlists.ts): a user's named
+		// lists of printings with a finish, an optional target price and a note.
+		// User data: the nightly user-data dump must list watchlists and watchlist_cards.
+		id: '0034_watchlists',
+		run: (db) => db.exec(WATCHLISTS_SQL)
 	}
 ];
 

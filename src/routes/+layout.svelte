@@ -23,6 +23,7 @@
 		{ href: '/collection', label: 'Collection', protected: true },
 		{ href: '/decks', label: 'Decks' },
 		{ href: '/wishlist', label: 'Wishlist', protected: true },
+		{ href: '/watchlist', label: 'Watchlist', protected: true },
 		{ href: '/prices', label: 'Prices', protected: true },
 		{ href: '/admin', label: 'Admin', protected: true, admin: true }
 	];

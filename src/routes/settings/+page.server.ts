@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { sqlite } from '$lib/server/db';
+import { watchEntryCount } from '$lib/server/watchlists';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -29,6 +30,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 	return {
 		collectionCount: collectionCount.count,
 		deckCount: deckCount.count,
+		watchCount: watchEntryCount(sqlite, locals.user.id),
 		wishlistCount: wishlistCount.count,
 		tagCount: tagCount.count
 	};
