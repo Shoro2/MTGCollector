@@ -90,12 +90,13 @@ function trimZeros(text: string): string {
 	return text.includes('.') ? text.replace(/\.?0+$/, '') : text;
 }
 
-/** A tick label that stays short on a narrow y axis: €950, $1.5k, €-12k. */
+/** A tick label that stays short on a narrow y axis: €950, $1.5k, €-12k, €38.42M. */
 export function compactMoney(value: number | string, currency: Currency): string {
 	const n = typeof value === 'number' ? value : Number(value);
 	if (!Number.isFinite(n)) return String(value);
 	const symbol = currencySymbol(currency);
 	const abs = Math.abs(n);
+	if (abs >= 1_000_000) return `${symbol}${trimZeros((n / 1_000_000).toFixed(2))}M`;
 	if (abs >= 1000) {
 		const thousands = n / 1000;
 		const digits = abs >= 10000 || Number.isInteger(thousands) ? 0 : 1;

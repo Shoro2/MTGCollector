@@ -62,5 +62,7 @@ describe('formatting', () => {
 		expect(compactMoney(0.94, 'EUR')).toBe('€0.94');
 		expect(compactMoney(-12500, 'USD')).toBe('$-13k');
 		expect(compactMoney('n/a', 'USD')).toBe('n/a');
+		expect(compactMoney(38_421_337, 'EUR')).toBe('€38.42M');
+		expect(compactMoney(41_000_000, 'USD')).toBe('$41M');
 	});
 });

@@ -2,16 +2,19 @@ import { sqlite } from '$lib/server/db';
 import { cardSlugIndex } from '$lib/server/card-slugs';
 import { homeCatalogueCache, priceDataCache } from '$lib/server/cache';
 import { recentlyAdded, setCodes, wishlistCount } from '$lib/server/home-data';
-import { chartPaths, collectionMoves, dashboardSummary, movesHeading, type Mover } from '$lib/home';
+import { chartPaths, collectionMoves, dashboardSummary, marketSummary, movesHeading, type Mover } from '$lib/home';
 
 export async function load({ locals }) {
 	const slugs = cardSlugIndex(sqlite);
 	const cardCount = slugs.slugs.length;
 	const catalogueEmpty = !sqlite.prepare('SELECT 1 FROM cards LIMIT 1').get();
 	const userId = locals.user?.id;
+	const today = new Date().toISOString().slice(0, 10);
+	const home = await homeCatalogueCache.get('catalogue');
+	// Every printing's market value: Cardmarket in euros for visitors, the user's market otherwise.
+	const market = marketSummary(home.market, locals.user?.currency === 'USD' ? 'USD' : 'EUR', { today });
 
 	if (!userId) {
-		const home = await homeCatalogueCache.get('catalogue');
 		const withLink = (m: Mover) => ({ ...m, href: slugs.byOracle.has(m.oracleId) ? `/cards/${slugs.byOracle.get(m.oracleId)}` : null });
 		return {
 			cardCount,
@@ -22,12 +25,12 @@ export async function load({ locals }) {
 				down: home.moves.down.map(withLink),
 				sample: home.sample
 			},
+			market,
 			dashboard: null
 		};
 	}
 
 	const data = await priceDataCache.get(userId);
-	const today = new Date().toISOString().slice(0, 10);
 	const moves = collectionMoves(data.topCards);
 	const codes = setCodes(sqlite, [...moves.up, ...moves.down].map(m => m.id));
 	const withSet = <T extends { id: string }>(m: T) => ({ ...m, setCode: (codes.get(m.id) ?? '').toUpperCase() });
@@ -35,6 +38,7 @@ export async function load({ locals }) {
 		cardCount,
 		catalogueEmpty,
 		visitor: null,
+		market,
 		dashboard: {
 			// Every amount of the dashboard is in the user's display currency (getPriceData()).
 			currency: data.currency,

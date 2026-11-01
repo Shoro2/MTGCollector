@@ -3,6 +3,7 @@ import { getUsdToEurRate } from './exchange-rate.js';
 import { parseCurrency } from '../currency.js';
 import { getPriceData } from './price-data.js';
 import { priceMoverRows, printingPriceSample } from './home-data.js';
+import { marketValueHistory } from './market-value.js';
 import { pickMovers } from '../home.js';
 
 export function createCache<T>(fetcher: () => T, ttlMs: number) {
@@ -132,5 +133,10 @@ export const priceDataCache = createUserCache(async (userId: string) => {
 export const homeCatalogueCache = createUserCache(async () => {
 	const rate = await getUsdToEurRate();
 	const { date, previousDate, rows } = priceMoverRows(sqlite);
-	return { date, previousDate, moves: pickMovers(rows, { rate }), sample: printingPriceSample(sqlite, 'Lightning Bolt') };
+	// The market value of every printing, the last 100 days (the panel shows 90, plus the day before them).
+	const since = new Date(Date.now() - 100 * 86_400_000).toISOString().slice(0, 10);
+	return {
+		date, previousDate, moves: pickMovers(rows, { rate }), sample: printingPriceSample(sqlite, 'Lightning Bolt'),
+		market: marketValueHistory(sqlite, since)
+	};
 }, 60 * 60 * 1000);

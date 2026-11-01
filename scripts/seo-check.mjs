@@ -213,6 +213,12 @@ try {
 		check(await page.locator(`section[aria-label="Where to start"] a[href="${path}"]`).count() === 1, `home page offers a way in: ${path}`);
 	}
 	check((await page.locator('main').innerText()).includes('29 cards in every printing'), 'home page counts the cards in the database');
+	// The market value of every printing, from the two fixture price updates: €33 on October 1,
+	// €338 on October 9 (+€305: every fixture printing was priced on both days).
+	const market = page.locator('[data-market-panel]');
+	check(await market.locator('[data-market-value]').innerText() === '€338', 'home page shows the market value of every printing');
+	check((await market.locator('[data-market-change]').innerText()).replace(/\s+/g, ' ') === '▲ €305 (+924.24%) since October 1',
+		'the market value is compared with the update before');
 	const moves = page.locator('section[aria-labelledby="price-moves"]');
 	check(await moves.getByRole('heading').innerText() === 'Price moves from October 1 to October 9', 'price moves name the span between the two price updates');
 	check(await moves.locator('a[href="/cards/teferis-protection"]', { hasText: '▲ 50.0%' }).count() === 1, 'a rising card links its card page');

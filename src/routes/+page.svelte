@@ -3,6 +3,7 @@
 	import { euro } from '$lib/home';
 	import { currencySymbol, formatMoneyGrouped, type Currency } from '$lib/currency';
 	import { SITE_URL, jsonLd } from '$lib/seo';
+	import MarketValuePanel from '$lib/components/MarketValuePanel.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -99,6 +100,10 @@
 				<span class="mt-auto text-sm font-semibold text-[var(--color-primary)]">Open the scanner</span>
 			</a>
 		</section>
+
+		{#if data.market}
+			<MarketValuePanel market={data.market} currency="EUR" />
+		{/if}
 
 		{#if visitor.movesHeading && (visitor.up.length || visitor.down.length)}
 			<section aria-labelledby="price-moves" class="panel flex flex-col gap-3 p-5">
@@ -271,6 +276,10 @@
 					</ul>
 				</section>
 			</div>
+		{/if}
+
+		{#if data.market}
+			<MarketValuePanel market={data.market} {currency} />
 		{/if}
 	</div>
 {/if}

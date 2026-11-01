@@ -6,6 +6,7 @@ import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
 import { DECKS_SQL, addDeckAuthor, addDeckPublications, addDeckBracket, addDeckReports } from './decks.js';
+import { MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -394,6 +395,15 @@ const MIGRATIONS: Migration[] = [
 			addColumnIfMissing(db, 'users', 'currency', "TEXT NOT NULL DEFAULT 'EUR'");
 			addColumnIfMissing(db, 'collection_cards', 'purchase_currency', "TEXT NOT NULL DEFAULT 'EUR'");
 		}
+	},
+	{
+		// The market value of every printing per price-update day (homepage chart,
+		// src/lib/server/market-value.ts). Derived from price_history and re-creatable,
+		// so not user data: the nightly user-data dump does not need it. Filled by
+		// updateMarketValue() below, not here, so a slow first rebuild never sits
+		// inside a migration transaction.
+		id: '0033_market_value_daily',
+		run: (db) => db.exec(MARKET_VALUE_SQL)
 	}
 ];
 
@@ -432,6 +442,17 @@ export function initDb() {
 	`);
 
 	runMigrations(sqlite, MIGRATIONS);
+
+	// The daily market value of every printing: the first start after 0033 builds it
+	// from the whole price history (seconds on the production history), later starts
+	// only check that the latest day is current. A failure must not stop the server.
+	try {
+		const started = Date.now();
+		const { mode, days } = updateMarketValue(sqlite);
+		console.log(`[db] Market value: ${mode} ${days} day(s) in ${Date.now() - started} ms`);
+	} catch (err) {
+		console.error('[db] Market value update failed:', err);
+	}
 
 	// Expired-session cleanup. Cheap, bounded by sessions count; runs once at
 	// boot so admin-triggered cleanups aren't necessary for normal operation.

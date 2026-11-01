@@ -148,3 +148,65 @@ export function movesHeading(date: string, previousDate: string | null) {
 export function euro(amount: number) {
 	return formatMoneyGrouped(amount, 'EUR');
 }
+
+/** One stored day of the market value of every printing (market_value_daily). */
+export type MarketDay = {
+	snapshot_date: string;
+	eur: number;
+	eur_printings: number;
+	eur_moved: number;
+	usd: number;
+	usd_printings: number;
+	usd_moved: number;
+};
+
+/**
+ * The homepage's market panel in one market: Cardmarket for euros, TCGplayer for US
+ * dollars, never converted (each market's sum over the printings it prices). The
+ * change is like-for-like: the price moves of printings priced on the latest update
+ * day and the update before, so a set release adds printings without counting as a
+ * rise. The chart covers the last `days` days; its range is given as labels because
+ * a small move fills the whole height. Null without any stored day.
+ */
+export function marketSummary(history: MarketDay[], currency: 'EUR' | 'USD', { today, days = 90, width = 320, height = 80 }:
+	{ today: string; days?: number; width?: number; height?: number }) {
+	const pick = (d: MarketDay) => currency === 'USD'
+		? { date: d.snapshot_date, value: d.usd, printings: d.usd_printings, moved: d.usd_moved }
+		: { date: d.snapshot_date, value: d.eur, printings: d.eur_printings, moved: d.eur_moved };
+	const all = history.map(pick).filter(p => p.printings > 0);
+	if (!all.length) return null;
+	const latest = all.at(-1)!;
+	const previous = all.length > 1 ? all.at(-2)! : null;
+	const change = previous ? latest.moved : null;
+	const changePct = previous && previous.value > 0 ? Math.round((latest.moved / previous.value) * 10000) / 100 : null;
+
+	const start = dayNumber(today) - days;
+	const points = all.filter(p => dayNumber(p.date) >= start);
+	let chart: { line: string; area: string; low: number; high: number; from: string; to: string } | null = null;
+	if (points.length >= 2) {
+		const first = dayNumber(points[0].date), span = dayNumber(points.at(-1)!.date) - first || 1;
+		const low = Math.min(...points.map(p => p.value)), high = Math.max(...points.map(p => p.value));
+		const pad = (high - low) * 0.1 || Math.max(high * 0.01, 1);
+		const top = high + pad, bottom = low - pad;
+		const round = (n: number) => Math.round(n * 10) / 10;
+		const xy = points.map(p => `${round(((dayNumber(p.date) - first) / span) * width)},${round(((top - p.value) / (top - bottom)) * height)}`);
+		const line = xy.map((c, i) => `${i ? 'L' : 'M'}${c}`).join(' ');
+		chart = { line, area: `${line} L${width},${height} L0,${height} Z`, low, high, from: points[0].date, to: latest.date };
+	}
+	return {
+		date: latest.date,
+		value: latest.value,
+		printings: latest.printings,
+		change,
+		changePct,
+		previousDate: previous?.date ?? null,
+		/** Printings with a price on the latest day that had none on the update before (net). */
+		newPrintings: previous ? latest.printings - previous.printings : 0,
+		chart
+	};
+}
+
+/** "October 31" for the market panel's labels. */
+export function shortDate(date: string) {
+	return monthDay(date);
+}
