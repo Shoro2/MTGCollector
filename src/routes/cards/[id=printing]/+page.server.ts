@@ -2,6 +2,7 @@ import { sqlite } from '$lib/server/db';
 import { error } from '@sveltejs/kit';
 import { getUsdToEurRate } from '$lib/server/exchange-rate';
 import { cardSlugIndex } from '$lib/server/card-slugs';
+import { printingWatches, userWatchlists } from '$lib/server/watchlists';
 
 const CARD_COLUMNS = `id, oracle_id, name, mana_cost, cmc, type_line, oracle_text,
 	colors, color_identity, keywords, set_code, set_name, collector_number, rarity,
@@ -59,6 +60,10 @@ export async function load({ params, locals, depends }) {
 		? sqlite.prepare('SELECT id FROM wishlist_cards WHERE card_id = ? AND user_id = ?').get(params.id, userId) as { id: number } | undefined
 		: undefined;
 
+	// Price watchlists (/watchlist): where this printing is watched and the lists to add it to.
+	const watches = userId ? printingWatches(sqlite, userId, params.id) : [];
+	const watchlists = userId ? userWatchlists(sqlite, userId).map(({ id, name, entries }) => ({ id, name, entries })) : [];
+
 	// Cached for 6 h server-side; used to sanity-check the EUR price against the USD one.
 	const usdToEur = await getUsdToEurRate();
 
@@ -68,5 +73,5 @@ export async function load({ params, locals, depends }) {
 		? cardSlugIndex(sqlite).byOracle.get(card.oracle_id as string) ?? null
 		: null;
 
-	return { card, cardSlug, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null, usdToEur };
+	return { card, cardSlug, faces, reprints, priceHistory, inCollection, onWishlist: onWishlist ?? null, watches, watchlists, usdToEur };
 }

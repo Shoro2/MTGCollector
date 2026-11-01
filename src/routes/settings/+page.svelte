@@ -143,7 +143,7 @@
 	<!-- Collection Stats -->
 	<div class="panel p-6">
 		<h2 class="text-lg font-semibold mb-4">Collection Statistics</h2>
-		<div class="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+		<div class="grid grid-cols-2 gap-3 sm:grid-cols-5 sm:gap-4">
 			<div class="text-center min-w-0">
 				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.collectionCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Cards in Collection</p>
@@ -155,6 +155,10 @@
 			<div class="text-center min-w-0">
 				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.deckCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Decks</p>
+			</div>
+			<div class="text-center min-w-0">
+				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words" data-watch-count>{data.watchCount}</p>
+				<p class="text-xs text-[var(--color-text-muted)]">Watched</p>
 			</div>
 			<div class="text-center min-w-0">
 				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.tagCount}</p>
@@ -192,6 +196,7 @@
 				<li>{data.collectionCount} cards in your collection</li>
 				<li>{data.wishlistCount} entries on your wishlist</li>
 				<li>{data.deckCount} {data.deckCount === 1 ? 'deck' : 'decks'}</li>
+				<li>{data.watchCount} watched {data.watchCount === 1 ? 'printing' : 'printings'} and your watchlists</li>
 				<li>{data.tagCount} tags</li>
 				<li>All session data</li>
 			</ul>
