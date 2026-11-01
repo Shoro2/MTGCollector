@@ -73,6 +73,11 @@ export function formatMoneyGrouped(amount: number, currency: Currency): string {
 	return `${currencySymbol(currency)}${grouped.format(amount)}`;
 }
 
+/** €1,534,861: a large total in whole units. */
+export function formatMoneyWhole(amount: number, currency: Currency): string {
+	return formatMoneyGrouped(Math.round(amount), currency).replace(/\.00$/, '');
+}
+
 /**
  * A printing's price in its own market's currency: the chosen currency's price,
  * otherwise the other one with its own symbol (never converted). "-" without either.

@@ -160,6 +160,18 @@ export type MarketDay = {
 	usd_moved: number;
 };
 
+/** One stored day in one market. */
+export type MarketPoint = { date: string; value: number; printings: number; moved: number };
+
+/** The stored days in one market, without days on which that market priced nothing. */
+export function marketPoints(history: MarketDay[], currency: 'EUR' | 'USD'): MarketPoint[] {
+	return history
+		.map(d => currency === 'USD'
+			? { date: d.snapshot_date, value: d.usd, printings: d.usd_printings, moved: d.usd_moved }
+			: { date: d.snapshot_date, value: d.eur, printings: d.eur_printings, moved: d.eur_moved })
+		.filter(p => p.printings > 0);
+}
+
 /**
  * The homepage's market panel in one market: Cardmarket for euros, TCGplayer for US
  * dollars, never converted (each market's sum over the printings it prices). The
@@ -170,10 +182,7 @@ export type MarketDay = {
  */
 export function marketSummary(history: MarketDay[], currency: 'EUR' | 'USD', { today, days = 90, width = 320, height = 80 }:
 	{ today: string; days?: number; width?: number; height?: number }) {
-	const pick = (d: MarketDay) => currency === 'USD'
-		? { date: d.snapshot_date, value: d.usd, printings: d.usd_printings, moved: d.usd_moved }
-		: { date: d.snapshot_date, value: d.eur, printings: d.eur_printings, moved: d.eur_moved };
-	const all = history.map(pick).filter(p => p.printings > 0);
+	const all = marketPoints(history, currency);
 	if (!all.length) return null;
 	const latest = all.at(-1)!;
 	const previous = all.length > 1 ? all.at(-2)! : null;
