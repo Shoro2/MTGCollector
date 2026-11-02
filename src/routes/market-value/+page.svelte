@@ -215,9 +215,9 @@
 				{:else if filter.view === 'printings'}
 					{data.setName ? 'Printings of the set gain a price, and a printing can lose its price.' : 'New sets add printings, and a printing can lose its price.'}
 				{:else if data.setName}
-					The total also rises when printings of the set get their first price. The change above and in the table counts only printings priced on both updates, and its percent chains the moves of each update against the total before it.
+					The total also rises when printings of the set get their first price. The change above and in the table counts only printings priced on both updates, and its percent compares that change with what the printings priced at the end were worth when the period began, or when they got their first price.
 				{:else}
-					The total also rises when printings get their first price, from a new set or an older printing. The change above and in the table counts only printings priced on both updates, and its percent chains the moves of each update against the total before it.
+					The total also rises when printings get their first price, from a new set or an older printing. The change above and in the table counts only printings priced on both updates, and its percent compares that change with what the printings priced at the end were worth when the period began, or when they got their first price.
 				{/if}
 			</p>
 		</section>

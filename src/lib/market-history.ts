@@ -99,33 +99,30 @@ export function pointsInFilter(points: MarketPoint[], filter: Pick<MarketFilter,
 
 const cents = (n: number) => Math.round(n * 100) / 100;
 /**
- * The percent of a run of like-for-like moves, chained day by day: each day's move
- * against the total of the update before it, multiplied up. Dividing the summed
- * moves by the first day's total instead put printings priced later into the
- * numerator but not the denominator: a set with a few early prices showed −135.79 %
- * for a month and +2848.02 % for the next (SOS on the host, 2026-11-01). Chained,
- * a percent never falls below −100 %, and printings priced later neither raise nor
- * bend it. `days[i].moved` is against `days[i - 1]`; `before` is the update before
- * the first counted day. Null without a counted day or a priced day before one.
+ * The percent of a like-for-like change: the change against what the printings
+ * priced at the end were worth at the start, which is the end total minus the
+ * change. A printing priced at the start counts with its price then, one priced
+ * later with its first price, because its first day moves nothing and every later
+ * move is in the change. So the percent always has the sign of the change and
+ * never falls below −100 %. Two earlier formulas did not: the summed moves over the
+ * first day's total put printings priced later into the numerator only (SOS on the
+ * host, 2026-11-01: −135.79 % for April, +2848.02 % for May), and chaining each
+ * update against the total before it weighted a set's early losses on a few
+ * printings above its later gains on hundreds (SOS, 2026-11-02: +€938 beside
+ * −62.15 %). Null without a change or without a positive base.
  */
-function chainedPct(before: MarketPoint, days: MarketPoint[]): number | null {
-	if (!days.length) return null;
-	let factor = 1, prev = before, counted = 0;
-	for (const day of days) {
-		if (prev.value > 0) {
-			factor *= 1 + day.moved / prev.value;
-			counted++;
-		}
-		prev = day;
-	}
-	return counted ? Math.round((factor - 1) * 10000) / 100 : null;
+function changePctOf(change: number | null, end: number): number | null {
+	if (change == null) return null;
+	const start = end - change;
+	return start > 0 ? Math.round(change / start * 10000) / 100 : null;
 }
 
 /**
  * The figures of the days shown. The first day is the baseline, so its own move
  * (against an update outside the view) does not count; the change is like-for-like,
- * as on the homepage, and its percent is chained day by day (`chainedPct()`). `newPrintings` is the net of printings that gained or lost a
- * price, which the change leaves out. Null without a day.
+ * as on the homepage, and its percent is taken against the start value of the
+ * printings priced at the end (`changePctOf()`). `newPrintings` is the net of
+ * printings that gained or lost a price, which the change leaves out. Null without a day.
  */
 export function marketPeriod(points: MarketPoint[]) {
 	if (!points.length) return null;
@@ -138,7 +135,7 @@ export function marketPeriod(points: MarketPoint[]) {
 		value: last.value,
 		printings: last.printings,
 		change,
-		changePct: change == null ? null : chainedPct(first, points.slice(1)),
+		changePct: changePctOf(change, last.value),
 		newPrintings: last.printings - first.printings,
 		high: Math.max(...values),
 		low: Math.min(...values),
@@ -186,7 +183,7 @@ export function marketMonths(points: MarketPoint[]): MarketMonth[] {
 			lastDate: last.date,
 			printings: last.printings,
 			change,
-			changePct: change == null ? null : chainedPct(base, counted),
+			changePct: changePctOf(change, last.value),
 			newPrintings: last.printings - base.printings,
 			high: Math.max(...values),
 			low: Math.min(...values),
