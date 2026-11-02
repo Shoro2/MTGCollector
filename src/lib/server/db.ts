@@ -6,7 +6,7 @@ import { runMigrations, type Migration } from './migrations.js';
 import { SNAPSHOT_INDEX_SQL } from './admin-stats.js';
 import { ensureAvailabilityColumn } from './card-availability.js';
 import { DECKS_SQL, addDeckAuthor, addDeckPublications, addDeckBracket, addDeckReports } from './decks.js';
-import { MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
+import { MARKET_VALUE_SET_SQL, MARKET_VALUE_SQL, updateMarketValue } from './market-value.js';
 import { WATCHLISTS_SQL } from './watchlists.js';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -407,6 +407,14 @@ const MIGRATIONS: Migration[] = [
 		run: (db) => db.exec(MARKET_VALUE_SQL)
 	},
 	{
+		// The same sums per set (the set filter of /market-value). Derived and
+		// re-creatable like 0033; empty here, the first start after it rebuilds both
+		// tables in updateMarketValue() below. It reached the host after 0035, which
+		// the runner allows: it applies every id not yet recorded, in list order.
+		id: '0034_market_value_set_daily',
+		run: (db) => db.exec(MARKET_VALUE_SET_SQL)
+	},
+	{
 		// Price watchlists (/watchlist, src/lib/server/watchlists.ts): a user's named
 		// lists of printings with a finish, an optional target price and a note.
 		// User data: the nightly user-data dump must list watchlists and watchlist_cards.
@@ -453,7 +461,7 @@ export function initDb() {
 
 	runMigrations(sqlite, MIGRATIONS);
 
-	// The daily market value of every printing: the first start after 0033 builds it
+	// The daily market value of every printing: the first start after 0033 (and 0034) builds it
 	// from the whole price history (seconds on the production history), later starts
 	// only check that the latest day is current. A failure must not stop the server.
 	try {

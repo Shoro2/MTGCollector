@@ -3,7 +3,7 @@ import { invalidateNameIndex } from './card-search.js';
 import { availabilityWriter } from './card-availability.js';
 import { updateMarketValue } from './market-value.js';
 import { sqlite } from './db.js';
-import { homeCatalogueCache, priceDataCache, setsCache } from './cache.js';
+import { homeCatalogueCache, marketSetsCache, priceDataCache, setsCache } from './cache.js';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -442,6 +442,7 @@ export async function runPriceUpdate(): Promise<{ updated: number; inserted: num
 		priceDataCache.invalidateAll();
 		homeCatalogueCache.invalidateAll();
 		setsCache.invalidate();
+		marketSetsCache.invalidate();
 
 		try {
 			sqlite.pragma('optimize');

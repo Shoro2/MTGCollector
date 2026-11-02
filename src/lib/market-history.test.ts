@@ -14,7 +14,7 @@ const filterOf = (query: string, currency: 'EUR' | 'USD' = 'EUR') => parseMarket
 
 describe('parseMarketFilter', () => {
 	it('shows everything in the viewer\'s market by default', () => {
-		expect(filterOf('')).toEqual({ currency: 'EUR', range: 'all', view: 'value', from: null, to: null });
+		expect(filterOf('')).toEqual({ currency: 'EUR', set: null, range: 'all', view: 'value', from: null, to: null });
 		expect(filterOf('', 'USD').currency).toBe('USD');
 	});
 
@@ -30,25 +30,37 @@ describe('parseMarketFilter', () => {
 	});
 
 	it('falls back on unknown values', () => {
-		expect(filterOf('range=week&view=pie&currency=GBP', 'USD')).toEqual({ currency: 'USD', range: 'all', view: 'value', from: null, to: null });
+		expect(filterOf('range=week&view=pie&currency=GBP', 'USD')).toEqual({ currency: 'USD', set: null, range: 'all', view: 'value', from: null, to: null });
 		expect(filterOf('currency=usd&view=change')).toMatchObject({ currency: 'USD', view: 'change' });
+	});
+
+	it('reads a set code, in lower case, and keeps it only when the set is known', () => {
+		const sets = new Set(['ltr', 'm10']);
+		const read = (query: string) => parseMarketFilter(new URLSearchParams(query), { currency: 'EUR', today: '2026-11-01', sets });
+		expect(read('set=LTR&range=90d')).toMatchObject({ set: 'ltr', range: '90d' });
+		expect(read('set=xyz').set).toBeNull();
+		expect(read('set=ltr%27--').set).toBeNull();
+		expect(read('set=').set).toBeNull();
+		expect(filterOf('set=m10').set).toBe('m10'); // without a list every well-formed code passes
 	});
 });
 
 describe('marketHref and marketSeo', () => {
-	const base = { currency: 'EUR', range: 'all', view: 'value', from: null, to: null } as const;
+	const base = { currency: 'EUR', set: null, range: 'all', view: 'value', from: null, to: null } as const;
 
 	it('keeps defaults out of the URL, relative to the viewer', () => {
 		expect(marketHref(base, 'EUR')).toBe('/market-value');
 		expect(marketHref(base, 'USD')).toBe('/market-value?currency=EUR');
 		expect(marketHref({ ...base, range: '90d', view: 'change' }, 'EUR')).toBe('/market-value?range=90d&view=change');
 		expect(marketHref({ ...base, range: 'custom', from: '2026-10-01', to: '2026-10-31' }, 'EUR')).toBe('/market-value?from=2026-10-01&to=2026-10-31');
+		expect(marketHref({ ...base, set: 'ltr', range: '30d' }, 'EUR')).toBe('/market-value?set=ltr&range=30d');
 	});
 
 	it('indexes only the page without filters', () => {
 		expect(marketSeo(new URLSearchParams(''))).toEqual({ canonical: 'https://mtg-collector.com/market-value', noindex: false });
 		expect(marketSeo(new URLSearchParams('from=&to='))).toMatchObject({ noindex: false });
 		expect(marketSeo(new URLSearchParams('range=30d&utm_source=x'))).toEqual({ canonical: 'https://mtg-collector.com/market-value?range=30d', noindex: true });
+		expect(marketSeo(new URLSearchParams('set=ltr'))).toEqual({ canonical: 'https://mtg-collector.com/market-value?set=ltr', noindex: true });
 	});
 });
 
@@ -61,8 +73,18 @@ describe('pointsInFilter', () => {
 
 describe('marketPeriod', () => {
 	it('takes the first day as the baseline and compares like for like', () => {
-		expect(marketPeriod(days)).toEqual({ from: '2026-09-29', to: '2026-11-01', value: 1081, printings: 11, change: 53, changePct: 5.3,
+		expect(marketPeriod(days)).toEqual({ from: '2026-09-29', to: '2026-11-01', value: 1081, printings: 11, change: 53, changePct: 5.35,
 			newPrintings: 1, high: 1100, low: 1000, updates: 5 });
+	});
+
+	it('chains the percent day by day, so printings priced later never push it below -100 %', () => {
+		// A set with three early prices (285), then hundreds of printings priced at once,
+		// which fall by 300 the next update: the summed moves are larger than the start.
+		const set = [point('2026-04-04', 285, 3, 0), point('2026-04-10', 1000, 300, -5), point('2026-04-20', 700, 300, -300)];
+		expect(marketPeriod(set)).toMatchObject({ change: -305, changePct: -31.23 });
+		expect(marketMonths(set)[0]).toMatchObject({ change: -305, changePct: -31.23 });
+		// A day before which nothing had a price counts no percent.
+		expect(marketPeriod([point('2026-04-03', 0, 0, 0), point('2026-04-04', 285, 3, 0)])).toMatchObject({ change: 0, changePct: null });
 	});
 
 	it('has no change for one day and nothing without a day', () => {
@@ -75,7 +97,7 @@ describe('marketMonths', () => {
 	it('lists the months newest first with the last value of each', () => {
 		const months = marketMonths(days);
 		expect(months.map(m => m.month)).toEqual(['2026-11', '2026-10', '2026-09']);
-		expect(months[1]).toEqual({ month: '2026-10', value: 1080, lastDate: '2026-10-31', printings: 12, change: 40, changePct: 3.96,
+		expect(months[1]).toEqual({ month: '2026-10', value: 1080, lastDate: '2026-10-31', printings: 12, change: 40, changePct: 4.01,
 			newPrintings: 2, high: 1100, low: 1080, updates: 2 });
 	});
 

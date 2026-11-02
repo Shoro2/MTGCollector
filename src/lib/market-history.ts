@@ -24,6 +24,8 @@ export type MarketView = (typeof MARKET_VIEWS)[number]['id'];
 
 export type MarketFilter = {
 	currency: Currency;
+	/** One set's printings (cards.set_code, lower case), null: every printing. */
+	set: string | null;
 	range: MarketRange;
 	view: MarketView;
 	/** First and last day shown (YYYY-MM-DD), null: no limit. */
@@ -42,15 +44,23 @@ function validDate(value: string | null): string | null {
 	return Number.isFinite(day) && dateOf(day) === value ? value : null;
 }
 
+/** A set code as Scryfall writes them (lower case letters and digits), or null. */
+function setCode(value: string | null): string | null {
+	const code = (value ?? '').trim().toLowerCase();
+	return /^[a-z0-9]{2,8}$/.test(code) ? code : null;
+}
+
 /**
- * The filters from the URL; anything unknown falls back to the default: all days,
- * the market value, `currency` (the viewer's). Dates win over a named range, and
- * reversed dates are swapped.
+ * The filters from the URL; anything unknown falls back to the default: every
+ * printing, all days, the market value, `currency` (the viewer's). Dates win over a
+ * named range, and reversed dates are swapped. A set is kept only when `sets`
+ * knows it.
  */
-export function parseMarketFilter(search: URLSearchParams, { currency, today }: { currency: Currency; today: string }): MarketFilter {
+export function parseMarketFilter(search: URLSearchParams, { currency, today, sets }: { currency: Currency; today: string; sets?: ReadonlySet<string> }): MarketFilter {
 	const asked = (search.get('currency') ?? '').trim().toUpperCase();
 	const view = MARKET_VIEWS.find(v => v.id === search.get('view'))?.id ?? 'value';
-	const base = { currency: isCurrency(asked) ? asked : currency, view };
+	const set = setCode(search.get('set'));
+	const base = { currency: isCurrency(asked) ? asked : currency, set: set && (!sets || sets.has(set)) ? set : null, view };
 	let from = validDate(search.get('from')), to = validDate(search.get('to'));
 	if (from || to) {
 		if (from && to && from > to) [from, to] = [to, from];
@@ -61,8 +71,9 @@ export function parseMarketFilter(search: URLSearchParams, { currency, today }: 
 }
 
 /** The link to the page with these filters; defaults stay out of the URL. */
-export function marketHref(filter: Pick<MarketFilter, 'currency' | 'range' | 'view' | 'from' | 'to'>, viewerCurrency: Currency): string {
+export function marketHref(filter: Pick<MarketFilter, 'currency' | 'set' | 'range' | 'view' | 'from' | 'to'>, viewerCurrency: Currency): string {
 	const params = new URLSearchParams();
+	if (filter.set) params.set('set', filter.set);
 	if (filter.range === 'custom') {
 		if (filter.from) params.set('from', filter.from);
 		if (filter.to) params.set('to', filter.to);
@@ -75,7 +86,7 @@ export function marketHref(filter: Pick<MarketFilter, 'currency' | 'range' | 'vi
 /** Only the page without filters is a landing page; a filtered one keeps its own canonical (as catalogSeo()). */
 export function marketSeo(search: URLSearchParams) {
 	const params = new URLSearchParams();
-	for (const key of ['range', 'from', 'to', 'currency', 'view']) {
+	for (const key of ['set', 'range', 'from', 'to', 'currency', 'view']) {
 		const value = (search.get(key) ?? '').trim();
 		if (value) params.set(key, value);
 	}
@@ -87,12 +98,33 @@ export function pointsInFilter(points: MarketPoint[], filter: Pick<MarketFilter,
 }
 
 const cents = (n: number) => Math.round(n * 100) / 100;
-const percentOf = (change: number, base: number) => base > 0 ? Math.round((change / base) * 10000) / 100 : null;
+/**
+ * The percent of a run of like-for-like moves, chained day by day: each day's move
+ * against the total of the update before it, multiplied up. Dividing the summed
+ * moves by the first day's total instead put printings priced later into the
+ * numerator but not the denominator: a set with a few early prices showed −135.79 %
+ * for a month and +2848.02 % for the next (SOS on the host, 2026-11-01). Chained,
+ * a percent never falls below −100 %, and printings priced later neither raise nor
+ * bend it. `days[i].moved` is against `days[i - 1]`; `before` is the update before
+ * the first counted day. Null without a counted day or a priced day before one.
+ */
+function chainedPct(before: MarketPoint, days: MarketPoint[]): number | null {
+	if (!days.length) return null;
+	let factor = 1, prev = before, counted = 0;
+	for (const day of days) {
+		if (prev.value > 0) {
+			factor *= 1 + day.moved / prev.value;
+			counted++;
+		}
+		prev = day;
+	}
+	return counted ? Math.round((factor - 1) * 10000) / 100 : null;
+}
 
 /**
  * The figures of the days shown. The first day is the baseline, so its own move
  * (against an update outside the view) does not count; the change is like-for-like,
- * as on the homepage. `newPrintings` is the net of printings that gained or lost a
+ * as on the homepage, and its percent is chained day by day (`chainedPct()`). `newPrintings` is the net of printings that gained or lost a
  * price, which the change leaves out. Null without a day.
  */
 export function marketPeriod(points: MarketPoint[]) {
@@ -106,7 +138,7 @@ export function marketPeriod(points: MarketPoint[]) {
 		value: last.value,
 		printings: last.printings,
 		change,
-		changePct: change == null ? null : percentOf(change, first.value),
+		changePct: change == null ? null : chainedPct(first, points.slice(1)),
 		newPrintings: last.printings - first.printings,
 		high: Math.max(...values),
 		low: Math.min(...values),
@@ -154,7 +186,7 @@ export function marketMonths(points: MarketPoint[]): MarketMonth[] {
 			lastDate: last.date,
 			printings: last.printings,
 			change,
-			changePct: change == null ? null : percentOf(change, base.value),
+			changePct: change == null ? null : chainedPct(base, counted),
 			newPrintings: last.printings - base.printings,
 			high: Math.max(...values),
 			low: Math.min(...values),

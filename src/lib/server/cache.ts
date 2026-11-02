@@ -3,7 +3,7 @@ import { getUsdToEurRate } from './exchange-rate.js';
 import { parseCurrency } from '../currency.js';
 import { getPriceData } from './price-data.js';
 import { priceMoverRows, printingPriceSample } from './home-data.js';
-import { marketValueHistory } from './market-value.js';
+import { marketValueHistory, marketValueSets } from './market-value.js';
 import { pickMovers } from '../home.js';
 
 export function createCache<T>(fetcher: () => T, ttlMs: number) {
@@ -117,6 +117,10 @@ export const setsCache = createCache(
 		.all() as Array<{ set_code: string; set_name: string }>,
 	60 * 60 * 1000 // 1 hour
 );
+
+// The sets the /market-value set filter offers (those with a stored day); a new
+// set appears after the price update that first prices it.
+export const marketSetsCache = createCache(() => marketValueSets(sqlite), 60 * 60 * 1000);
 
 // Mutations invalidate this server cache; browser responses must not outlive it.
 // The user's display currency is read with the data; /api/settings drops the entry
