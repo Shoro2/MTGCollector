@@ -46,8 +46,8 @@
 	{@const visitor = data.visitor}
 	<div class="space-y-8">
 		<section class="mx-auto flex max-w-3xl flex-col items-center gap-3.5 pt-3 text-center md:pt-8">
-			<p class="eyebrow text-[var(--color-accent)]">Free for Magic: The Gathering players</p>
-			<h1 class="text-[1.75rem] font-semibold leading-tight text-[var(--color-text-strong)] md:text-[2.5rem]">
+			<p class="eyebrow">Free for Magic: The Gathering players</p>
+			<h1 class="text-[1.75rem] font-medium leading-tight text-[var(--color-text-strong)] md:text-[2.5rem]">
 				Scan, look up and track your Magic cards
 			</h1>
 			<p class="max-w-xl text-base text-[var(--color-text-muted)]">MTG Collector is free to use. Pick where you want to start.</p>
@@ -75,7 +75,7 @@
 					{#each visitor.sample as printing}
 						<span class="flex min-h-[1.375rem] items-center justify-between gap-2 text-xs">
 							<span class="truncate text-[var(--color-text)]">{printing.set_name}</span>
-							<span class="price text-[var(--color-accent)]">{euro(printing.price)}</span>
+							<span class="price text-[var(--color-text-strong)]">{euro(printing.price)}</span>
 						</span>
 					{/each}
 				</div>
@@ -144,10 +144,10 @@
 	<div class="space-y-5">
 		<div class="page-heading">
 			<div>
-				<h1 class="text-[1.375rem] font-semibold text-[var(--color-text-strong)] md:text-[1.625rem]">
-					Welcome back{data.user?.name ? `, ${data.user.name}` : ''}
+				<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)] md:text-[1.625rem]">
+					Your collection
 				</h1>
-				<p class="mt-1 text-sm text-[var(--color-text-muted)]">Your collection with today's prices.</p>
+				<p class="mt-1 text-sm text-[var(--color-text-muted)]">Value, profit and price moves as of today</p>
 			</div>
 			<div class="flex flex-wrap gap-2">
 				<a href="/scan" class="btn btn-primary min-h-[2.75rem] px-4">Scan cards</a>
@@ -286,7 +286,7 @@
 
 {#if data.catalogueEmpty}
 	<div class="panel mt-5 p-6 text-center">
-		<h2 class="text-lg font-semibold">Getting Started</h2>
+		<h2 class="text-lg font-semibold">Getting started</h2>
 		<p class="mt-2 text-sm text-[var(--color-text-muted)]">
 			Import the MTG card database from Scryfall to get started.
 		</p>
@@ -319,7 +319,7 @@
 		border-radius: 6px;
 		padding: 0.125rem 0.5rem;
 		font-size: 0.6875rem;
-		font-weight: 600;
+		font-weight: 500;
 	}
 	.scan-chip-ok {
 		color: var(--color-success);

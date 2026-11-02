@@ -94,9 +94,9 @@ try {
 	await page.getByRole('button', { name: 'Reset scan settings', exact: true }).click();
 	await card.getByRole('button', { name: 'Add', exact: true }).click();
 	await page.getByRole('alert').filter({ hasText: 'Temporary fixture failure' }).waitFor();
-	check(await card.getByText('Added!', { exact: true }).count() === 0, 'failed save is visible and remains retryable');
+	check(await card.getByText('Added', { exact: true }).count() === 0, 'failed save is visible and remains retryable');
 	await card.getByRole('button', { name: 'Add', exact: true }).evaluate(el => { el.click(); el.click(); });
-	await card.getByText('Added!', { exact: true }).waitFor();
+	await card.getByText('Added', { exact: true }).waitFor();
 	check(writes.length === 1, 'rapid repeated Add produces one request');
 	check(writes[0].language === 'de' && writes[0].foil === true && writes[0].condition === 'lightly_played' && writes[0].location === 'Box A',
 		'save uses captured settings even after the session settings changed');
@@ -104,7 +104,7 @@ try {
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'scan review fits mobile width');
 	await scan('synth-single.jpg');
 	await card.getByRole('button', { name: 'Add', exact: true }).click();
-	await card.getByText('Added!', { exact: true }).waitFor();
+	await card.getByText('Added', { exact: true }).waitFor();
 	check(writes.length === 2 && writes[1].cardId === writes[0].cardId, 'a second capture of the same printing adds another copy');
 	check(writes[1].location === '' && writes[1].condition === 'near_mint', 'subsequent capture uses the reset defaults');
 	await page.getByLabel('Set restriction', { exact: true }).selectOption('ori');

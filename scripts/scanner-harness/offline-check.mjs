@@ -142,7 +142,7 @@ try {
 	await stopServer();
 	await context.setOffline(true);
 	await page.reload({ waitUntil: 'load' });
-	expect(await page.getByRole('heading', { name: 'MTG Card Scanner' }).isVisible(), 'offline, /scan still opens');
+	expect(await page.getByRole('heading', { name: 'MTG card scanner' }).isVisible(), 'offline, /scan still opens');
 	await page.waitForSelector('[data-offline-notice][data-online="0"]', { timeout: 10000 });
 	expect(await page.getByText('You are offline.').isVisible(), 'offline notice is shown');
 	const other = await context.newPage();

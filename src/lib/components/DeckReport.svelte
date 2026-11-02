@@ -64,7 +64,7 @@
 			<p class="text-xs text-[var(--color-text-muted)]">
 				When several players report a deck, its description and author name are hidden and it leaves the public deck list. Your report is stored with your account and never shown to the deck's owner.
 			</p>
-			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
+			{#if message}<p role="alert" class="text-sm text-[var(--color-danger)]">{message}</p>{/if}
 			<div class="flex justify-end">
 				<button type="submit" disabled={busy || !reason} class="btn btn-primary">{busy ? 'Sending…' : 'Send report'}</button>
 			</div>

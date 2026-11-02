@@ -13,7 +13,7 @@
 	--color-text: #e7edf5;
 	--color-text-strong: #f3f7fb;
 	--color-text-muted: #8a97a8;
-	--color-text-faint: #5d6878;
+	--color-text-faint: #808c9e;
 	--color-primary: #6fb2ff;
 	--color-primary-hover: #9ac9ff;
 	--color-primary-button: #2f6fe0;
@@ -89,9 +89,7 @@ html[data-ui-scale='100'] {
 
 body {
 	min-height: 100vh;
-	background:
-		radial-gradient(circle at top left, rgba(47, 111, 224, 0.11), transparent 34rem),
-		linear-gradient(180deg, #0a0e15 0%, #090c12 100%);
+	background: var(--color-bg);
 	color: var(--color-text);
 	font-family: var(--font-ui);
 	font-size: 0.875rem;
@@ -167,10 +165,8 @@ thead {
 
 th {
 	color: var(--color-text-muted);
-	font-size: 0.6875rem;
-	font-weight: 700;
-	letter-spacing: 0.05em;
-	text-transform: uppercase;
+	font-size: 0.75rem;
+	font-weight: 500;
 }
 
 td,
@@ -209,10 +205,8 @@ tbody tr:hover {
 
 .eyebrow {
 	color: var(--color-text-muted);
-	font-size: 0.68rem;
-	font-weight: 700;
-	letter-spacing: 0.07em;
-	text-transform: uppercase;
+	font-size: 0.75rem;
+	font-weight: 500;
 }
 
 .panel {
@@ -241,18 +235,25 @@ tbody tr:hover {
 
 .kpi-label {
 	color: var(--color-text-muted);
-	font-size: 0.68rem;
-	font-weight: 700;
-	letter-spacing: 0.07em;
-	text-transform: uppercase;
+	font-size: 0.75rem;
+	font-weight: 500;
 }
 
 .kpi-value {
 	margin-top: 0.35rem;
-	color: var(--color-text-strong);
-	font-size: clamp(1.2rem, 2.5vw, 1.55rem);
-	font-weight: 700;
+	font-weight: 500;
 	line-height: 1.15;
+}
+
+/* Colour and size sit in a layer so a utility on the element wins: unlayered, this rule beat
+   every text-[var(--color-accent)], text-[var(--color-success)] and text-base on a kpi-value,
+   and the key figure, the profit and the deck's legality all rendered in the default white
+   (found in the unslop review of 2026-11-02). */
+@layer components {
+	.kpi-value {
+		color: var(--color-text-strong);
+		font-size: clamp(1.2rem, 2.5vw, 1.55rem);
+	}
 }
 
 .kpi-subtle {
@@ -285,13 +286,12 @@ tbody tr:hover {
 	background: transparent;
 	color: var(--color-text);
 	font-size: 0.82rem;
-	font-weight: 600;
+	font-weight: 500;
 	text-decoration: none;
 	transition:
 		background-color 140ms ease,
 		border-color 140ms ease,
-		color 140ms ease,
-		transform 140ms ease;
+		color 140ms ease;
 }
 
 .btn:hover {
@@ -321,6 +321,49 @@ tbody tr:hover {
 	border-color: rgba(240, 104, 109, 0.65);
 }
 
+/* The chosen option of a switch, a sort or a tab (unslop review 2026-11-02): a surface step
+   with a hairline, never the blue fill of the one primary action. Mark it with aria-pressed
+   or aria-current as well, for screen readers and the browser checks. */
+.btn-on,
+.btn-on:hover {
+	background: var(--color-surface-overlay);
+	border-color: var(--color-border-strong);
+	color: var(--color-text-strong);
+}
+
+/* A row of options that belong together: .segmented holds them, .segmented-option is each
+   option, .segmented-on the chosen one. In the components layer, so the layout utilities
+   beside them (flex, grid, gap, p-0.5) still decide the layout. */
+@layer components {
+	.segmented {
+		padding: 0.25rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-bg-elevated);
+	}
+
+	.segmented-option {
+		border: 1px solid transparent;
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		transition:
+			background-color 140ms ease,
+			border-color 140ms ease,
+			color 140ms ease;
+	}
+
+	.segmented-option:hover {
+		color: var(--color-text);
+	}
+}
+
+.segmented-on,
+.segmented-on:hover {
+	background: var(--color-surface-overlay);
+	border-color: var(--color-border-strong);
+	color: var(--color-text-strong);
+}
+
 /* A disabled button must look disabled: the deck dialog's Create stayed bright blue while it
    waited for the captcha (2026-10-29). */
 .btn:disabled {
@@ -347,24 +390,24 @@ tbody tr:hover {
 	background: rgba(255, 255, 255, 0.04);
 	color: var(--color-text-muted);
 	font-size: 0.75rem;
-	font-weight: 600;
+	font-weight: 500;
 }
 
 .brand-mark {
-	background: linear-gradient(150deg, #1d2738, #11161f);
+	background: var(--color-surface-raised);
 	border: 1px solid var(--color-border-strong);
 	box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
 }
 
 .user-initials {
-	background: linear-gradient(150deg, var(--color-primary-button), #1d3f86);
+	background: var(--color-primary-button);
 	color: #fff;
 }
 
 .set-code {
 	font-family: var(--font-data);
 	font-size: 0.7rem;
-	font-weight: 700;
+	font-weight: 500;
 	letter-spacing: 0.04em;
 	text-transform: uppercase;
 }
@@ -442,22 +485,20 @@ tbody tr:hover {
 
 .rarity-uncommon {
 	background: var(--rarity-uncommon);
-	box-shadow: 0 0 8px rgba(182, 194, 210, 0.35);
 }
 
 .rarity-rare {
 	background: var(--rarity-rare);
-	box-shadow: 0 0 8px rgba(217, 169, 75, 0.42);
 }
 
 .rarity-mythic {
 	background: var(--rarity-mythic);
-	box-shadow: 0 0 8px rgba(231, 97, 58, 0.48);
 }
 
 .foil-chip {
 	border-color: rgba(185, 214, 255, 0.38);
-	background: linear-gradient(110deg, rgba(185, 214, 255, 0.16), rgba(217, 184, 255, 0.12), rgba(255, 214, 184, 0.14));
+	/* The one hue gradient the interface keeps: it stands for the foil sheen of the card itself. */
+	background: linear-gradient(110deg, rgba(185, 214, 255, 0.08), rgba(217, 184, 255, 0.06), rgba(255, 214, 184, 0.07));
 	color: #d6e5ff;
 }
 
@@ -467,16 +508,13 @@ tbody tr:hover {
 	border: 1px solid var(--color-border);
 	border-radius: 10px;
 	transition:
-		transform 160ms ease,
 		border-color 160ms ease,
-		box-shadow 160ms ease,
 		background-color 160ms ease;
 }
 
 .card-shell:hover {
-	transform: translateY(-3px);
 	border-color: rgba(255, 255, 255, 0.18);
-	box-shadow: 0 12px 26px rgba(0, 0, 0, 0.38);
+	background: var(--color-surface-hover);
 }
 
 .card-shell-owned {
@@ -489,10 +527,8 @@ tbody tr:hover {
 	right: 0.5rem;
 	border-radius: var(--radius-sm);
 	padding: 0.25rem 0.5rem;
-	font-size: 0.625rem;
-	font-weight: 800;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+	font-size: 0.6875rem;
+	font-weight: 500;
 }
 
 .status-badge-owned {
@@ -512,9 +548,7 @@ tbody tr:hover {
 	align-items: center;
 	justify-content: center;
 	aspect-ratio: 488 / 680;
-	background:
-		linear-gradient(160deg, rgba(47, 111, 224, 0.13), transparent),
-		var(--color-bg-elevated);
+	background: var(--color-bg-elevated);
 	color: var(--color-text-muted);
 	text-align: center;
 }

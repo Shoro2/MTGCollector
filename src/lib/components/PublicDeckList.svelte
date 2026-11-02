@@ -35,7 +35,7 @@
 
 <div class="toolbar flex-wrap">
 	<form onsubmit={(e) => { e.preventDefault(); navigate({ q: search.trim() }); }} class="flex min-w-0 basis-full gap-2 sm:basis-0 sm:flex-1">
-		<input type="search" bind:value={search} placeholder="Search deck names, authors or commanders…" aria-label="Search public decks" class="control min-w-0 flex-1 px-3 text-sm" />
+		<input type="search" bind:value={search} placeholder="Search deck names, authors or commanders" aria-label="Search public decks" class="control min-w-0 flex-1 px-3 text-sm" />
 		<button type="submit" class="btn">Search</button>
 	</form>
 	<label class="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
@@ -61,7 +61,7 @@
 {#if list.decks.length}
 	<div class="panel overflow-hidden">
 		<table class="w-full text-sm" data-public-decks>
-			<thead class="text-left text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+			<thead class="text-left text-xs font-medium text-[var(--color-text-muted)]">
 				<tr class="border-b border-[var(--color-border)]">
 					<th class="px-4 py-3">Deck</th>
 					<th class="hidden px-3 py-3 sm:table-cell">Colors</th>
@@ -86,7 +86,7 @@
 						<td class="hidden px-3 py-3 sm:table-cell"><ColorPips colors={deck.colors} includeColorless /></td>
 						<td class="hidden px-3 py-3 text-[var(--color-text-muted)] md:table-cell">{deckFormat(deck.format).label}</td>
 						<td class="tabular hidden px-3 py-3 text-right lg:table-cell">{deck.cards}{#if deck.sideboard}<span class="text-[var(--color-text-faint)]"> + {deck.sideboard}</span>{/if}</td>
-						<td class="price px-3 py-3 text-right text-[var(--color-accent)]">{formatPrice(deck.value)}</td>
+						<td class="price px-3 py-3 text-right text-[var(--color-text-strong)]">{formatPrice(deck.value)}</td>
 						<td class="hidden px-4 py-3 text-right text-[var(--color-text-muted)] sm:table-cell" title={new Date(deck.updated_at).toLocaleString()}>{timeAgo(deck.updated_at)}</td>
 					</tr>
 				{/each}

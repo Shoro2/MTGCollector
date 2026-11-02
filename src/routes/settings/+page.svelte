@@ -76,19 +76,18 @@
 <div class="mx-auto max-w-2xl space-y-5">
 	<div class="page-heading">
 		<div>
-			<p class="eyebrow">Account</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Settings</h1>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">Settings</h1>
 		</div>
 	</div>
 
 	<!-- Account Info -->
 	<div class="panel p-6">
-		<h2 class="text-lg font-semibold mb-4">Account Information</h2>
+		<h2 class="text-lg font-semibold mb-4">Account</h2>
 		<div class="flex items-center gap-4 mb-4">
 			{#if data.user?.avatarUrl}
 				<img src={data.user.avatarUrl} alt="" class="w-16 h-16 rounded-full" referrerpolicy="no-referrer" />
 			{:else}
-				<div class="w-16 h-16 rounded-full bg-[var(--color-border)] flex items-center justify-center text-2xl font-bold text-[var(--color-text-muted)]">
+				<div class="w-16 h-16 rounded-full bg-[var(--color-border)] flex items-center justify-center text-2xl font-medium text-[var(--color-text-muted)]">
 					{data.user?.name?.charAt(0) ?? '?'}
 				</div>
 			{/if}
@@ -112,7 +111,7 @@
 			{#each CURRENCIES as currency (currency)}
 				<label
 					class="flex min-w-0 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors {shownCurrency === currency
-						? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
+						? 'border-[var(--color-border-strong)] bg-[var(--color-surface-overlay)]'
 						: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}"
 				>
 					<input
@@ -136,47 +135,47 @@
 			with its own symbol. Totals convert such prices at the day's exchange rate. Purchase prices keep the currency you entered them in
 			and are converted only where they are added up.
 		</p>
-		{#if currencyMessage}<p class="mt-2 text-sm text-green-400" role="status">{currencyMessage}</p>{/if}
-		{#if currencyError}<p class="mt-2 text-sm text-red-400" role="alert">{currencyError}</p>{/if}
+		{#if currencyMessage}<p class="mt-2 text-sm text-[var(--color-success)]" role="status">{currencyMessage}</p>{/if}
+		{#if currencyError}<p class="mt-2 text-sm text-[var(--color-danger)]" role="alert">{currencyError}</p>{/if}
 	</div>
 
 	<!-- Collection Stats -->
 	<div class="panel p-6">
-		<h2 class="text-lg font-semibold mb-4">Collection Statistics</h2>
+		<h2 class="text-lg font-semibold mb-4">Collection statistics</h2>
 		<div class="grid grid-cols-2 gap-3 sm:grid-cols-5 sm:gap-4">
 			<div class="text-center min-w-0">
-				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.collectionCount}</p>
+				<p class="text-xl sm:text-2xl font-medium tabular text-[var(--color-text-strong)] break-words">{data.collectionCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Cards in Collection</p>
 			</div>
 			<div class="text-center min-w-0">
-				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.wishlistCount}</p>
+				<p class="text-xl sm:text-2xl font-medium tabular text-[var(--color-text-strong)] break-words">{data.wishlistCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Wishlist</p>
 			</div>
 			<div class="text-center min-w-0">
-				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.deckCount}</p>
+				<p class="text-xl sm:text-2xl font-medium tabular text-[var(--color-text-strong)] break-words">{data.deckCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Decks</p>
 			</div>
 			<div class="text-center min-w-0">
-				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words" data-watch-count>{data.watchCount}</p>
+				<p class="text-xl sm:text-2xl font-medium tabular text-[var(--color-text-strong)] break-words" data-watch-count>{data.watchCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Watched</p>
 			</div>
 			<div class="text-center min-w-0">
-				<p class="text-xl sm:text-2xl font-bold text-[var(--color-accent)] break-words">{data.tagCount}</p>
+				<p class="text-xl sm:text-2xl font-medium tabular text-[var(--color-text-strong)] break-words">{data.tagCount}</p>
 				<p class="text-xs text-[var(--color-text-muted)]">Tags</p>
 			</div>
 		</div>
 	</div>
 
 	<!-- Delete Account -->
-	<div class="bg-[var(--color-surface)] rounded-lg border border-red-500/30 p-6">
-		<h2 class="text-lg font-semibold text-red-400 mb-2">Delete Account</h2>
+	<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-danger)]/30 p-6">
+		<h2 class="text-lg font-semibold text-[var(--color-danger)] mb-2">Delete account</h2>
 		<p class="text-sm text-[var(--color-text-muted)] mb-4">
 			If you delete your account, all your data will be permanently removed:
 			collection, wishlist, decks, tags, and settings. This action cannot be undone.
 		</p>
 		<button
 			onclick={() => { showDeleteDialog = true; deleteConfirmText = ''; deleteError = ''; }}
-			class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+			class="btn btn-danger"
 		>
 			Delete Account
 		</button>
@@ -188,7 +187,7 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
 	<div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onclick={(e) => { if (e.target === e.currentTarget) showDeleteDialog = false; }} role="dialog" aria-modal="true" aria-label="Confirm account deletion">
 		<div class="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-6 max-w-md w-full">
-			<h3 class="text-lg font-semibold text-red-400 mb-3">Permanently delete account?</h3>
+			<h3 class="text-lg font-semibold text-[var(--color-danger)] mb-3">Permanently delete account?</h3>
 			<p class="text-sm text-[var(--color-text-muted)] mb-4">
 				The following data will be permanently deleted:
 			</p>
@@ -211,7 +210,7 @@
 				/>
 			</label>
 			{#if deleteError}
-				<p class="text-sm text-red-400 mb-3">{deleteError}</p>
+				<p class="text-sm text-[var(--color-danger)] mb-3">{deleteError}</p>
 			{/if}
 			<div class="flex gap-3 justify-end">
 				<button
@@ -223,7 +222,7 @@
 				<button
 					onclick={deleteAccount}
 					disabled={!canDelete || deleting}
-					class="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+					class="btn btn-danger"
 				>
 					{deleting ? 'Deleting...' : 'Delete permanently'}
 				</button>

@@ -92,7 +92,7 @@
 
 <div bind:this={element} data-turnstile-widget class="min-h-[65px]"></div>
 {#if failed}
-	<p role="alert" class="text-sm text-red-400">
+	<p role="alert" class="text-sm text-[var(--color-danger)]">
 		The check "Verify you are human" could not be loaded. Allow challenges.cloudflare.com in your browser or blocker, then reload the page.
 	</p>
 {/if}

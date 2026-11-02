@@ -5,7 +5,7 @@
 </script>
 
 {#if issues.length}
-	<div class="rounded-lg border border-amber-500/50 p-3 text-sm">
+	<div class="rounded-lg border border-[var(--color-warning)]/50 p-3 text-sm">
 		<p class="font-medium">{issues.length} {issues.length === 1 ? 'line was' : 'lines were'} not imported:</p>
 		<ul class="mt-2 max-h-48 space-y-1 overflow-y-auto">
 			{#each issues as issue (issue.line)}<li>Line {issue.line}: <span class="font-mono text-xs">{issue.text}</span>. {issue.message}</li>{/each}

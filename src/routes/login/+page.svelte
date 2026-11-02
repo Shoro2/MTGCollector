@@ -19,12 +19,12 @@
 					<span class="h-1.5 w-1.5 rounded-full bg-[var(--pip-r)]"></span>
 				</span>
 			</div>
-			<h1 class="mb-2 text-2xl font-semibold text-[var(--color-text-strong)]">MTG Collector</h1>
+			<h1 class="mb-2 text-2xl font-medium text-[var(--color-text-strong)]">MTG Collector</h1>
 			<p class="text-sm text-[var(--color-text-muted)]">Track your Magic: The Gathering collection</p>
 		</div>
 
 		{#if error}
-			<div class="bg-red-900/30 border border-red-800 rounded-lg p-3 text-sm text-red-400">
+			<div class="bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/40 rounded-lg p-3 text-sm text-[var(--color-danger)]">
 				{error === 'invalid_state' ? 'Login expired. Please try again.' : 'Authentication failed. Please try again.'}
 			</div>
 		{/if}

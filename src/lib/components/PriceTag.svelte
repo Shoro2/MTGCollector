@@ -17,7 +17,7 @@
 {#if shown}
 	<span class={className}>
 		{shown.text}{#if shown.foil}<span
-				class="foil-chip ml-1 inline-block rounded border px-1 align-middle text-[0.6rem] font-bold uppercase leading-4 tracking-wide"
+				class="foil-chip ml-1 inline-block rounded border px-1 align-middle text-[0.6875rem] font-medium leading-4"
 				title="Only available as foil">Foil</span
 			>{/if}
 	</span>

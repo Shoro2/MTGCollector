@@ -74,13 +74,13 @@ try {
 	await page.getByText('War Horn', { exact: true }).first().click();
 	await page.getByLabel('Proxy (not counted in value)', { exact: true }).check();
 	await page.getByRole('button', { name: 'Save', exact: true }).click();
-	await page.getByText('PROXY', { exact: true }).waitFor();
+	await page.getByText('Proxy', { exact: true }).waitFor();
 	check(db.prepare("SELECT proxy FROM collection_cards WHERE user_id='owner' AND location='Box B'").get().proxy === 1, 'edit dialog marks an entry as proxy');
 	check(db.prepare("SELECT proxy FROM collection_cards WHERE user_id='owner' AND location='Box A'").get().proxy === 0, 'other entries stay real cards');
 	const marked = db.prepare("SELECT quantity,location,purchase_price,added_at,proxy FROM collection_cards WHERE user_id='owner' AND card_id='horn' ORDER BY location").all();
 	await page.goto(origin + '/collection');
-	check(await page.locator('.kpi-card', { hasText: 'Total Value' }).locator('.kpi-value').innerText() === '€10.00', 'collection value leaves proxies out');
-	check((await page.locator('.kpi-card', { hasText: 'Total Cards' }).innerText()).includes('incl. 2 proxies'), 'card count includes proxies');
+	check(await page.locator('.kpi-card', { hasText: 'Total value' }).locator('.kpi-value').innerText() === '€10.00', 'collection value leaves proxies out');
+	check((await page.locator('.kpi-card', { hasText: 'Total cards' }).innerText()).includes('incl. 2 proxies'), 'card count includes proxies');
 	const priceData = await (await context.request.get(origin + '/api/prices/data')).json();
 	check(priceData.stats.totalValue === 10 && priceData.stats.totalCards === 4 && priceData.proxyCopies === 2, 'price statistics count proxies as cards, not as value');
 	await page.getByLabel('Proxy filter', { exact: true }).selectOption('only');
@@ -93,7 +93,7 @@ try {
 		moxfieldRows.some(row => row.startsWith('"2","2","War Horn"') && row.includes('"False","False"')), 'Moxfield export marks proxies and keeps them off the tradelist');
 	await page.goto(origin + '/');
 	check(await page.locator('.kpi-value', { hasText: '€10.00' }).count() === 1, 'homepage value leaves proxies out');
-	check((await page.getByRole('heading', { level: 1 }).innerText()).startsWith('Welcome back, Fixture'), 'signed in, the homepage is the dashboard');
+	check((await page.getByRole('heading', { level: 1 }).innerText()) === 'Your collection', 'signed in, the homepage is the dashboard');
 	check((await page.locator('.kpi-card', { hasText: 'Cards' }).first().innerText()).includes('2 of them proxies'), 'dashboard counts proxies as cards');
 	check((await page.locator('.kpi-card', { hasText: 'Profit / loss' }).innerText()).includes('+€6.00') &&
 		(await page.locator('.kpi-card', { hasText: 'Profit / loss' }).innerText()).includes('+150.0% on what you paid'), 'dashboard profit matches the prices page');

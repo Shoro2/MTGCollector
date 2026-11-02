@@ -105,7 +105,7 @@
 
 <div class="space-y-8">
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold">Admin Dashboard</h1>
+		<h1 class="text-2xl font-medium">Admin</h1>
 		<span class="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface)] px-3 py-1 rounded-full border border-[var(--color-border)]">Admin</span>
 	</div>
 
@@ -174,19 +174,19 @@
 				disabled={updating}
 				class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50"
 			>
-				{updating ? 'Updating...' : 'Trigger Price Update'}
+				{updating ? 'Updating' : 'Trigger price update'}
 			</button>
 			<button
 				onclick={cleanupSessions}
 				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors"
 			>
-				Cleanup Expired Sessions
+				Clean up expired sessions
 			</button>
 		</div>
 		<p class="text-xs text-[var(--color-text-muted)] mt-3">
 			Last price update: {data.priceStatus.lastUpdate ? formatDate(data.priceStatus.lastUpdate) : 'Never'}
 			{#if data.priceStatus.inProgress}
-				— <span class="text-yellow-400">
+				— <span class="text-[var(--color-warning)]">
 					Update in progress{#if data.priceStatus.runningSinceMs !== null} (running for {Math.round(data.priceStatus.runningSinceMs / 60000)} min){/if}
 				</span>
 			{/if}
@@ -196,9 +196,9 @@
 	<!-- Contact Messages -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
 		<div class="flex items-center justify-between mb-4">
-			<h2 class="text-lg font-semibold">Contact Messages</h2>
+			<h2 class="text-lg font-semibold">Contact messages</h2>
 			{#if data.unhandledContactCount > 0}
-				<span class="text-xs bg-yellow-900/40 text-yellow-300 px-2 py-1 rounded-full border border-yellow-700/50">
+				<span class="text-xs bg-[var(--color-warning)]/10 text-[var(--color-warning)] px-2 py-1 rounded-full border border-[var(--color-warning)]/50">
 					{data.unhandledContactCount} unhandled
 				</span>
 			{/if}
@@ -212,7 +212,7 @@
 						<summary class="px-4 py-3 cursor-pointer flex items-center justify-between gap-3 hover:bg-[var(--color-surface-hover)]">
 							<div class="flex items-center gap-3 min-w-0">
 								{#if !msg.handled}
-									<span class="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0"></span>
+									<span class="w-2 h-2 rounded-full bg-[var(--color-warning)] flex-shrink-0"></span>
 								{/if}
 								<span class="font-medium truncate">{msg.name}</span>
 								<span class="text-xs text-[var(--color-text-muted)] truncate">&lt;{msg.email}&gt;</span>
@@ -239,7 +239,7 @@
 								</button>
 								<button
 									onclick={() => deleteMessage(msg.id)}
-									class="text-xs bg-red-900/30 hover:bg-red-900/50 border border-red-700/50 text-red-300 px-3 py-1.5 rounded transition-colors"
+									class="text-xs bg-[var(--color-danger)]/10 hover:bg-[var(--color-danger)]/10 border border-[var(--color-danger)]/50 text-[var(--color-danger)] px-3 py-1.5 rounded transition-colors"
 								>
 									Delete
 								</button>
@@ -253,14 +253,14 @@
 
 	<!-- Reported decks: three reports hide a deck by themselves; restoring is the only action. -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]" data-reported-decks>
-		<h2 class="text-lg font-semibold mb-1">Reported Decks</h2>
+		<h2 class="text-lg font-semibold mb-1">Reported decks</h2>
 		<p class="mb-4 text-xs text-[var(--color-text-muted)]">A deck reported by three accounts is hidden automatically (no description for others, not in the public list). Restore clears its reports.</p>
 		{#if data.reportedDecks.length === 0}
 			<p class="text-sm text-[var(--color-text-muted)]">No reports.</p>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
-					<thead class="text-left text-xs uppercase text-[var(--color-text-muted)]">
+					<thead class="text-left text-xs font-medium text-[var(--color-text-muted)]">
 						<tr><th class="py-2 pr-3">Deck</th><th class="py-2 pr-3">Reports</th><th class="py-2 pr-3">State</th><th class="py-2 pr-3">Last report</th><th></th></tr>
 					</thead>
 					<tbody>
@@ -283,23 +283,23 @@
 
 	<!-- DB Overview -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-		<h2 class="text-lg font-semibold mb-4">Database Overview</h2>
+		<h2 class="text-lg font-semibold mb-4">Database overview</h2>
 		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">DB + WAL Size</p>
-				<p class="text-lg sm:text-xl font-bold break-words">{data.dbStats.dbSizeMB} MiB</p>
+				<p class="text-lg sm:text-xl font-medium break-words">{data.dbStats.dbSizeMB} MiB</p>
 			</div>
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Catalogue Printings</p>
-				<p class="text-lg sm:text-xl font-bold break-words">{formatNum(data.dbStats.cardCount)}</p>
+				<p class="text-xs text-[var(--color-text-muted)]">Catalogue printings</p>
+				<p class="text-lg sm:text-xl font-medium break-words">{formatNum(data.dbStats.cardCount)}</p>
 			</div>
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
-				<p class="text-xs text-[var(--color-text-muted)]">Price History</p>
-				<p class="text-lg sm:text-xl font-bold break-words">{formatNum(data.dbStats.priceHistoryCount)}</p>
+				<p class="text-xs text-[var(--color-text-muted)]">Price history</p>
+				<p class="text-lg sm:text-xl font-medium break-words">{formatNum(data.dbStats.priceHistoryCount)}</p>
 			</div>
 			<div class="bg-[var(--color-bg)] rounded-lg p-3 min-w-0">
 				<p class="text-xs text-[var(--color-text-muted)]">Users</p>
-				<p class="text-lg sm:text-xl font-bold break-words">{data.dbStats.userCount}</p>
+				<p class="text-lg sm:text-xl font-medium break-words">{data.dbStats.userCount}</p>
 			</div>
 		</div>
 
@@ -334,14 +334,14 @@
 	<!-- Recent Snapshots -->
 	{#if data.recentSnapshots.length > 0}
 		<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-			<h2 class="text-lg font-semibold mb-4">Recent Price Snapshots</h2>
+			<h2 class="text-lg font-semibold mb-4">Recent price snapshots</h2>
 			<p class="text-xs text-[var(--color-text-muted)] mb-3">New or changed prices only, grouped by UTC date. Each printing is counted once across languages; this is not the number of cards checked by an update.</p>
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
 					<thead>
 						<tr class="border-b border-[var(--color-border)]">
 							<th class="text-left py-2 px-3 text-[var(--color-text-muted)] font-medium">Date</th>
-							<th class="text-right py-2 px-3 text-[var(--color-text-muted)] font-medium">Cards Snapshotted</th>
+							<th class="text-right py-2 px-3 text-[var(--color-text-muted)] font-medium">Cards snapshotted</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -381,15 +381,15 @@
 					</div>
 					<div class="grid grid-cols-3 gap-3 sm:gap-6 text-center text-sm md:ml-auto">
 						<div>
-							<p class="font-bold">{user.collection_count}</p>
+							<p class="font-medium">{user.collection_count}</p>
 							<p class="text-xs text-[var(--color-text-muted)]">Printings</p>
 						</div>
 						<div>
-							<p class="font-bold">{user.total_cards}</p>
+							<p class="font-medium">{user.total_cards}</p>
 							<p class="text-xs text-[var(--color-text-muted)]">Cards</p>
 						</div>
 						<div>
-							<p class="font-bold">{user.wishlist_count}</p>
+							<p class="font-medium">{user.wishlist_count}</p>
 							<p class="text-xs text-[var(--color-text-muted)]">Wishlist</p>
 						</div>
 					</div>
@@ -423,7 +423,7 @@
 
 	<!-- Top Sets -->
 	<div class="bg-[var(--color-surface)] rounded-lg p-6 border border-[var(--color-border)]">
-		<h2 class="text-lg font-semibold mb-4">Top Sets by Printing Count</h2>
+		<h2 class="text-lg font-semibold mb-4">Top sets by printing count</h2>
 		<div class="space-y-1">
 			{#each data.topSets as set}
 				{@const maxCount = (data.topSets[0]?.count as number) || 1}

@@ -98,14 +98,14 @@
 		<section class="space-y-5">
 			<div>
 				<p class="eyebrow">Magic: The Gathering card</p>
-				<h1 class="mt-1 text-3xl font-semibold text-[var(--color-text-strong)]">{name}</h1>
+				<h1 class="mt-1 text-3xl font-medium text-[var(--color-text-strong)]">{name}</h1>
 				<div class="flex flex-wrap items-center gap-3 mt-2">
 					{#if card.mana_cost}
 						<ManaCost cost={card.mana_cost as string} />
 					{/if}
 					<span class="chip">{data.printings.length} printing{data.printings.length === 1 ? '' : 's'} in {sets} set{sets === 1 ? '' : 's'}</span>
 					{#if cheapest}
-						<span class="chip">from <span class="text-[var(--color-accent)] font-semibold">{cheapest.text}</span>{cheapest.foil ? ' (foil)' : ''}</span>
+						<span class="chip">from <span class="text-[var(--color-text-strong)]">{cheapest.text}</span>{cheapest.foil ? ' (foil)' : ''}</span>
 					{/if}
 				</div>
 			</div>
@@ -124,7 +124,7 @@
 							<p class="text-[var(--color-text-muted)] whitespace-pre-line">{face.oracle_text}</p>
 						{/if}
 						{#if face.power && face.toughness}
-							<p class="font-bold">{face.power}/{face.toughness}</p>
+							<p class="font-medium">{face.power}/{face.toughness}</p>
 						{/if}
 					</div>
 				{/each}
@@ -137,10 +137,10 @@
 						<p class="text-[var(--color-text-muted)] whitespace-pre-line">{card.oracle_text}</p>
 					{/if}
 					{#if card.power && card.toughness}
-						<p class="font-bold text-lg">{card.power}/{card.toughness}</p>
+						<p class="font-medium text-lg">{card.power}/{card.toughness}</p>
 					{/if}
 					{#if card.loyalty}
-						<p class="font-bold text-lg">Loyalty: {card.loyalty}</p>
+						<p class="font-medium text-lg">Loyalty: {card.loyalty}</p>
 					{/if}
 				</div>
 			{/if}
@@ -189,11 +189,11 @@
 						</span>
 						<span class="text-right text-sm">
 							<span class="block text-xs text-[var(--color-text-muted)]">Price</span>
-							<span class="text-[var(--color-accent)]">{formatQuote(printing.price_eur, printing.price_usd, currency)}</span>
+							<span class="text-[var(--color-text-strong)]">{formatQuote(printing.price_eur, printing.price_usd, currency)}</span>
 						</span>
 						<span class="col-start-2 text-right text-sm sm:col-start-3">
 							<span class="block text-xs text-[var(--color-text-muted)]">Foil</span>
-							<span class="text-[var(--color-accent)]">{formatQuote(printing.price_eur_foil, printing.price_usd_foil, currency)}</span>
+							<span class="text-[var(--color-text-strong)]">{formatQuote(printing.price_eur_foil, printing.price_usd_foil, currency)}</span>
 						</span>
 					</a>
 				</li>

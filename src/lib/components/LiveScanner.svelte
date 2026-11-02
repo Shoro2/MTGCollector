@@ -753,12 +753,12 @@
 			<div class="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-white text-xs" data-quality-hint={qualityHint}>
 				{lastRectCount} card{lastRectCount === 1 ? '' : 's'} · steady {Math.round(stableProgress * 100)}%
 				{#if holdReason}
-					<span class={holdReason === 'card cut off at the edge' || holdReason === 'too many rectangles' ? 'text-red-300' : 'text-yellow-200'}> · {holdReason}</span>
+					<span class={holdReason === 'card cut off at the edge' || holdReason === 'too many rectangles' ? 'text-[var(--color-danger)]' : 'text-[var(--color-warning)]'}> · {holdReason}</span>
 				{/if}
 				{#if qualityHint === 'blurry'}
-					<span class="text-yellow-300"> · blurry, hold still</span>
+					<span class="text-[var(--color-warning)]"> · blurry, hold still</span>
 				{:else if qualityHint === 'glare'}
-					<span class="text-yellow-300"> · glare on the card, tilt it a little</span>
+					<span class="text-[var(--color-warning)]"> · glare on the card, tilt it a little</span>
 				{/if}
 			</div>
 		{/if}

@@ -67,11 +67,9 @@
 <style>
 	.legality-group {
 		margin: 0.5rem 0 0.25rem;
-		font-size: 0.7rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: var(--color-text-faint);
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--color-text-muted);
 	}
 	.legality-grid {
 		display: grid;
@@ -110,8 +108,8 @@
 		min-width: 0;
 	}
 	.legality-note {
-		font-size: 0.7rem;
-		font-weight: 600;
+		font-size: 0.75rem;
+		font-weight: 500;
 	}
 	.status-legal {
 		color: var(--color-text);

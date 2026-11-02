@@ -171,10 +171,10 @@
 		{/if}
 		<div class="min-w-0 flex-1">
 			<p class="eyebrow">{data.check.formatLabel} deck</p>
-			<h1 class="mt-1 break-words text-[1.375rem] font-semibold text-[var(--color-text-strong)]">
+			<h1 class="mt-1 break-words text-[1.375rem] font-medium text-[var(--color-text-strong)]">
 				{deck.name}
 				{#if data.check.kind === 'commander'}<DeckBracket bracket={deck.bracket} />{/if}
-				{#if data.isOwner}<span class="chip ml-1 min-h-0 px-1.5 py-0 align-middle text-[0.62rem] uppercase">{VISIBILITY_LABELS[deck.visibility]}</span>{/if}
+				{#if data.isOwner}<span class="chip ml-1 min-h-0 px-1.5 py-0 align-middle text-[0.6875rem]">{VISIBILITY_LABELS[deck.visibility]}</span>{/if}
 			</h1>
 			<p class="mt-1 flex flex-wrap items-center gap-2 text-sm text-[var(--color-text-muted)]">
 				<ColorPips colors={data.colors} includeColorless />
@@ -276,7 +276,7 @@
 	{#if data.isOwner}
 		<div class="toolbar flex-wrap items-end">
 			<div class="min-w-[min(100%,18rem)] flex-1">
-				<CardSearchInput label="Add a card" placeholder="Search by card name…" format={deck.format} clearOnSelect disabled={busy} onselect={addCard} />
+				<CardSearchInput label="Add a card" placeholder="Search by card name" format={deck.format} clearOnSelect disabled={busy} onselect={addCard} />
 			</div>
 			<label class="text-sm">
 				<span class="text-[var(--color-text-muted)]">to</span>
@@ -292,7 +292,7 @@
 			<div class="min-w-[min(100%,18rem)] flex-1">
 				<CardSearchInput
 					label="Add a partner for {data.partnerOf.name}"
-					placeholder="Second commander…"
+					placeholder="Second commander"
 					format={deck.format}
 					partnerOf={data.partnerOf.cardId}
 					clearOnSelect

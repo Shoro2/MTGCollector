@@ -269,7 +269,7 @@
 {/snippet}
 
 {#snippet priceCell(row: WatchRow)}
-	<span class="price font-semibold text-[var(--color-accent)]" data-price>{row.market ? formatMoney(row.price, row.market) : '-'}</span>
+	<span class="price text-[var(--color-text-strong)]" data-price>{row.market ? formatMoney(row.price, row.market) : '-'}</span>
 	{#if row.otherMarket}
 		<span class="block text-[0.65rem] text-[var(--color-text-faint)]">no {currencyMarket(currency)} price</span>
 	{/if}
@@ -278,8 +278,7 @@
 <div class="space-y-5">
 	<div class="page-heading">
 		<div class="min-w-0">
-			<p class="eyebrow">Prices</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Watchlist</h1>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">Watchlist</h1>
 			<p class="mt-1 text-sm text-[var(--color-text-muted)]">
 				Follow the prices of printings you do not own yet, want to sell or just keep an eye on.
 				Prices come from the daily update: {currencyMarket(currency)} in {currency === 'USD' ? 'US dollars' : 'euros'} (change it in <a href="/settings" class="text-[var(--color-primary)] hover:underline">Settings</a>).
@@ -292,7 +291,7 @@
 		{#each lists as list (list.id)}
 			<a
 				href="/watchlist?list={list.id}"
-				class="btn min-h-8 {view?.list.id === list.id ? 'btn-primary' : ''}"
+				class="btn min-h-8 {view?.list.id === list.id ? 'btn-on' : ''}"
 				aria-current={view?.list.id === list.id ? 'page' : undefined}
 			>
 				<span class="max-w-[12rem] truncate">{list.name}</span>
@@ -334,7 +333,7 @@
 			{view ? `Add a card to ${view.list.name}` : 'Add a card'}
 		</h2>
 		{#if !view || (activeList && activeList.entries < MAX_ENTRIES)}
-			<CardSearchInput label="Card name" placeholder="Search a card to watch…" onselect={pick} />
+			<CardSearchInput label="Card name" placeholder="Search a card to watch" onselect={pick} />
 			{#if picked}
 				<form onsubmit={addEntry} class="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end" data-add-form>
 					<label class="min-w-0 text-sm">
@@ -398,7 +397,7 @@
 			<nav class="toolbar" aria-label="Sort the list">
 				<span class="text-xs text-[var(--color-text-muted)]">Sort</span>
 				{#each SORTS as s (s.key)}
-					<a href={sortHref(s.key)} class="btn min-h-8 {data.sort === s.key ? 'btn-primary' : ''}" data-sort={s.key}>{s.label}{arrow(s.key)}</a>
+					<a href={sortHref(s.key)} class="btn min-h-8 {data.sort === s.key ? 'btn-on' : ''}" aria-current={data.sort === s.key ? 'true' : undefined} data-sort={s.key}>{s.label}{arrow(s.key)}</a>
 				{/each}
 			</nav>
 
