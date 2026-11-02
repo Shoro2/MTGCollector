@@ -73,18 +73,30 @@ describe('pointsInFilter', () => {
 
 describe('marketPeriod', () => {
 	it('takes the first day as the baseline and compares like for like', () => {
-		expect(marketPeriod(days)).toEqual({ from: '2026-09-29', to: '2026-11-01', value: 1081, printings: 11, change: 53, changePct: 5.35,
+		expect(marketPeriod(days)).toEqual({ from: '2026-09-29', to: '2026-11-01', value: 1081, printings: 11, change: 53, changePct: 5.16,
 			newPrintings: 1, high: 1100, low: 1000, updates: 5 });
 	});
 
-	it('chains the percent day by day, so printings priced later never push it below -100 %', () => {
+	it('takes the percent against the start value of the printings priced at the end, so it never falls below -100 %', () => {
 		// A set with three early prices (285), then hundreds of printings priced at once,
 		// which fall by 300 the next update: the summed moves are larger than the start.
 		const set = [point('2026-04-04', 285, 3, 0), point('2026-04-10', 1000, 300, -5), point('2026-04-20', 700, 300, -300)];
-		expect(marketPeriod(set)).toMatchObject({ change: -305, changePct: -31.23 });
-		expect(marketMonths(set)[0]).toMatchObject({ change: -305, changePct: -31.23 });
-		// A day before which nothing had a price counts no percent.
-		expect(marketPeriod([point('2026-04-03', 0, 0, 0), point('2026-04-04', 285, 3, 0)])).toMatchObject({ change: 0, changePct: null });
+		expect(marketPeriod(set)).toMatchObject({ change: -305, changePct: -30.35 });
+		expect(marketMonths(set)[0]).toMatchObject({ change: -305, changePct: -30.35 });
+		// A release day after which nothing moved: no change, 0 %.
+		expect(marketPeriod([point('2026-04-03', 0, 0, 0), point('2026-04-04', 285, 3, 0)])).toMatchObject({ change: 0, changePct: 0 });
+	});
+
+	it('gives the percent the sign of the change', () => {
+		// Three early printings halve, then 297 more get a price and gain 200: the change
+		// is +150. Chaining the updates read -45.12 % (SOS on the host: +€938 beside -62.15 %).
+		const set = [point('2026-04-04', 100, 3, 0), point('2026-04-10', 50, 3, -50), point('2026-05-01', 2050, 300, 0), point('2026-05-20', 2250, 300, 200)];
+		expect(marketPeriod(set)).toMatchObject({ change: 150, changePct: 7.14 });
+		expect(marketMonths(set).map(m => [m.month, m.change, m.changePct])).toEqual([['2026-05', 200, 9.76], ['2026-04', -50, -50]]);
+	});
+
+	it('has no percent without a positive start value', () => {
+		expect(marketPeriod([point('2026-04-04', 100, 3, 0), point('2026-04-10', 100, 3, 100)])).toMatchObject({ change: 100, changePct: null });
 	});
 
 	it('has no change for one day and nothing without a day', () => {
@@ -97,7 +109,7 @@ describe('marketMonths', () => {
 	it('lists the months newest first with the last value of each', () => {
 		const months = marketMonths(days);
 		expect(months.map(m => m.month)).toEqual(['2026-11', '2026-10', '2026-09']);
-		expect(months[1]).toEqual({ month: '2026-10', value: 1080, lastDate: '2026-10-31', printings: 12, change: 40, changePct: 4.01,
+		expect(months[1]).toEqual({ month: '2026-10', value: 1080, lastDate: '2026-10-31', printings: 12, change: 40, changePct: 3.85,
 			newPrintings: 2, high: 1100, low: 1080, updates: 2 });
 	});
 
