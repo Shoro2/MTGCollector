@@ -54,11 +54,11 @@
 		<button class="tab" class:active={lang === 'en'} onclick={() => (lang = 'en')}>English</button>
 	</div>
 
-	<h1 class="text-2xl font-bold mb-2">{t.title}</h1>
+	<h1 class="text-2xl font-medium mb-2">{t.title}</h1>
 	<p class="text-[var(--color-text-muted)] mb-6">{t.intro}</p>
 
 	{#if form?.success}
-		<div class="rounded-lg border border-green-700/50 bg-green-900/20 text-green-300 p-4 mb-4">
+		<div class="rounded-lg border border-[var(--color-success)]/50 bg-[var(--color-success)]/10 text-[var(--color-success)] p-4 mb-4">
 			{t.success}
 		</div>
 	{:else}
@@ -140,7 +140,7 @@
 			{/if}
 
 			{#if form?.error}
-				<div class="rounded-lg border border-red-700/50 bg-red-900/20 text-red-300 p-3 text-sm">
+				<div class="rounded-lg border border-[var(--color-danger)]/50 bg-[var(--color-danger)]/10 text-[var(--color-danger)] p-3 text-sm">
 					{form.error}
 				</div>
 			{/if}

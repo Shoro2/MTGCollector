@@ -71,10 +71,10 @@
 
 {#if !online || queued > 0}
 	<div role="status" data-offline-notice data-online={online ? '1' : '0'} data-queued={queued}
-		class="rounded-lg border px-3 py-2 text-sm {online ? 'border-[var(--color-border)] bg-[var(--color-surface)]' : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-200'}">
+		class="rounded-lg border px-3 py-2 text-sm {online ? 'border-[var(--color-border)] bg-[var(--color-surface)]' : 'border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 text-[var(--color-warning)]'}">
 		{#if !online}
 			<p class="font-medium">You are offline.</p>
-			<p class="text-yellow-200/80">Captures are saved on this device and identified as soon as the connection is back{queued > 0 ? ` (${queued} waiting)` : ''}.{#if status !== 'ready' && supported} Turn on offline mode below so this page also opens without a connection.{/if}</p>
+			<p class="text-[var(--color-warning)]/80">Captures are saved on this device and identified as soon as the connection is back{queued > 0 ? ` (${queued} waiting)` : ''}.{#if status !== 'ready' && supported} Turn on offline mode below so this page also opens without a connection.{/if}</p>
 		{:else}
 			<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
 				<p class="mr-auto">
@@ -101,7 +101,7 @@
 		<div class="mt-3 space-y-3 text-sm">
 			<p class="text-[var(--color-text-muted)]">Scan without a connection, at a fair or in a basement. This keeps the scanner page and the card detector on this device (about 15 MB). Captures made offline are stored here and identified with the same checks as always once you are back online. Nothing is sent while offline.</p>
 			{#if status === 'incomplete'}
-				<p class="text-yellow-200">Not ready offline: the card detector is not stored on this device yet{stored !== null ? ` (${formatBytes(stored)} stored by this site)` : ''}. Store it again, or turn offline mode off.</p>
+				<p class="text-[var(--color-warning)]">Not ready offline: the card detector is not stored on this device yet{stored !== null ? ` (${formatBytes(stored)} stored by this site)` : ''}. Store it again, or turn offline mode off.</p>
 				<div class="flex flex-wrap gap-2">
 					<button type="button" class="btn btn-primary" onclick={turnOn} disabled={busy || !online}>{busy ? 'Storing…' : 'Store again'}</button>
 					<button type="button" class="btn" onclick={turnOff} disabled={busy}>Turn off offline mode</button>
@@ -113,7 +113,7 @@
 				<button type="button" class="btn btn-primary" onclick={turnOn} disabled={busy || !online}>{busy ? 'Storing…' : 'Make available offline'}</button>
 				{#if !online}<p class="text-[var(--color-text-muted)]">Needs a connection once.</p>{/if}
 			{/if}
-			{#if error}<p role="alert" class="text-red-400">{error}</p>{/if}
+			{#if error}<p role="alert" class="text-[var(--color-danger)]">{error}</p>{/if}
 			<p class="text-xs text-[var(--color-text-muted)]">Prices, card images and adding to your collection still need a connection. <a href="/datenschutz#m-offline" class="underline hover:text-[var(--color-primary)]">What is stored</a></p>
 		</div>
 	</details>

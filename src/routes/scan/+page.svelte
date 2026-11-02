@@ -2189,7 +2189,7 @@
 			// Second cue of a live capture (the first one sounded at the capture): everything identified, or look at the screen.
 			const names = newSlice.filter((card) => card.status === 'found').map((card) => String(card.results[0]?.name ?? '')).filter(Boolean);
 			onLiveResult?.(counts.total > 0 && counts.printings === counts.total,
-				`${names.slice(0, 3).join('; ')}${names.length > 3 ? `; +${names.length - 3} more` : ''}${names.length ? ' — ' : ''}${summary}. Review results below before adding to your collection.`, false, newSlice.length === 1 && names.length === 1 ? names[0] : null);
+				`${names.slice(0, 3).join('; ')}${names.length > 3 ? `; +${names.length - 3} more` : ''}${names.length ? ': ' : ''}${summary}. Review results below before adding to your collection.`, false, newSlice.length === 1 && names.length === 1 ? names[0] : null);
 			scanProgress = `Done! ${summary}.`;
 			return 'done';
 		} catch (err) {
@@ -2422,12 +2422,10 @@
 	<div class="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
 		<span id="scan-mode-label" class="sr-only text-xs text-[var(--color-text-muted)] sm:not-sr-only sm:shrink-0">Mode:</span>
 		<div role="group" aria-labelledby="scan-mode-label"
-			class="grid min-w-0 flex-1 grid-cols-2 gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 sm:inline-flex sm:flex-none">
+			class="segmented grid min-w-0 flex-1 grid-cols-2 gap-0.5 p-0.5 sm:inline-flex sm:flex-none">
 			{#each SCAN_MODES as mode (mode.id)}
 				<button type="button" aria-pressed={scanMode === mode.id} onclick={() => (scanMode = mode.id)}
-					class="rounded-md px-2 py-1 text-xs transition-colors sm:px-3 {scanMode === mode.id
-						? 'bg-[var(--color-primary)] text-white'
-						: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}">{mode.label}</button>
+					class="segmented-option px-2 py-1 text-xs sm:px-3 {scanMode === mode.id ? 'segmented-on' : ''}">{mode.label}</button>
 			{/each}
 		</div>
 	</div>
@@ -2436,8 +2434,7 @@
 <div class="space-y-5">
 	<div class="page-heading">
 		<div>
-			<p class="eyebrow">Scanner</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">MTG Card Scanner</h1>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">MTG card scanner</h1>
 			<p class="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">Use your live camera or a photo to identify English and German Magic: The Gathering cards. Review the edition and collector number before saving.</p>
 		</div>
 		{#if !loggedIn}
@@ -2450,7 +2447,7 @@
 	<!-- Upload / Live -->
 	<ScanSessionSettings bind:value={session} sets={data.sets} locations={data.locations} disabled={scanning} />
 	<ScanOffline {online} queued={queuedCount} failed={queuedFailed} processing={processingQueue} onProcess={() => void processQueue()} onDiscard={() => void discardQueue()} />
-	{#if addError}<p role="alert" class="text-red-400">{addError}</p>{/if}
+	{#if addError}<p role="alert" class="text-[var(--color-danger)]">{addError}</p>{/if}
 	{#if scanMode === 'live'}
 		<div class="flex flex-wrap items-center gap-2">
 			{@render modeSwitch()}
@@ -2510,11 +2507,11 @@
 			</div>
 		{:else}
 			<p class="text-xs text-[var(--color-text-muted)] mt-3 p-3 rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
-				<svg class="inline w-4 h-4 mr-1 -mt-0.5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+				<svg class="inline w-4 h-4 mr-1 -mt-0.5 text-[var(--color-warning)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
 				</svg>
 				<strong class="text-[var(--color-text)]">Tip:</strong>
-				For best results, place the card(s) on a plain white background — a sheet of white paper works perfectly. When scanning multiple cards, leave a small gap between each card so the detector can separate them. Many cards at once: use "Overlapping rows".
+				For best results, place the cards on a plain white background; a sheet of white paper is enough. When scanning multiple cards, leave a small gap between each card so the detector can separate them. Many cards at once: use "Overlapping rows".
 			</p>
 		{/if}
 
@@ -2540,7 +2537,7 @@
 		</div>
 	{/if}
 	{#if !scanning && edgeWarning}
-		<p class="text-sm px-3 py-2 rounded-lg bg-yellow-500/10 text-yellow-300 border border-yellow-500/30" data-edge-warning>{edgeWarning}</p>
+		<p class="text-sm px-3 py-2 rounded-lg bg-[var(--color-warning)]/10 text-[var(--color-warning)] border border-[var(--color-warning)]/30" data-edge-warning>{edgeWarning}</p>
 	{/if}
 
 	<!-- The photo with every detected card outlined in its result colour; a click jumps to the card. -->
@@ -2566,7 +2563,7 @@
 				</svg>
 			</div>
 			<p class="mt-2 text-xs text-[var(--color-text-muted)]">
-				<span class="text-green-400">Green</span>: identified with its printing · <span class="text-yellow-300">yellow</span>: needs a tap or a printing · <span class="text-red-400">red</span>: not identified. Tap a card to jump to it.
+				<span class="text-[var(--color-success)]">Green</span>: identified with its printing · <span class="text-[var(--color-warning)]">yellow</span>: needs a tap or a printing · <span class="text-[var(--color-danger)]">red</span>: not identified. Tap a card to jump to it.
 			</p>
 		</div>
 	{/if}
@@ -2579,7 +2576,7 @@
 		{#if !scanning && (identifiedCount > 0 || hasIdentified)}
 			<div class="flex gap-3 items-center flex-wrap">
 				{#if toConfirm > 0}
-					<span class="text-xs px-2 py-1 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">{toConfirm} card{toConfirm === 1 ? '' : 's'} need{toConfirm === 1 ? 's' : ''} a tap to confirm</span>
+					<span class="text-xs px-2 py-1 rounded bg-[var(--color-warning)]/15 text-[var(--color-warning)] border border-[var(--color-warning)]/30">{toConfirm} card{toConfirm === 1 ? '' : 's'} need{toConfirm === 1 ? 's' : ''} a tap to confirm</span>
 				{/if}
 				{#if loggedIn && identifiedCount > 0}
 					<button onclick={selectAllIdentified}
@@ -2589,7 +2586,7 @@
 					{#if selectedCards.size > 0}
 						<button onclick={importAllSelected}
 							disabled={importing || adding !== null}
-							class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
+							class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] text-white px-4 py-2 rounded-lg text-sm transition-colors disabled:opacity-50">
 							{importing ? 'Importing...' : `Import ${selectedCards.size} selected`}
 						</button>
 						<button onclick={() => selectedCards = new Set()}
@@ -2602,14 +2599,16 @@
 					<div class="flex items-center gap-1 ml-auto">
 						<span class="text-xs text-[var(--color-text-muted)] mr-1">Sort:</span>
 						<button onclick={() => scanSort = 'default'}
+							aria-pressed={scanSort === 'default'}
 							class="px-2 py-1 rounded text-xs border transition-colors {scanSort === 'default'
-								? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white'
+								? 'btn-on'
 								: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}">
 							Scan order
 						</button>
 						<button onclick={() => scanSort = 'price'}
+							aria-pressed={scanSort === 'price'}
 							class="px-2 py-1 rounded text-xs border transition-colors {scanSort === 'price'
-								? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white'
+								? 'btn-on'
 								: 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]'}">
 							Price
 						</button>
@@ -2617,7 +2616,7 @@
 					<button onclick={copyMoxfieldText}
 						class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2">
 						{#if copied}
-							<svg class="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+							<svg class="w-4 h-4 text-[var(--color-success)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
 							Copied!
 						{:else}
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
@@ -2636,13 +2635,13 @@
 					data-printing-state={card.printingState}
 					data-finish={card.finish}
 					data-truncated={card.truncated ? 'true' : undefined}
-					class="scroll-mt-4 bg-[var(--color-surface)] rounded-lg border p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-green-500/50' : ''} {card.status === 'likely' || card.status === 'conflict' ? 'border-yellow-500/40' : 'border-[var(--color-border)]'}">
+					class="scroll-mt-4 bg-[var(--color-surface)] rounded-lg border p-4 {selectedCards.has(origIdx) ? 'ring-2 ring-[var(--color-success)]/50' : ''} {card.status === 'likely' || card.status === 'conflict' ? 'border-[var(--color-warning)]/40' : 'border-[var(--color-border)]'}">
 					<div class="flex flex-col sm:flex-row gap-4">
 						<!-- Selection checkbox for importable cards -->
 						{#if loggedIn && isImportable(card) && !addedCards.some(a => a.captureId === card.captureId)}
 							<div class="flex-shrink-0 pt-1">
 								<input type="checkbox" checked={selectedCards.has(origIdx)} onchange={() => toggleSelect(origIdx)}
-									class="w-5 h-5 rounded border-[var(--color-border)] accent-green-600 cursor-pointer" />
+									class="w-5 h-5 rounded border-[var(--color-border)] accent-[var(--color-success)] cursor-pointer" />
 							</div>
 						{/if}
 						<!-- Debug: Cropped card + bottom scan -->
@@ -2679,14 +2678,14 @@
 									<span class="text-xs font-normal text-[var(--color-text-muted)]">row {card.row + 1}, #{card.rowIndex + 1}{card.truncated ? ` · ${Math.round((card.visible ?? 0) * 100)}% visible` : ''}</span>
 								{/if}
 								{#if card.status === 'found'}
-									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-green-500/15 text-green-400 border-green-500/30">Confirmed</span>
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-[var(--color-success)]/15 text-[var(--color-success)] border-[var(--color-success)]/30">Confirmed</span>
 									{#if card.results.length > 1 && card.printingState !== 'confirmed'}
-										<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-yellow-500/15 text-yellow-300 border-yellow-500/30">Printing?</span>
+										<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30">Printing?</span>
 									{/if}
 								{:else if card.status === 'likely'}
-									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-yellow-500/15 text-yellow-300 border-yellow-500/30">Likely</span>
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-[var(--color-warning)]/15 text-[var(--color-warning)] border-[var(--color-warning)]/30">Likely</span>
 								{:else if card.status === 'conflict'}
-									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-red-500/15 text-red-400 border-red-500/30">Conflict</span>
+									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-[var(--color-danger)]/15 text-[var(--color-danger)] border-[var(--color-danger)]/30">Conflict</span>
 								{:else if card.status === 'not_found'}
 									<span class="text-xs px-1.5 py-0.5 rounded font-medium border bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)]">Unknown</span>
 								{/if}
@@ -2694,10 +2693,10 @@
 									onclick={() => cycleFinish(origIdx)}
 									title="Finish: click to cycle unknown / foil / non-foil"
 									class="text-xs px-1.5 py-0.5 rounded font-medium border transition-colors {card.finish === 'foil'
-										? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hover:bg-yellow-500/30'
+										? 'bg-[var(--color-warning)]/20 text-[var(--color-warning)] border-[var(--color-warning)]/30 hover:bg-[var(--color-warning)]/30'
 										: card.finish === 'nonfoil'
 											? 'bg-[var(--color-bg)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-text-muted)]'
-											: 'bg-[var(--color-bg)] text-yellow-300 border-yellow-500/30 hover:border-yellow-400'}"
+											: 'bg-[var(--color-bg)] text-[var(--color-warning)] border-[var(--color-warning)]/30 hover:border-[var(--color-warning)]/40'}"
 								>
 									{card.finish === 'foil' ? 'FOIL' : card.finish === 'nonfoil' ? 'Non-Foil' : 'Finish?'}
 								</button>
@@ -2706,7 +2705,7 @@
 								{/if}
 								{#if card.setCode || card.collectorNumber}
 									<span class="text-[var(--color-text-muted)] font-normal">
-										— detected: {card.setCode.toUpperCase()} #{card.collectorNumber}
+										(detected: {card.setCode.toUpperCase()} #{card.collectorNumber})
 									</span>
 								{/if}
 							</h3>
@@ -2718,11 +2717,11 @@
 								</div>
 							{:else if (card.status === 'found' || card.status === 'likely' || card.status === 'conflict') && card.results.length > 0}
 								{#if card.status === 'likely'}
-									<p class="text-xs text-yellow-300 mb-2">Probably this card — the name and the collector line only agree partially. Tap "Accept" or "Not this card".</p>
+									<p class="text-xs text-[var(--color-warning)] mb-2">Probably this card: the name and the collector line only agree partially. Tap "Accept" or "Not this card".</p>
 								{:else if card.status === 'conflict'}
-									<p class="text-xs text-red-400 mb-2">The readings or your set restriction disagree. Review the printing before accepting it.</p>
+									<p class="text-xs text-[var(--color-danger)] mb-2">The readings or your set restriction disagree. Review the printing before accepting it.</p>
 								{:else if card.results.length > 1 && card.printingState !== 'confirmed'}
-									<p class="text-xs text-yellow-300 mb-2">Several printings match — pick the right one before importing.</p>
+									<p class="text-xs text-[var(--color-warning)] mb-2">Several printings match — pick the right one before importing.</p>
 								{/if}
 								{#each card.results as result, rIdx}
 									{@const imgSrc = getImageSrc(result)}
@@ -2734,7 +2733,7 @@
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<div
 										onclick={() => { if (!offer && hasMultiple && isImportable(card)) { card.selectedResultIdx = rIdx; detectedCards = [...detectedCards]; } }}
-										class="flex items-center gap-4 p-2 rounded-lg border transition-all
+										class="flex items-center gap-4 p-2 rounded-lg border transition-[background-color,border-color]
 											{hasMultiple ? 'cursor-pointer' : ''}
 											{isSelected
 												? 'bg-[var(--color-bg)] border-[var(--color-primary)] ring-1 ring-[var(--color-primary)]'
@@ -2752,29 +2751,29 @@
 											<p class="text-sm font-medium">{(result.set_code as string).toUpperCase()} #{result.collector_number}</p>
 											<p class="text-xs text-[var(--color-text-muted)]">{result.set_name}{result.released_at ? ` · ${String(result.released_at).slice(0, 4)}` : ''}</p>
 										</div>
-										<PriceTag card={result as PriceFields} class="text-sm text-[var(--color-accent)]" />
+										<PriceTag card={result as PriceFields} class="text-sm text-[var(--color-text-strong)]" />
 										{#if offer}
 											<button
 												onclick={(e) => { e.stopPropagation(); acceptCandidate(origIdx, result); }}
-												class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded-lg text-sm transition-colors"
+												class="border border-[var(--color-border-strong)] bg-[var(--color-surface-overlay)] hover:bg-[var(--color-surface-hover)] px-3 py-1.5 rounded-lg text-sm transition-colors"
 											>
 												Accept
 											</button>
 											{:else if !isSelected}
 												<button
 													onclick={(e) => { e.stopPropagation(); card.selectedResultIdx = rIdx; card.printingState = 'confirmed'; detectedCards = [...detectedCards]; }}
-													class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1.5 rounded-lg text-sm transition-colors"
+													class="border border-[var(--color-border-strong)] bg-[var(--color-surface-overlay)] hover:bg-[var(--color-surface-hover)] px-3 py-1.5 rounded-lg text-sm transition-colors"
 												>
 													Select printing
 												</button>
 											{:else if loggedIn && isSelected}
 											{#if isAdded}
-												<span class="text-green-400 text-sm w-20 text-center">Added!</span>
+												<span class="text-[var(--color-success)] text-sm w-20 text-center">Added</span>
 											{:else}
 												<button
 													onclick={(e) => { e.stopPropagation(); addToCollection(result, card); }}
 													disabled={adding !== null || importing}
-													class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
+													class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] text-white px-4 py-1.5 rounded-lg text-sm transition-colors disabled:opacity-50"
 												>
 													{adding === card.captureId ? '...' : 'Add'}
 												</button>
@@ -2795,10 +2794,10 @@
 									<p class="text-sm text-[var(--color-text-muted)] mb-2">Not identified automatically.</p>
 								{/if}
 								{#if card.suggestions.length > 0}
-									<p class="text-xs text-yellow-300 mb-1">Could be (collector number only, no name evidence):</p>
+									<p class="text-xs text-[var(--color-warning)] mb-1">Could be (collector number only, no name evidence):</p>
 									{#each card.suggestions as sug}
 										{@const sugImg = getImageSrc(sug)}
-										<div class="flex items-center gap-3 p-2 mb-2 rounded-lg border border-yellow-500/30 bg-[var(--color-bg)]">
+										<div class="flex items-center gap-3 p-2 mb-2 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-bg)]">
 											{#if sugImg}
 												<img onerror={cardImageError} src={sugImg} alt={sug.name as string} class="w-8 h-11 object-cover rounded" loading="lazy" />
 											{/if}
@@ -2807,7 +2806,7 @@
 												<p class="text-xs text-[var(--color-text-muted)]">{sug.set_name} ({(sug.set_code as string).toUpperCase()}) #{sug.collector_number}</p>
 											</div>
 											<button onclick={() => acceptCandidate(origIdx, sug)}
-												class="bg-yellow-600 hover:bg-yellow-700 px-3 py-1 rounded-lg text-sm transition-colors">Accept</button>
+												class="border border-[var(--color-border-strong)] bg-[var(--color-surface-overlay)] hover:bg-[var(--color-surface-hover)] px-3 py-1 rounded-lg text-sm transition-colors">Accept</button>
 										</div>
 									{/each}
 								{/if}
@@ -2816,11 +2815,11 @@
 									<div class="space-y-2">
 										<div class="flex gap-2 text-xs">
 											<button onclick={() => manualMode = 'set'}
-												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'set' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'border-[var(--color-border)]'}">
+												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'set' ? 'btn-on' : 'border-[var(--color-border)]'}">
 												Set + #
 											</button>
 											<button onclick={() => manualMode = 'name'}
-												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'name' ? 'bg-[var(--color-primary-button)] border-[var(--color-primary-button)] text-white' : 'border-[var(--color-border)]'}">
+												class="px-2 py-0.5 rounded border transition-colors {manualMode === 'name' ? 'btn-on' : 'border-[var(--color-border)]'}">
 												Name
 											</button>
 										</div>
@@ -2834,7 +2833,7 @@
 											</form>
 										{:else}
 											<form onsubmit={(e) => { e.preventDefault(); doManualSearch(); }} class="flex gap-2">
-												<input type="text" bind:value={manualQuery} placeholder="Card name..."
+												<input type="text" bind:value={manualQuery} placeholder="Card name"
 													class="flex-1 bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-2 py-1 text-sm focus:outline-none focus:border-[var(--color-primary)]" />
 												<button type="submit" class="bg-[var(--color-primary-button)] px-3 py-1 rounded text-sm">Search</button>
 											</form>
@@ -2854,14 +2853,14 @@
 															<p class="text-sm font-medium truncate">{result.name}</p>
 															<p class="text-xs text-[var(--color-text-muted)]">{result.set_name} #{result.collector_number}</p>
 														</div>
-														<PriceTag card={result as PriceFields} class="text-xs text-[var(--color-accent)]" />
+														<PriceTag card={result as PriceFields} class="text-xs text-[var(--color-text-strong)]" />
 														{#if loggedIn}
 															{#if isAdded}
-																<span class="text-green-400 text-xs">Added!</span>
+																<span class="text-[var(--color-success)] text-xs">Added</span>
 															{:else}
 														<button onclick={() => addToCollection(result, card)}
 															disabled={adding !== null || importing}
-																	class="bg-green-600 hover:bg-green-700 px-2 py-0.5 rounded text-xs">Add</button>
+																	class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] text-white px-2 py-0.5 rounded text-xs">Add</button>
 															{/if}
 														{/if}
 													</div>
@@ -2904,7 +2903,7 @@
 					onclick={copyDebugLog}
 					class="text-xs mb-3 px-3 py-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-surface-hover)] transition-colors"
 				>
-					{debugLogCopied ? 'Copied!' : 'Copy Log'}
+					{debugLogCopied ? 'Copied' : 'Copy log'}
 				</button>
 				<span class="text-xs text-[var(--color-text-muted)] ml-2">This log is also stored on the server for 30 days (text only, no photos) so problems can be analysed.</span>
 				<pre class="text-xs font-mono bg-[var(--color-bg)] p-3 rounded max-h-96 overflow-y-auto whitespace-pre-wrap break-all border border-[var(--color-border)]">{debugLog.join('\n')}</pre>
@@ -2914,10 +2913,10 @@
 
 	<!-- Added Cards + Actions -->
 	{#if addedCards.length > 0}
-		<div class="bg-green-900/20 border border-green-800 rounded-lg p-4">
-			<p class="text-green-400 font-semibold mb-1">{addedCards.length} card{addedCards.length > 1 ? 's' : ''} added</p>
+		<div class="bg-[var(--color-success)]/10 border border-[var(--color-success)]/40 rounded-lg p-4">
+			<p class="text-[var(--color-success)] font-semibold mb-1">{addedCards.length} card{addedCards.length > 1 ? 's' : ''} added</p>
 			{#each addedCards as card}
-				<p class="text-sm text-green-300">{card.name}</p>
+				<p class="text-sm text-[var(--color-success)]">{card.name}</p>
 			{/each}
 		</div>
 	{/if}

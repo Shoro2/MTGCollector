@@ -39,7 +39,7 @@
 	const foilDivergence = $derived(priceDivergence(card.price_eur_foil as number | null, card.price_usd_foil as number | null, data.usdToEur));
 	const suspiciousDivergence = $derived(
 		isSuspiciousDivergence(normalDivergence) ? { label: 'Price', d: normalDivergence!, eur: card.price_eur as number }
-		: isSuspiciousDivergence(foilDivergence) ? { label: 'Price Foil', d: foilDivergence!, eur: card.price_eur_foil as number }
+		: isSuspiciousDivergence(foilDivergence) ? { label: 'Foil price', d: foilDivergence!, eur: card.price_eur_foil as number }
 		: null
 	);
 	let colors: string[] = $derived(card.colors ? JSON.parse(card.colors as string) : []);
@@ -247,7 +247,7 @@
 		<section class="min-w-0 space-y-5">
 			<div>
 				<p class="eyebrow">{(card.set_code as string).toUpperCase()} #{card.collector_number}</p>
-				<h1 class="mt-1 text-3xl font-semibold text-[var(--color-text-strong)]">{card.name}</h1>
+				<h1 class="mt-1 text-3xl font-medium text-[var(--color-text-strong)]">{card.name}</h1>
 				<div class="flex items-center gap-3 mt-2">
 					{#if card.mana_cost}
 						<ManaCost cost={card.mana_cost as string} />
@@ -267,10 +267,10 @@
 					<p class="text-[var(--color-text-muted)] whitespace-pre-line">{card.oracle_text}</p>
 				{/if}
 				{#if card.power && card.toughness}
-					<p class="font-bold text-lg">{card.power}/{card.toughness}</p>
+					<p class="font-medium text-lg">{card.power}/{card.toughness}</p>
 				{/if}
 				{#if card.loyalty}
-					<p class="font-bold text-lg">Loyalty: {card.loyalty}</p>
+					<p class="font-medium text-lg">Loyalty: {card.loyalty}</p>
 				{/if}
 			</div>
 
@@ -304,11 +304,11 @@
 				</div>
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
 					<span class="text-[var(--color-text-muted)]">Price</span>
-					<p class="font-medium text-[var(--color-accent)]">{formatQuote(card.price_eur as number | null, card.price_usd as number | null, currency)}</p>
+					<p class="font-medium text-[var(--color-text-strong)]">{formatQuote(card.price_eur as number | null, card.price_usd as number | null, currency)}</p>
 				</div>
 				<div class="bg-[var(--color-surface)] rounded p-3 border border-[var(--color-border)]">
-					<span class="text-[var(--color-text-muted)]">Price Foil</span>
-					<p class="font-medium text-[var(--color-accent)]">{formatQuote(card.price_eur_foil as number | null, card.price_usd_foil as number | null, currency)}</p>
+					<span class="text-[var(--color-text-muted)]">Foil price</span>
+					<p class="font-medium text-[var(--color-text-strong)]">{formatQuote(card.price_eur_foil as number | null, card.price_usd_foil as number | null, currency)}</p>
 				</div>
 			</div>
 
@@ -325,17 +325,19 @@
 			{#if data.priceHistory.length > 0}
 				<div id="price-history" class="scroll-mt-20 bg-[var(--color-surface)] rounded-lg p-4 border border-[var(--color-border)]">
 					<div class="flex items-center justify-between mb-3">
-						<h3 class="font-semibold">Price History</h3>
-						<div class="flex gap-1 bg-[var(--color-bg)] rounded-lg p-0.5">
+						<h3 class="font-semibold">Price history</h3>
+						<div class="segmented flex gap-1 p-0.5">
 							<button
 								onclick={() => switchChartType('normal')}
-								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'normal' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								aria-pressed={chartType === 'normal'}
+								class="segmented-option px-3 py-1 text-xs {chartType === 'normal' ? 'segmented-on' : ''}"
 							>
 								Normal
 							</button>
 							<button
 								onclick={() => switchChartType('foil')}
-								class="px-3 py-1 rounded-md text-xs transition-colors {chartType === 'foil' ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+								aria-pressed={chartType === 'foil'}
+								class="segmented-option px-3 py-1 text-xs {chartType === 'foil' ? 'segmented-on' : ''}"
 							>
 								Foil
 							</button>
@@ -373,9 +375,9 @@
 			<button
 				onclick={toggleWishlist}
 				disabled={togglingWishlist}
-				class="w-full py-2 rounded-lg text-sm border transition-colors disabled:opacity-50 {data.onWishlist ? 'bg-yellow-600/20 border-yellow-600 text-yellow-400 hover:bg-yellow-600/30' : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-yellow-600'}"
+				class="w-full py-2 rounded-lg text-sm border transition-colors disabled:opacity-50 {data.onWishlist ? 'bg-[var(--color-warning)]/20 border-[var(--color-warning)]/40 text-[var(--color-warning)] hover:bg-[var(--color-warning)]/30' : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-warning)]/40'}"
 			>
-				{data.onWishlist ? '★ On Wishlist' : '☆ Add to Wishlist'}
+				{data.onWishlist ? 'On your wishlist' : 'Add to wishlist'}
 			</button>
 
 			<!-- Collection Section -->
@@ -386,7 +388,7 @@
 						onclick={() => showAddForm = !showAddForm}
 						class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-3 py-1.5 rounded text-sm transition-colors"
 					>
-						+ Add to Collection
+						Add to collection
 					</button>
 				</div>
 
@@ -433,7 +435,7 @@
 						<button
 							onclick={addToCollection}
 							disabled={adding}
-							class="bg-green-600 hover:bg-green-700 px-4 py-1.5 rounded text-sm transition-colors disabled:opacity-50"
+							class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] text-white px-4 py-1.5 rounded text-sm transition-colors disabled:opacity-50"
 						>
 							{adding ? 'Adding...' : 'Confirm'}
 						</button>
@@ -448,15 +450,15 @@
 									<span class="font-medium">{entry.quantity}x</span>
 									<span class="text-[var(--color-text-muted)]">{conditionLabel(entry.condition as string)}</span>
 									{#if entry.foil}
-										<span class="text-[var(--color-accent)] text-xs">FOIL</span>
+										<span class="foil-chip chip">Foil</span>
 									{/if}
 									{#if entry.proxy}
-										<span class="text-xs px-1.5 py-0.5 rounded border border-dashed border-[var(--color-border)]">PROXY</span>
+										<span class="text-xs px-1.5 py-0.5 rounded border border-dashed border-[var(--color-border)]">Proxy</span>
 									{/if}
 								</div>
 								<button
 									onclick={() => removeFromCollection(entry.id as number)}
-									class="text-red-400 hover:text-red-300 text-sm"
+									class="text-[var(--color-danger)] hover:text-[var(--color-danger)] text-sm"
 								>
 									Remove
 								</button>
@@ -471,7 +473,7 @@
 			<!-- Reprints -->
 			{#if data.reprints.length > 0}
 				<div>
-					<h3 class="text-sm text-[var(--color-text-muted)] mb-2">Other Printings ({data.reprints.length})</h3>
+					<h3 class="text-sm text-[var(--color-text-muted)] mb-2">Other printings ({data.reprints.length})</h3>
 					{#if data.cardSlug}
 						<a href="/cards/{data.cardSlug}" class="mb-2 inline-block text-sm text-[var(--color-primary)] hover:underline">Compare all printings of {card.name} →</a>
 					{/if}
@@ -482,7 +484,7 @@
 								class="bg-[var(--color-surface)] border border-[var(--color-border)] rounded px-3 py-1.5 text-sm hover:border-[var(--color-primary)] transition-colors"
 							>
 								{reprint.set_name} #{reprint.collector_number}
-								<PriceTag card={reprint as PriceFields} class="text-[var(--color-accent)] ml-1" hideEmpty />
+								<PriceTag card={reprint as PriceFields} class="text-[var(--color-text-strong)] ml-1" hideEmpty />
 							</a>
 						{/each}
 					</div>

@@ -116,7 +116,7 @@
 	</div>
 	{#if created}
 		<div class="space-y-4">
-			<p role="status" class="text-green-400">The deck was created with {created.added} cards.</p>
+			<p role="status" class="text-[var(--color-success)]">The deck was created with {created.added} cards.</p>
 			<DeckLineIssues issues={created.issues} notes={created.notes} />
 			<a href="/decks/{created.id}" class="btn btn-primary">Open deck</a>
 		</div>
@@ -160,7 +160,7 @@
 									<button type="button" onclick={() => (partner = null)} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)]" aria-label="Remove {partner.name}">×</button>
 								</p>
 							{:else}
-								<CardSearchInput label="Partner (optional)" placeholder="Second commander…" {format} legal={legalOnly} partnerOf={commander.id} onselect={(card) => (partner = card)} />
+								<CardSearchInput label="Partner (optional)" placeholder="Second commander" {format} legal={legalOnly} partnerOf={commander.id} onselect={(card) => (partner = card)} />
 								<p class="mt-1 text-xs text-[var(--color-text-muted)]">Only cards that may share the command zone with {commander.name}.</p>
 							{/if}
 						</div>
@@ -213,14 +213,14 @@
 				</fieldset>
 			</fieldset>
 {#if limitReached}
-				<p role="alert" class="text-sm text-amber-300" data-publish-limit>{publishBlocked}</p>
+				<p role="alert" class="text-sm text-[var(--color-warning)]" data-publish-limit>{publishBlocked}</p>
 			{:else if needsCaptcha && captchaSiteKey}
 				<div data-deck-captcha>
 					<p class="mb-1 text-xs text-[var(--color-text-muted)]">A public deck is listed for everybody, so we check that you are human first.</p>
 					<Turnstile bind:this={captcha} bind:token={captchaToken} siteKey={captchaSiteKey} action="publish-deck" />
 				</div>
 			{/if}
-			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
+			{#if message}<p role="alert" class="text-sm text-[var(--color-danger)]">{message}</p>{/if}
 			<div class="flex justify-end">
 				<button type="submit" disabled={busy || !name.trim() || !!linkHelp || limitReached || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Creating…' : 'Create'}</button>
 			</div>

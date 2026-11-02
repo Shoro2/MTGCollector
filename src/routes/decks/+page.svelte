@@ -68,8 +68,7 @@
 <div class="space-y-5">
 	<div class="page-heading">
 		<div>
-			<p class="eyebrow">Deck building</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">{data.view === 'public' ? 'Public decks' : 'Your decks'}</h1>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">{data.view === 'public' ? 'Public decks' : 'Your decks'}</h1>
 		</div>
 		{#if data.signedIn}
 			<button type="button" onclick={() => (creating = true)} class="btn btn-primary">New deck</button>
@@ -101,7 +100,7 @@
 	{:else}
 		<div class="toolbar">
 			<form onsubmit={(e) => { e.preventDefault(); navigate({ q: search.trim() }); }} class="flex min-w-0 basis-full gap-2 sm:basis-0 sm:flex-1">
-				<input type="search" bind:value={search} placeholder="Search decks or commanders…" aria-label="Search decks" class="control min-w-0 flex-1 px-3 text-sm" />
+				<input type="search" bind:value={search} placeholder="Search decks or commanders" aria-label="Search decks" class="control min-w-0 flex-1 px-3 text-sm" />
 				<button type="submit" class="btn">Search</button>
 			</form>
 			<label class="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
@@ -118,7 +117,7 @@
 
 		<div class="panel overflow-hidden">
 			<table class="w-full text-sm">
-				<thead class="text-left text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+				<thead class="text-left text-xs font-medium text-[var(--color-text-muted)]">
 					<tr class="border-b border-[var(--color-border)]">
 						<th class="px-4 py-3" aria-sort={ariaSort('name')}><button type="button" onclick={() => sortBy('name')}>Name{indicator('name')}</button></th>
 						<th class="hidden px-3 py-3 sm:table-cell">Colors</th>
@@ -135,7 +134,7 @@
 								<a href="/decks/{deck.id}" class="font-medium text-[var(--color-text)] hover:text-[var(--color-primary)]">{deck.name}</a>
 								{#if deckFormat(deck.format).kind === 'commander'}<DeckBracket bracket={deck.bracket} compact />{/if}
 								{#if deck.visibility !== 'private'}
-									<span class="chip ml-1 min-h-0 px-1.5 py-0 text-[0.62rem] uppercase">{VISIBILITY_LABELS[deck.visibility]}</span>
+									<span class="chip ml-1 min-h-0 px-1.5 py-0 text-[0.6875rem]">{VISIBILITY_LABELS[deck.visibility]}</span>
 								{/if}
 								<p class="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">
 									{#if deck.commander}{deck.commander.name}{/if}
@@ -146,7 +145,7 @@
 							<td class="hidden px-3 py-3 sm:table-cell"><ColorPips colors={deck.colors} includeColorless /></td>
 							<td class="hidden px-3 py-3 text-[var(--color-text-muted)] md:table-cell">{deckFormat(deck.format).label}</td>
 							<td class="tabular hidden px-3 py-3 text-right lg:table-cell">{deck.cards}{#if deck.sideboard}<span class="text-[var(--color-text-faint)]"> + {deck.sideboard}</span>{/if}</td>
-							<td class="price px-3 py-3 text-right text-[var(--color-accent)]">
+							<td class="price px-3 py-3 text-right text-[var(--color-text-strong)]">
 								{deck.cards || deck.sideboard ? formatPrice(deck.value) : '-'}
 								{#if deck.unpriced}<span class="block text-[0.65rem] text-[var(--color-text-faint)]" title="Copies without a price are not counted">{deck.unpriced} unpriced</span>{/if}
 							</td>

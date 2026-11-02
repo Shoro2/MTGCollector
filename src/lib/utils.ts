@@ -160,19 +160,24 @@ export function parseLanguageInput(input: string | null | undefined): string {
 	return 'en';
 }
 
+const PRICE_DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
 /**
- * Format a price history date for chart labels. Accepts both effective date
- * strings ("2026-04-03") and full ISO timestamps.
+ * Format a price history date for chart labels and lists ("Oct 31, 2026"). Accepts both
+ * effective date strings ("2026-04-03") and full ISO timestamps. One format on every page,
+ * in UTC like snapshot_date, so the server and the browser render the same text (the
+ * browser's own locale format used to mix "10/31/2026" with "October 31", unslop review
+ * 2026-11-02).
  */
 export function priceDate(dateString: string): string {
 	// If it's a plain date (YYYY-MM-DD), parse as noon UTC to avoid timezone shifts.
 	if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-		return new Date(dateString + 'T12:00:00Z').toLocaleDateString();
+		return PRICE_DATE.format(new Date(dateString + 'T12:00:00Z'));
 	}
 	// Full ISO timestamp: shift back if before 10:00 UTC.
 	const d = new Date(dateString);
 	if (d.getUTCHours() < 10) {
 		d.setUTCDate(d.getUTCDate() - 1);
 	}
-	return d.toLocaleDateString();
+	return PRICE_DATE.format(d);
 }

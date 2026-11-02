@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { displayPrice, priceDivergence, isSuspiciousDivergence, formatPrice } from './utils';
+import { displayPrice, priceDivergence, isSuspiciousDivergence, formatPrice, priceDate } from './utils';
 
 describe('displayPrice', () => {
 	it('prefers the non-foil EUR price', () => {
@@ -62,5 +62,17 @@ describe('formatPrice', () => {
 		expect(formatPrice(3, 4)).toBe('\u20ac3.00');
 		expect(formatPrice(null, 4)).toBe('$4.00');
 		expect(formatPrice(null, null)).toBe('-');
+	});
+});
+
+describe('priceDate', () => {
+	it('formats a snapshot date in one English format, whatever the locale', () => {
+		expect(priceDate('2026-10-31')).toBe('Oct 31, 2026');
+		expect(priceDate('2026-01-02')).toBe('Jan 2, 2026');
+	});
+
+	it('counts an update before 10:00 UTC towards the day before', () => {
+		expect(priceDate('2026-11-01T05:00:00Z')).toBe('Oct 31, 2026');
+		expect(priceDate('2026-11-01T18:00:00Z')).toBe('Nov 1, 2026');
 	});
 });

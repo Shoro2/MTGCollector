@@ -128,20 +128,20 @@
 			</label>
 		</fieldset>
 		{#if limitReached}
-			<p role="alert" class="text-sm text-amber-300" data-publish-limit>{publishBlocked}</p>
+			<p role="alert" class="text-sm text-[var(--color-warning)]" data-publish-limit>{publishBlocked}</p>
 		{:else if needsCaptcha && captchaSiteKey}
 			<div data-deck-captcha>
 				<p class="mb-1 text-xs text-[var(--color-text-muted)]">A public deck is listed for everybody, so we check that you are human first.</p>
 				<Turnstile bind:this={captcha} bind:token={captchaToken} siteKey={captchaSiteKey} action="publish-deck" />
 			</div>
 		{/if}
-		{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
+		{#if message}<p role="alert" class="text-sm text-[var(--color-danger)]">{message}</p>{/if}
 		<div class="flex justify-end">
 			<button type="submit" disabled={busy || !name.trim() || limitReached || (needsCaptcha && !captchaToken)} class="btn btn-primary">{busy ? 'Saving…' : 'Save'}</button>
 		</div>
 	</form>
 	<div class="mt-6 border-t border-[var(--color-border)] pt-4">
-		<label class="flex items-start gap-2 text-sm text-red-300">
+		<label class="flex items-start gap-2 text-sm text-[var(--color-danger)]">
 			<input type="checkbox" bind:checked={confirmDelete} class="mt-1" /> Delete this deck and its card list. Your collection is not touched.
 		</label>
 		<button type="button" onclick={remove} disabled={busy || !confirmDelete} class="btn btn-danger mt-2">Delete deck</button>

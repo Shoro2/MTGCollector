@@ -46,5 +46,5 @@
 		</div>
 		<button onclick={save} disabled={!locationEnabled && !condition && !language && !finish && !proxy} class="rounded bg-[var(--color-primary-button)] px-4 py-2 disabled:opacity-50">{busy ? 'Saving…' : 'Apply to selected entries'}</button>
 	</fieldset>
-	{#if message}<p role="alert" class="mt-2 text-red-400">{message}</p>{/if}
+	{#if message}<p role="alert" class="mt-2 text-[var(--color-danger)]">{message}</p>{/if}
 </details>

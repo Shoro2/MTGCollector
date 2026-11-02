@@ -134,7 +134,7 @@
 					onclick={() => (mobileMenuOpen = !mobileMenuOpen)}
 					aria-label="Toggle navigation menu"
 					aria-expanded={mobileMenuOpen}
-					class="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text)] transition-colors hover:bg-white/5 hover:text-[var(--color-accent)]"
+					class="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text)] transition-colors hover:bg-white/5 hover:text-[var(--color-text-strong)]"
 				>
 					{#if mobileMenuOpen}
 						<svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">

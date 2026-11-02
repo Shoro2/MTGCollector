@@ -25,5 +25,5 @@
 		<datalist id="move-locations">{#each locations as value}<option value={value}></option>{/each}</datalist>
 		<button onclick={move} class="rounded border px-3 py-2">{busy ? 'Moving…' : 'Move copies'}</button>
 	</fieldset>
-	{#if message}<p role="alert" class="text-red-400">{message}</p>{/if}
+	{#if message}<p role="alert" class="text-[var(--color-danger)]">{message}</p>{/if}
 </details>

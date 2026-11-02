@@ -57,7 +57,7 @@ try {
 			await page.getByRole('button', { name: /Select all/ }).click();
 			assert(await page.getByRole('button', { name: 'Import 3 selected', exact: true }).count() === 1, 'bulk selection includes only three established printings');
 			await selected.getByRole('button', { name: 'Add', exact: true }).click();
-			await selected.getByText('Added!', { exact: true }).waitFor();
+			await selected.getByText('Added', { exact: true }).waitFor();
 			assert(writes.length === 1, 'only the explicit Add generates a collection request');
 		} else assert(await selected.getByRole('button', { name: 'Add', exact: true }).count() === 0, 'guest can choose a printing without a collection action');
 		assert(errors.length === 0, 'printing selection has no browser errors');

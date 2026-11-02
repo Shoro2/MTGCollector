@@ -68,7 +68,7 @@ try {
 	check(rate > 0, `the exchange rate is known (${rate})`);
 
 	await page.goto(origin + '/collection');
-	check(await page.locator('.kpi-card', { hasText: 'Total Value' }).locator('.kpi-value').innerText() === '€10.00', 'euros by default: Cardmarket value of the collection');
+	check(await page.locator('.kpi-card', { hasText: 'Total value' }).locator('.kpi-value').innerText() === '€10.00', 'euros by default: Cardmarket value of the collection');
 
 	await page.goto(origin + '/settings', { waitUntil: 'networkidle' });
 	const panel = page.locator('[data-settings="currency"]');
@@ -86,7 +86,7 @@ try {
 
 	// The War Horn has its own dollar price ($6); the euro purchase price (€2) is converted.
 	await page.goto(origin + '/collection');
-	check(await page.locator('.kpi-card', { hasText: 'Total Value' }).locator('.kpi-value').innerText() === '$12.00', 'collection value in TCGplayer dollars');
+	check(await page.locator('.kpi-card', { hasText: 'Total value' }).locator('.kpi-value').innerText() === '$12.00', 'collection value in TCGplayer dollars');
 	check(await fits(), 'collection in dollars fits a 360 px phone');
 	const data = await (await context.request.get(origin + '/api/prices/data')).json();
 	check(data.currency === 'USD' && data.stats.totalValue === 12 && Math.abs(data.stats.totalPurchaseValue - 4 / rate) < 1e-9,

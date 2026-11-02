@@ -16,7 +16,7 @@
 	<a href="/market-value" class="grid gap-4 rounded-[inherit] p-5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] md:items-center" data-market-link>
 		<div class="flex min-w-0 flex-col gap-1.5">
 			<h2 id="market-value" class="text-base font-semibold text-[var(--color-text-strong)]">Market value of every Magic card</h2>
-			<p class="kpi-value text-[var(--color-accent)]" data-market-value>{whole(market.value)}</p>
+			<p class="kpi-value" data-market-value>{whole(market.value)}</p>
 			{#if market.change != null && market.previousDate}
 				<p
 					class="text-sm font-semibold {trend === 'up' ? 'text-[var(--color-success)]' : trend === 'down' ? 'text-[var(--color-danger)]' : 'text-[var(--color-text-muted)]'}"
