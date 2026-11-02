@@ -93,8 +93,7 @@
 <div class="space-y-5">
 	<div class="page-heading">
 		<div>
-			<p class="eyebrow">Planning</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Wishlist</h1>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">Wishlist</h1>
 		</div>
 		<span class="chip tabular">{data.items.length} cards</span>
 	</div>
@@ -105,7 +104,7 @@
 			<input
 				type="text"
 				bind:value={search}
-				placeholder="Search wishlist..."
+				placeholder="Search wishlist"
 				class="control flex-1 min-w-0 px-3 text-sm focus:outline-none focus:border-[var(--color-primary)]"
 			/>
 			<button type="submit" class="btn btn-primary">
@@ -113,16 +112,16 @@
 			</button>
 		</form>
 		<div class="flex flex-wrap gap-2">
-			<button onclick={() => sort('name')} class="btn min-h-8 {data.filters.sortBy === 'name' ? 'btn-primary' : ''}">
+			<button onclick={() => sort('name')} class="btn min-h-8 {data.filters.sortBy === 'name' ? 'btn-on' : ''}" aria-pressed={data.filters.sortBy === 'name'}>
 				Name{sortIndicator('name')}
 			</button>
-			<button onclick={() => sort('added_at')} class="btn min-h-8 {data.filters.sortBy === 'added_at' ? 'btn-primary' : ''}">
+			<button onclick={() => sort('added_at')} class="btn min-h-8 {data.filters.sortBy === 'added_at' ? 'btn-on' : ''}" aria-pressed={data.filters.sortBy === 'added_at'}>
 				Date{sortIndicator('added_at')}
 			</button>
-			<button onclick={() => sort('price')} class="btn min-h-8 {data.filters.sortBy === 'price' ? 'btn-primary' : ''}">
+			<button onclick={() => sort('price')} class="btn min-h-8 {data.filters.sortBy === 'price' ? 'btn-on' : ''}" aria-pressed={data.filters.sortBy === 'price'}>
 				Price{sortIndicator('price')}
 			</button>
-			<button onclick={() => sort('priority')} class="btn min-h-8 {data.filters.sortBy === 'priority' ? 'btn-primary' : ''}">
+			<button onclick={() => sort('priority')} class="btn min-h-8 {data.filters.sortBy === 'priority' ? 'btn-on' : ''}" aria-pressed={data.filters.sortBy === 'priority'}>
 				Priority{sortIndicator('priority')}
 			</button>
 		</div>
@@ -156,11 +155,11 @@
 							<div class="flex flex-wrap items-center gap-2">
 								<a href="/cards/{item.card_id}" class="font-semibold hover:text-[var(--color-primary)] transition-colors break-words min-w-0">{item.name}</a>
 								{#if inCollection}
-									<span class="text-green-400 text-xs flex-shrink-0" title="In collection">&#10003; owned</span>
+									<span class="text-[var(--color-success)] text-xs flex-shrink-0" title="In collection">&#10003; owned</span>
 								{/if}
 								{#if (item.priority as number) > 0}
-									<span class="text-xs px-1.5 py-0.5 rounded bg-yellow-600/20 text-yellow-400 flex-shrink-0">
-										{'!'.repeat(Math.min(item.priority as number, 3))}
+									<span class="text-xs px-1.5 py-0.5 rounded bg-[var(--color-warning)]/20 text-[var(--color-warning)] flex-shrink-0">
+										Priority {item.priority}
 									</span>
 								{/if}
 							</div>
@@ -178,7 +177,7 @@
 						<div class="flex items-center justify-between sm:justify-end gap-3 mt-2 sm:mt-0 flex-wrap">
 							<!-- Price -->
 							<div class="text-left sm:text-right flex-shrink-0">
-								<p class="text-[var(--color-accent)] font-medium">
+								<p class="text-[var(--color-text-strong)] font-medium">
 									<PriceTag card={item as PriceFields} />
 								</p>
 							</div>
@@ -201,7 +200,7 @@
 									<button
 										type="submit"
 										disabled={adding === item.card_id}
-										class="bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-xs transition-colors disabled:opacity-50"
+										class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] text-white px-2 py-1 rounded text-xs transition-colors disabled:opacity-50"
 									>
 										{adding === item.card_id ? '...' : 'OK'}
 									</button>
@@ -216,7 +215,7 @@
 							{:else}
 								<button
 									onclick={() => startCollect(item.card_id as string, item.id as number)}
-									class="bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-lg text-xs transition-colors"
+									class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] text-white px-3 py-1.5 rounded-lg text-xs transition-colors"
 									title="Add to collection & remove from wishlist"
 								>
 									Collect
@@ -226,7 +225,7 @@
 							<button
 								onclick={() => removeFromWishlist(item.id as number)}
 								disabled={removing === item.id}
-								class="text-red-400 hover:text-red-300 px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-50"
+								class="text-[var(--color-danger)] hover:text-[var(--color-danger)] px-2 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-50"
 								title="Remove from wishlist"
 							>
 								{removing === item.id ? '...' : '✕'}

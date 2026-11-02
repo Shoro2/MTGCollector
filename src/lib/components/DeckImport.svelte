@@ -60,7 +60,7 @@
 	</div>
 	{#if result}
 		<div class="space-y-4">
-			<p role="status" class="text-green-400">Imported {result.added} cards.</p>
+			<p role="status" class="text-[var(--color-success)]">Imported {result.added} cards.</p>
 			<DeckLineIssues issues={result.issues} notes={result.notes} />
 			<button type="button" onclick={() => dialog.close()} class="btn btn-primary">Done</button>
 		</div>
@@ -85,12 +85,12 @@
 					<label class="mt-1 flex items-center gap-2 text-sm"><input type="radio" name="import-mode" value="replace" bind:group={mode} /> Replace every card in the deck</label>
 				</fieldset>
 				{#if mode === 'replace'}
-					<label class="flex items-start gap-2 text-sm text-red-300">
+					<label class="flex items-start gap-2 text-sm text-[var(--color-danger)]">
 						<input type="checkbox" bind:checked={confirmReplace} class="mt-1" /> Remove the current cards and import this list instead.
 					</label>
 				{/if}
 			</fieldset>
-			{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
+			{#if message}<p role="alert" class="text-sm text-[var(--color-danger)]">{message}</p>{/if}
 			<div class="flex justify-end">
 				<button type="submit" disabled={busy || !text.trim() || !!linkHelp || (mode === 'replace' && !confirmReplace)} class="btn btn-primary">{busy ? 'Importing…' : 'Import'}</button>
 			</div>

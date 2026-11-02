@@ -92,7 +92,7 @@
 				<p class="font-semibold">{preview.summary.ready} entries ready · {preview.summary.copies} copies · {preview.summary.issues} unresolved rows</p>
 				<p class="text-sm">{preview.summary.duplicates} entries already exist; {preview.summary.skipped} will be skipped.</p>
 				{#if preview.summary.issues}
-					<div class="rounded border border-amber-500/50 p-3"><p>Unresolved rows will be left out. Replacement is disabled until all rows are resolved.</p>
+					<div class="rounded border border-[var(--color-warning)]/50 p-3"><p>Unresolved rows will be left out. Replacement is disabled until all rows are resolved.</p>
 						<ul class="mt-2 text-sm space-y-1">{#each preview.issues as issue}<li>Row {issue.line}: {issue.name} — {issue.message}</li>{/each}</ul>
 						{#if preview.summary.issues > preview.issues.length}<p>Showing the first {preview.issues.length} issues. Fix these and preview again.</p>{/if}
 					</div>
@@ -103,13 +103,13 @@
 					{/each}</div>
 				</details>
 				{#if mode === 'sync'}
-					<label class="flex gap-2 items-start text-red-300"><input type="checkbox" bind:checked={confirmReplace} class="mt-1" />{#if allProxies}Replace all {preview.summary.existingCopies} existing proxy copies ({preview.summary.existingEntries} entries) and their tag assignments with this file. Real cards are kept.{:else}Replace all {preview.summary.existingCopies} existing copies ({preview.summary.existingEntries} entries) and their tag assignments with this file.{/if}</label>
+					<label class="flex gap-2 items-start text-[var(--color-danger)]"><input type="checkbox" bind:checked={confirmReplace} class="mt-1" />{#if allProxies}Replace all {preview.summary.existingCopies} existing proxy copies ({preview.summary.existingEntries} entries) and their tag assignments with this file. Real cards are kept.{:else}Replace all {preview.summary.existingCopies} existing copies ({preview.summary.existingEntries} entries) and their tag assignments with this file.{/if}</label>
 				{/if}
 				<button onclick={() => send('commit')} disabled={!preview.summary.ready || mode === 'sync' && (!confirmReplace || preview.summary.issues > 0)} class="rounded bg-[var(--color-primary-button)] px-4 py-2 disabled:opacity-50">Import {preview.summary.copies} copies</button>
 			</section>
 		{/if}
 	</fieldset>
-	{#if message}<p role="status" class="mt-4 {done ? 'text-green-400' : 'text-red-400'}">{message}</p>{/if}
+	{#if message}<p role="status" class="mt-4 {done ? 'text-[var(--color-success)]' : 'text-[var(--color-danger)]'}">{message}</p>{/if}
 </dialog>
 
 <style>dialog::backdrop { background: #000a; }</style>

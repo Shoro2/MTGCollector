@@ -123,7 +123,7 @@
 			</fieldset>
 			<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={foil} /> Foil</label>
 		</fieldset>
-		{#if message}<p role="alert" class="text-sm text-red-400">{message}</p>{/if}
+		{#if message}<p role="alert" class="text-sm text-[var(--color-danger)]">{message}</p>{/if}
 		<div class="flex flex-wrap justify-between gap-2">
 			<button type="button" onclick={() => send('DELETE', {})} disabled={busy} class="btn btn-danger">Remove from deck</button>
 			<button type="submit" disabled={busy} class="btn btn-primary">{busy ? 'Saving…' : 'Save'}</button>

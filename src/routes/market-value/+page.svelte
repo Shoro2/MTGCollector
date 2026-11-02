@@ -87,10 +87,8 @@
 		chart?.destroy();
 	});
 
-	const pill = (active: boolean) => `rounded-md px-3 py-1.5 text-center text-sm transition-colors ${active
-		? 'bg-[var(--color-primary)] text-white'
-		: 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}`;
-	const group = 'grid w-full gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5 sm:inline-grid sm:w-auto sm:grid-flow-col sm:auto-cols-auto sm:grid-cols-none';
+	const pill = (active: boolean) => `segmented-option px-3 py-1.5 text-center text-sm ${active ? 'segmented-on' : ''}`;
+	const group = 'segmented grid w-full gap-0.5 p-0.5 sm:inline-grid sm:w-auto sm:grid-flow-col sm:auto-cols-auto sm:grid-cols-none';
 </script>
 
 <svelte:head>
@@ -105,7 +103,7 @@
 <div class="flex min-w-0 flex-col gap-5" data-market-page data-currency={currency} data-market-set={filter.set ?? ''}>
 	<header class="flex flex-col gap-1">
 		<a href="/" class="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">‹ Home</a>
-		<h1 class="text-2xl font-semibold text-[var(--color-text-strong)]">Market value of {subject}</h1>
+		<h1 class="text-2xl font-medium text-[var(--color-text-strong)]">Market value of {subject}</h1>
 		<p class="text-sm text-[var(--color-text-muted)]">
 			One copy of each {data.setName ? 'English printing of the set' : 'printing'} with a {source} (non foil, or foil when it only exists in foil), added up on every price update. {currencyMarket(currency)} prices in {currencySymbol(currency)}, never converted.
 		</p>
@@ -226,7 +224,7 @@
 			<h2 id="market-months-heading" class="text-base font-semibold text-[var(--color-text-strong)]">Values per month</h2>
 			<div class="panel overflow-hidden">
 				<table class="w-full text-sm">
-					<thead class="text-left text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+					<thead class="text-left text-xs font-medium text-[var(--color-text-muted)]">
 						<tr class="border-b border-[var(--color-border)]">
 							<th scope="col" class="px-3 py-3 sm:px-4">Month</th>
 							<th scope="col" class="px-3 py-3 text-right">Last value</th>
@@ -241,7 +239,7 @@
 						{#each data.months as row (row.month)}
 							<tr class="border-b border-[var(--color-border-subtle)] last:border-0" data-market-month={row.month}>
 								<th scope="row" class="px-3 py-2.5 text-left sm:px-4">{monthLabel(row.month)}</th>
-								<td class="tabular px-3 py-2.5 text-right text-[var(--color-accent)]" data-month-value>{whole(row.value)}</td>
+								<td class="tabular px-3 py-2.5 text-right text-[var(--color-text-strong)]" data-month-value>{whole(row.value)}</td>
 								<td class="tabular px-3 py-2.5 text-right sm:px-4 md:px-3 {changeClass(row.change)}" data-month-change>
 									{#if row.change == null}
 										<span class="text-[var(--color-text-faint)]">n/a</span>

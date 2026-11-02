@@ -41,14 +41,14 @@
 		Makes text, images and the page width larger or smaller on every page.
 		Saved in this browser only, so a large monitor and a phone can use different sizes.
 	</p>
-	<div class="flex flex-wrap gap-1 rounded-lg bg-[var(--color-bg)] p-1" role="group" aria-label="Display size">
+	<div class="segmented flex flex-wrap gap-1" role="group" aria-label="Display size">
 		{#each UI_SCALES as value}
 			<button
 				type="button"
 				onclick={() => choose(value)}
 				aria-pressed={scale === value}
 				data-scale={value}
-				class="min-w-0 flex-1 rounded px-3 py-1.5 text-sm whitespace-nowrap transition-colors {scale === value ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'}"
+				class="segmented-option min-w-0 flex-1 px-3 py-1.5 text-sm whitespace-nowrap {scale === value ? 'segmented-on' : ''}"
 			>
 				{UI_SCALE_LABELS[value]}
 			</button>

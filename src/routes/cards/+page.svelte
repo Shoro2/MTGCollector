@@ -221,13 +221,11 @@
 <div class="space-y-5">
 	<div class="page-heading">
 		<div>
-			<p class="eyebrow">Card database</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">Browse Cards</h1>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">Cards</h1>
 			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">
-				{data.totalCards.toLocaleString()} cards - page {data.page} of {data.totalPages}
+				{data.totalCards.toLocaleString()} cards · page {data.page} of {data.totalPages}
 			</p>
 		</div>
-		<span class="chip">{data.cards.length.toLocaleString()} shown</span>
 	</div>
 
 	<form onsubmit={(e) => { e.preventDefault(); search(); }} class="toolbar">
@@ -239,7 +237,7 @@
 			<input
 				type="text"
 				bind:value={query}
-				placeholder="Search cards by name, type, or text..."
+				placeholder="Search cards by name, type or text"
 				class="control h-[2.375rem] w-full pl-9 pr-3 text-sm placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-primary)]"
 			/>
 		</div>
@@ -249,7 +247,7 @@
 					type="button"
 					onclick={() => toggleColor(color.code)}
 					aria-label={color.name}
-					class="color-pip pip-{color.code.toLowerCase()} h-[1.875rem] w-[1.875rem] transition-all {selectedColors.includes(color.code) ? 'scale-105 bg-white/10 opacity-100' : selectedColors.length ? 'opacity-45' : 'opacity-100'}"
+					class="color-pip pip-{color.code.toLowerCase()} h-[1.875rem] w-[1.875rem] transition-[opacity,background-color,border-color] {selectedColors.includes(color.code) ? 'bg-white/10 opacity-100' : selectedColors.length ? 'opacity-45' : 'opacity-100'}"
 				>
 					{color.code}
 				</button>
@@ -268,9 +266,9 @@
 		<section class="panel p-4">
 			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 				<div>
-					<label for="filter-type" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Type</label>
+					<label for="filter-type" class="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Type</label>
 					<select id="filter-type" bind:value={type} class="control w-full px-3 text-sm">
-						<option value="">All Types</option>
+						<option value="">All types</option>
 						{#each types as t}
 							<option value={t}>{t}</option>
 						{/each}
@@ -278,7 +276,7 @@
 				</div>
 
 				<div class="relative" bind:this={setWrapperEl}>
-					<label for="filter-set" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Set</label>
+					<label for="filter-set" class="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Set</label>
 					<div class="relative">
 						<input
 							id="filter-set"
@@ -292,7 +290,7 @@
 							oninput={() => { setDropdownOpen = true; setHighlight = 0; }}
 							onfocus={() => { setDropdownOpen = true; }}
 							onkeydown={onSetKeydown}
-							placeholder="All Sets"
+							placeholder="All sets"
 							autocomplete="off"
 							class="control w-full px-3 pr-8 text-sm"
 						/>
@@ -334,9 +332,9 @@
 				</div>
 
 				<div>
-					<label for="filter-rarity" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Rarity</label>
+					<label for="filter-rarity" class="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Rarity</label>
 					<select id="filter-rarity" bind:value={rarity} class="control w-full px-3 text-sm">
-						<option value="">All Rarities</option>
+						<option value="">All rarities</option>
 						{#each rarities as r}
 							<option value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
 						{/each}
@@ -344,9 +342,9 @@
 				</div>
 
 				<div>
-					<label for="filter-legality" class="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Legal in</label>
+					<label for="filter-legality" class="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">Legal in</label>
 					<select id="filter-legality" bind:value={legality} class="control w-full px-3 text-sm">
-						<option value="">Any Format</option>
+						<option value="">Any format</option>
 						{#each legalities as l}
 							<option value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
 						{/each}
@@ -369,30 +367,32 @@
 					<input type="number" bind:value={cmcMax} placeholder="Max" min="0" class="control h-8 w-20 px-2 text-sm" />
 				</label>
 				<button type="button" onclick={search} class="btn btn-primary min-h-8">Apply</button>
-				<button type="button" onclick={clearFilters} class="btn min-h-8">Clear All</button>
+				<button type="button" onclick={clearFilters} class="btn min-h-8">Clear all</button>
 			</div>
 		</section>
 	{/if}
 
 	<div class="flex flex-wrap items-center gap-2">
-		<span class="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">Sort</span>
-		<div class="flex flex-wrap gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-1">
+		<span class="text-xs text-[var(--color-text-muted)]">Sort</span>
+		<div class="segmented flex flex-wrap gap-1">
 			{#each sortOptions as [key, label]}
 				<button
 					type="button"
 					onclick={() => setSort(key)}
-					class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'}"
+					aria-pressed={data.filters.sortBy === key}
+					class="segmented-option px-3 py-1.5 text-xs {data.filters.sortBy === key ? 'segmented-on' : ''}"
 				>
 					{label}
 					{#if data.filters.sortBy === key}
-						{data.filters.sortDir === 'asc' ? 'up' : 'down'}
+						<span aria-label={data.filters.sortDir === 'asc' ? 'ascending' : 'descending'}>{data.filters.sortDir === 'asc' ? '↑' : '↓'}</span>
 					{/if}
 				</button>
 			{/each}
 			<button
 				type="button"
 				onclick={toggleUnique}
-				class="rounded-md px-3 py-1.5 text-xs font-semibold transition-colors {data.filters.unique ? 'bg-[var(--color-primary-button)] text-white' : 'text-[var(--color-text-muted)] hover:bg-white/5 hover:text-[var(--color-text)]'}"
+				aria-pressed={data.filters.unique}
+				class="segmented-option px-3 py-1.5 text-xs {data.filters.unique ? 'segmented-on' : ''}"
 			>
 				Unique only
 			</button>
@@ -446,7 +446,7 @@
 						<p class="truncate text-sm font-semibold text-[var(--color-text)]">{card.name}</p>
 						<div class="mt-1 flex items-center justify-between gap-2">
 							<span class="set-code truncate text-[var(--color-text-muted)]">{card.set_name}</span>
-							<PriceTag card={card as PriceFields} class="price text-xs font-semibold text-[var(--color-accent)]" hideEmpty />
+							<PriceTag card={card as PriceFields} class="price text-xs text-[var(--color-text-strong)]" hideEmpty />
 						</div>
 					</div>
 				</a>

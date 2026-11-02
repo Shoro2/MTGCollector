@@ -412,8 +412,8 @@
 		);
 		if (purchasePrice == null || !purchasePrice || currentPrice == null) return null;
 		const percent = ((currentPrice - purchasePrice) / purchasePrice) * 100;
-		if (percent > 0) return { percent, direction: '▲', color: 'text-green-400' };
-		if (percent < 0) return { percent, direction: '▼', color: 'text-red-400' };
+		if (percent > 0) return { percent, direction: '▲', color: 'text-[var(--color-success)]' };
+		if (percent < 0) return { percent, direction: '▼', color: 'text-[var(--color-danger)]' };
 		return { percent: 0, direction: '—', color: 'text-[var(--color-text-muted)]' };
 	}
 
@@ -448,7 +448,7 @@
 		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
 			<!-- Header -->
 			<div class="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-				<h2 class="text-lg font-bold">Edit Collection Card</h2>
+				<h2 class="text-lg font-medium">Edit collection card</h2>
 				<button onclick={closeEdit} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
 			</div>
 
@@ -567,19 +567,19 @@
 						<input bind:value={editLocation} maxlength="120" list="edit-locations" placeholder="Box A / Blue" class="block w-full rounded border p-2 bg-[var(--color-bg)]" />
 					</label>
 					<datalist id="edit-locations">{#each data.locations as value}<option value={value}></option>{/each}</datalist>
-					{#if editError}<p role="alert" class="text-red-400">{editError}</p>{/if}
+					{#if editError}<p role="alert" class="text-[var(--color-danger)]">{editError}</p>{/if}
 					{#key editItem.id}
 						<MoveCollectionCopies id={editItem.id as number} quantity={editItem.quantity as number} locations={data.locations} ondone={async () => { closeEdit(); await collectionChanged(); }} />
 					{/key}
 					<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
-							<span class="text-xs text-[var(--color-text-muted)]">{editProxy ? 'Original Price' : 'Current Price'}</span>
-							<p class="font-medium {editProxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-accent)]'}">
+							<span class="text-xs text-[var(--color-text-muted)]">{editProxy ? 'Original price' : 'Current price'}</span>
+							<p class="font-medium {editProxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-strong)]'}">
 								{itemQuote(editItem)}
 							</p>
 						</div>
 						<div class="bg-[var(--color-bg)] rounded p-3 border border-[var(--color-border)]">
-							<span class="text-xs text-[var(--color-text-muted)]">Since Purchase</span>
+							<span class="text-xs text-[var(--color-text-muted)]">Since purchase</span>
 							{#if !editProxy && priceChange(editItem)}
 								<p class="font-medium {priceChange(editItem)!.color}">
 									{priceChange(editItem)!.direction} {Math.abs(priceChange(editItem)!.percent).toFixed(1)}%
@@ -616,7 +616,7 @@
 							id="edit-notes"
 							bind:value={editNotes}
 							rows="3"
-							placeholder="Add notes about this card..."
+							placeholder="Notes"
 							class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-[var(--color-primary)]"
 						></textarea>
 					</div>
@@ -634,7 +634,7 @@
 			<div class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 p-5 border-t border-[var(--color-border)]">
 				<button
 					onclick={deleteFromEdit}
-					class="text-red-400 hover:text-red-300 text-sm transition-colors text-left"
+					class="text-[var(--color-danger)] hover:text-[var(--color-danger)] text-sm transition-colors text-left"
 				>
 					Remove from collection
 				</button>
@@ -661,9 +661,8 @@
 <div class="space-y-5">
 	<div class="page-heading">
 		<div>
-			<p class="eyebrow">Portfolio</p>
-			<h1 class="mt-1 text-[1.375rem] font-semibold text-[var(--color-text-strong)]">My Collection</h1>
-			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">{data.stats.uniqueCards} unique - {data.stats.totalCards} total cards</p>
+			<h1 class="text-[1.375rem] font-medium text-[var(--color-text-strong)]">Collection</h1>
+			<p class="mt-1 tabular text-xs text-[var(--color-text-muted)]">{data.stats.uniqueCards} unique · {data.stats.totalCards} total cards</p>
 		</div>
 		<div class="flex flex-wrap gap-2">
 			<button
@@ -677,7 +676,7 @@
 				href="/scan"
 				class="bg-[var(--color-surface)] hover:bg-[var(--color-surface-hover)] px-4 py-2 rounded-lg text-sm border border-[var(--color-border)] transition-colors"
 			>
-				Scan Card
+				Scan cards
 			</a>
 			<button
 				onclick={openImportModal}
@@ -703,16 +702,16 @@
 	<!-- Stats -->
 	<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
 		<div class="kpi-card">
-			<p class="kpi-label">Unique Printings</p>
+			<p class="kpi-label">Unique printings</p>
 			<p class="kpi-value">{data.stats.uniqueCards}</p>
 		</div>
 		<div class="kpi-card">
-			<p class="kpi-label">Total Cards</p>
+			<p class="kpi-label">Total cards</p>
 			<p class="kpi-value">{data.stats.totalCards}</p>
 			{#if data.stats.proxyCards}<p class="text-xs text-[var(--color-text-muted)]">incl. {data.stats.proxyCards} {data.stats.proxyCards === 1 ? 'proxy' : 'proxies'}</p>{/if}
 		</div>
 		<div class="kpi-card">
-			<p class="kpi-label">Total Value</p>
+			<p class="kpi-label">Total value</p>
 			<p class="kpi-value text-[var(--color-accent)]">{formatMoney(data.stats.totalValue, data.currency)}</p>
 			{#if data.stats.proxyCards}<p class="text-xs text-[var(--color-text-muted)]">Proxies not counted</p>{/if}
 		</div>
@@ -723,7 +722,8 @@
 		<span class="text-sm text-[var(--color-text-muted)]">Tags:</span>
 		<button
 			onclick={() => filterByTag(null)}
-			class="px-3 py-1 rounded-full text-xs transition-colors {!data.filters.tagFilter ? 'bg-[var(--color-primary-button)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]'}"
+			aria-pressed={!data.filters.tagFilter}
+			class="px-3 py-1 rounded-full text-xs transition-colors border {!data.filters.tagFilter ? 'btn-on' : 'bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)]'}"
 		>
 			All
 		</button>
@@ -732,14 +732,14 @@
 				style="background: {data.filters.tagFilter === String(tag.id) ? tag.color : 'transparent'}; border: 1px solid {tag.color}; color: {data.filters.tagFilter === String(tag.id) ? 'white' : tag.color}"
 			>
 				<span onclick={() => filterByTag(String(tag.id))} role="button" tabindex="0" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') filterByTag(String(tag.id)); }}>{tag.name}</span>
-				<button onclick={() => deleteTag(tag.id as number)} class="ml-1 hover:text-red-400">&times;</button>
+				<button onclick={() => deleteTag(tag.id as number)} class="ml-1 hover:text-[var(--color-danger)]">&times;</button>
 			</span>
 		{/each}
 		<button
 			onclick={() => showTagForm = !showTagForm}
 			class="px-3 py-1 rounded-full text-xs bg-[var(--color-surface)] border border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
 		>
-			+ New Tag
+			+ New tag
 		</button>
 	</div>
 
@@ -762,16 +762,17 @@
 			<input
 				type="text"
 				bind:value={search}
-				placeholder="Search collection..."
+				placeholder="Search collection"
 				class="flex-1 min-w-0 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-4 py-2 text-sm placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)]"
 			/>
-			<button type="submit" class="bg-[var(--color-primary-button)] px-4 py-2 rounded-lg text-sm">Search</button>
+			<button type="submit" class="btn">Search</button>
 		</form>
 		<div class="flex flex-wrap gap-1">
 			{#each [['name', 'Name'], ['added_at', 'Date'], ['price', 'Price'], ['profit', 'Profit %'], ['profit_total', `Profit ${currencySymbol(data.currency)}`], ['quantity', 'Amount'], ['set_name', 'Set']] as [key, label]}
 				<button
 					onclick={() => setSort(key)}
-					class="px-3 py-2 rounded-lg text-xs transition-colors {data.filters.sortBy === key ? 'bg-[var(--color-primary-button)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)]'}"
+					aria-pressed={data.filters.sortBy === key}
+					class="btn min-h-8 text-xs {data.filters.sortBy === key ? 'btn-on' : ''}"
 				>
 					{label} {data.filters.sortBy === key ? (data.filters.sortDir === 'asc' ? '▲' : '▼') : ''}
 				</button>
@@ -834,13 +835,13 @@
 								<span>{item.quantity}x</span>
 								<span>{conditionLabel(item.condition as string)}</span>
 								{#if item.foil}
-									<span class="text-[var(--color-accent)]">FOIL</span>
+									<span class="foil-chip chip">Foil</span>
 								{/if}
 								{#if item.proxy}
-									<span class="tracking-wide text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-dashed border-[var(--color-border)]" title="Proxy — not counted in value or profit/loss">PROXY</span>
+									<span class="text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-dashed border-[var(--color-border)]" title="Proxy: not counted in value or profit/loss">Proxy</span>
 								{/if}
 								{#if item.language && item.language !== 'en'}
-									<span class="uppercase tracking-wide text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">{languageLabel(item.language as string)}</span>
+									<span class="text-xs px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)]">{languageLabel(item.language as string)}</span>
 								{/if}
 								<span class="break-words">{item.set_name}</span>
 							</div>
@@ -861,7 +862,7 @@
 						<div class="flex items-center justify-between sm:justify-end gap-2 mt-2 sm:mt-0 sm:flex-shrink-0">
 							<!-- Price -->
 							<div class="text-left sm:text-right">
-								<p class="font-medium {item.proxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-accent)]'}">
+								<p class="font-medium {item.proxy ? 'text-[var(--color-text-muted)]' : 'text-[var(--color-text-strong)]'}">
 									{itemQuote(item)}
 								</p>
 								{#if item.proxy}
@@ -878,7 +879,7 @@
 							</div>
 							<button
 								onclick={(e) => { e.stopPropagation(); openCardChart(item.card_id as string, item.language as string); }}
-								class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] transition-colors flex-shrink-0"
+								class="p-2 rounded-lg hover:bg-[var(--color-bg)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors flex-shrink-0"
 								title="Price history"
 							>
 								<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -929,7 +930,7 @@
 	>
 		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[90vh] overflow-y-auto">
 			<div class="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-				<h2 class="text-lg font-bold">Export Collection</h2>
+				<h2 class="text-lg font-medium">Export collection</h2>
 				<button onclick={closeExportModal} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
 			</div>
 
@@ -985,7 +986,7 @@
 							disabled={!exportText}
 							class="bg-[var(--color-primary-button)] hover:bg-[var(--color-primary-button-hover)] px-6 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50"
 						>
-							{exportCopied ? 'Copied!' : 'Copy to clipboard'}
+							{exportCopied ? 'Copied' : 'Copy to clipboard'}
 						</button>
 					{/if}
 				{/if}
@@ -1004,7 +1005,7 @@
 	>
 		<div class="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-full max-w-2xl max-h-[90vh] overflow-y-auto">
 			<div class="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-				<h2 class="text-lg font-bold">Import Purchase Prices</h2>
+				<h2 class="text-lg font-medium">Import purchase prices</h2>
 				<button onclick={closePriceImportModal} class="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-2xl leading-none">&times;</button>
 			</div>
 
@@ -1076,7 +1077,7 @@
 					<div class="bg-[var(--color-bg)] rounded-lg p-3 border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] space-y-1">
 						<p class="font-medium text-[var(--color-text)]">Cardmarket "Articles from Shipment" CSV</p>
 						<p>Semicolon-separated export with <code>idProduct</code>, <code>price</code>, <code>isFoil</code> columns.</p>
-						<p>Cards are matched via their Cardmarket product ID — run <code>npm run import-cards</code> or wait for the next price update if you recently upgraded, otherwise matches may be empty.</p>
+						<p>Cards are matched via their Cardmarket product ID. Run <code>npm run import-cards</code> or wait for the next price update if you recently upgraded, otherwise matches may be empty.</p>
 					</div>
 					<div>
 						<label for="price-import-cm" class="block text-sm font-medium mb-2">CSV file</label>
@@ -1130,22 +1131,22 @@
 
 				<!-- Result -->
 				{#if priceImportResult}
-					<div class="rounded-lg p-4 border {priceImportResult.success ? 'bg-green-900/20 border-green-500/50' : 'bg-red-900/20 border-red-500/50'}">
+					<div class="rounded-lg p-4 border {priceImportResult.success ? 'bg-[var(--color-success)]/10 border-[var(--color-success)]/50' : 'bg-[var(--color-danger)]/10 border-[var(--color-danger)]/50'}">
 						{#if priceImportResult.success}
-							<p class="font-medium text-green-300">
+							<p class="font-medium text-[var(--color-success)]">
 								Updated {priceImportResult.updatedRows} collection entr{priceImportResult.updatedRows === 1 ? 'y' : 'ies'}
 								from {priceImportResult.matchedCards} matched card{priceImportResult.matchedCards === 1 ? '' : 's'}
 								(of {priceImportResult.total} input rows).
 							</p>
-							<p class="text-sm text-green-300/70 mt-1">
+							<p class="text-sm text-[var(--color-success)]/70 mt-1">
 								Mode: {priceImportResult.mode === 'overwrite' ? 'overwrite existing' : 'fill only empty'}.
 							</p>
 							{#if priceImportResult.notInCollection && priceImportResult.notInCollection > 0}
 								<div class="mt-3">
-									<p class="text-sm text-yellow-300">
+									<p class="text-sm text-[var(--color-warning)]">
 										{priceImportResult.notInCollection} card{priceImportResult.notInCollection === 1 ? '' : 's'} not in your collection as a real card (or already had a price in fill-only mode):
 									</p>
-									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
+									<ul class="text-xs text-[var(--color-warning)]/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
 										{#each priceImportResult.notInCollectionLabels ?? [] as lbl}
 											<li>{lbl}</li>
 										{/each}
@@ -1157,10 +1158,10 @@
 							{/if}
 							{#if priceImportResult.notMatched && priceImportResult.notMatched > 0}
 								<div class="mt-3">
-									<p class="text-sm text-yellow-300">
+									<p class="text-sm text-[var(--color-warning)]">
 										{priceImportResult.notMatched} card{priceImportResult.notMatched === 1 ? '' : 's'} could not be matched in the database:
 									</p>
-									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
+									<ul class="text-xs text-[var(--color-warning)]/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto">
 										{#each priceImportResult.notMatchedLabels ?? [] as lbl}
 											<li>{lbl}</li>
 										{/each}
@@ -1172,10 +1173,10 @@
 							{/if}
 							{#if priceImportResult.parseErrorCount && priceImportResult.parseErrorCount > 0}
 								<div class="mt-3">
-									<p class="text-sm text-yellow-300">
+									<p class="text-sm text-[var(--color-warning)]">
 										{priceImportResult.parseErrorCount} lines could not be parsed:
 									</p>
-									<ul class="text-xs text-yellow-300/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto font-mono">
+									<ul class="text-xs text-[var(--color-warning)]/70 mt-1 list-disc list-inside max-h-32 overflow-y-auto font-mono">
 										{#each priceImportResult.parseErrors ?? [] as line}
 											<li>{line}</li>
 										{/each}
@@ -1186,7 +1187,7 @@
 								</div>
 							{/if}
 						{:else}
-							<p class="font-medium text-red-300">{priceImportResult.message || 'Import failed.'}</p>
+							<p class="font-medium text-[var(--color-danger)]">{priceImportResult.message || 'Import failed.'}</p>
 						{/if}
 					</div>
 				{/if}

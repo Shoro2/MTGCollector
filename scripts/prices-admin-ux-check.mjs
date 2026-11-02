@@ -83,7 +83,7 @@ try {
 	check(true, 'retry renders the actual Chart.js chart');
 	const dollarRow = page.locator('a', { has: page.getByText('Dollar Card', { exact: true }) }).first();
 	check((await dollarRow.innerText()).includes('€'), 'USD-only holding displays a converted euro value');
-	check(await page.getByText('Unique Printings', { exact: true }).isVisible(), 'unique count is labelled as printings');
+	check(await page.getByText('Unique printings', { exact: true }).isVisible(), 'unique count is labelled as printings');
 	check(await page.getByText('English reference', { exact: true }).count() > 0, 'reference prices are labelled on foreign cards');
 	check(await page.getByText('market value compared with', { exact: false }).isVisible(), 'profit states the matching market value and purchase cost');
 	check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), 'prices fit the mobile viewport');
@@ -231,13 +231,13 @@ try {
 	fixture.prepare('INSERT INTO sessions VALUES (?,?,?)').run('expired-after-boot', 'fixture-owner', new Date(Date.now() - 1000).toISOString());
 	fixture.close();
 	await page.goto(origin + '/admin');
-	await page.getByRole('heading', { name: 'Admin Dashboard' }).waitFor();
+	await page.getByRole('heading', { name: 'Admin', exact: true }).waitFor();
 	check(await page.getByText('1 active session', { exact: true }).isVisible(), 'admin counts only unexpired ISO sessions');
-	check(await page.getByText('Catalogue Printings', { exact: true }).isVisible(), 'admin catalogue count has an unambiguous label');
+	check(await page.getByText('Catalogue printings', { exact: true }).isVisible(), 'admin catalogue count has an unambiguous label');
 	check(await page.getByText('New or changed prices only', { exact: false }).isVisible(), 'snapshot counts explain change-only updates');
 	const sessionsCount = page.locator('tr', { has: page.getByRole('cell', { name: 'sessions', exact: true }) }).getByRole('cell').nth(1);
 	check(await sessionsCount.innerText() === '2', 'expired sessions remain visible in the raw table count');
-	await page.getByRole('button', { name: 'Cleanup Expired Sessions' }).click();
+	await page.getByRole('button', { name: 'Clean up expired sessions' }).click();
 	await page.getByText('Cleaned up 1 expired sessions', { exact: true }).waitFor();
 	await page.waitForFunction(() => [...document.querySelectorAll('tr')].some(row => row.cells[0]?.textContent === 'sessions' && row.cells[1]?.textContent === '1'));
 	check(true, 'session cleanup refreshes the displayed counts');

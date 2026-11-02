@@ -69,7 +69,7 @@
 
 	<header class="panel p-5 md:p-7">
 		<p class="eyebrow">Portfolio tracker</p>
-		<h1 class="mt-1 text-2xl font-semibold text-[var(--color-text-strong)] md:text-3xl">Free MTG portfolio tracker</h1>
+		<h1 class="mt-1 text-2xl font-medium text-[var(--color-text-strong)] md:text-3xl">Free MTG portfolio tracker</h1>
 		<p class="mt-3 max-w-2xl text-[var(--color-text-muted)]">
 			See what your Magic: The Gathering collection is worth and how much you gained or lost compared with what you
 			paid. Prices are updated every day.
@@ -99,7 +99,7 @@
 			</div>
 			<div class="kpi-card">
 				<p class="kpi-label">Profit / loss</p>
-				<p class="kpi-value text-green-400">+€315.80</p>
+				<p class="kpi-value text-[var(--color-success)]">+€315.80</p>
 				<p class="kpi-subtle">+33.9 % on cost</p>
 			</div>
 			<div class="kpi-card">
