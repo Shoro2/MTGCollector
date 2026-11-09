@@ -1,10 +1,17 @@
 import { sqlite } from '$lib/server/db';
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { setsCache } from '$lib/server/cache';
 import { ftsPrefixQuery } from '$lib/fts';
 import { cardSlugIndex } from '$lib/server/card-slugs';
+import { queryCatalogue, userMarks } from '$lib/server/catalogue';
 
 export async function load({ url, locals }) {
+	// One tile per card is the default since 2026-11-09; the old "Unique only" switch is gone.
+	if (url.searchParams.has('unique')) {
+		const params = new URLSearchParams(url.searchParams);
+		params.delete('unique');
+		redirect(301, `/cards${params.size ? `?${params}` : ''}`);
+	}
 	const query = (url.searchParams.get('q') || '').trim();
 	const colors = url.searchParams.getAll('color');
 	const colorMode = url.searchParams.get('colorMode') || 'include';
@@ -16,7 +23,7 @@ export async function load({ url, locals }) {
 	const legality = url.searchParams.get('legality') || '';
 	const sortBy = url.searchParams.get('sort') || 'name';
 	const sortDir = url.searchParams.get('dir') || 'asc';
-	const unique = url.searchParams.get('unique') === '1';
+	const printings = url.searchParams.get('printings') === '1';
 	const pageParam = url.searchParams.get('page') || '1';
 	const page = Number(pageParam);
 	if (!/^\d+$/.test(pageParam) || !Number.isSafeInteger(page) || page < 1) error(404, 'Page not found');
@@ -96,20 +103,6 @@ export async function load({ url, locals }) {
 		params.push(`$.${legality}`);
 	}
 
-	// Unique mode: only show newest printing per oracle_id
-	const uniqueJoin = unique
-		? `INNER JOIN (SELECT MAX(id) as id FROM cards GROUP BY oracle_id) unique_cards ON cards.id = unique_cards.id`
-		: '';
-
-	const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-	// Get total count
-	const countSql = `SELECT COUNT(*) as count FROM cards ${uniqueJoin} ${whereClause}`;
-	const countResult = sqlite.prepare(countSql).get(...params) as { count: number };
-	const totalCards = countResult.count;
-	const totalPages = Math.max(1, Math.ceil(totalCards / pageSize));
-	if (page > totalPages) error(404, 'Page not found');
-
 	// Sort
 	const validSorts: Record<string, string> = {
 		name: 'cards.name',
@@ -130,34 +123,23 @@ export async function load({ url, locals }) {
 	const orderDir = sortDir === 'desc' ? 'DESC' : 'ASC';
 	const nullHandling = ['price', 'power', 'toughness'].includes(sortBy) ? `NULLS LAST` : '';
 
-	// Get paginated results
-	const resultSql = `SELECT cards.id, cards.oracle_id, cards.layout, cards.name, cards.set_code, cards.set_name, cards.rarity, cards.image_uri, cards.local_image_path, cards.price_eur, cards.price_usd, cards.price_eur_foil, cards.price_usd_foil, cards.mana_cost, cards.cmc, cards.power, cards.toughness FROM cards ${uniqueJoin} ${whereClause} ORDER BY ${orderColumn} ${orderDir} ${nullHandling}, cards.id ASC LIMIT ? OFFSET ?`;
-	const results = sqlite.prepare(resultSql).all(...params, pageSize, offset) as Array<Record<string, unknown>>;
+	const { total: totalCards, rows: results } = queryCatalogue(sqlite, {
+		conditions, params, printingConditions: Boolean(setCode || rarity), printings, orderBy: `${orderColumn} ${orderDir} ${nullHandling}`, limit: pageSize, offset
+	});
+	const totalPages = Math.max(1, Math.ceil(totalCards / pageSize));
+	if (page > totalPages) error(404, 'Page not found');
 
 	// Get all unique sets for the filter dropdown (cached, changes only on import)
 	const sets = setsCache.get();
 
-	// Get card IDs in collection/wishlist for marking (only for current page)
+	// Collection and wishlist marks for the current page
 	const userId = locals?.user?.id;
-	const pageCardIds = results.map((r) => r.id as string);
-	let collectedCardIds = new Set<string>();
-	let wishlistCardIds = new Set<string>();
+	const marks = userId ? userMarks(sqlite, userId, results, printings) : null;
+	const collectedCardIds = marks?.collected ?? new Set<string>();
+	const wishlistCardIds = marks?.wishlist ?? new Set<string>();
 
-	if (userId && pageCardIds.length > 0) {
-		const placeholders = pageCardIds.map(() => '?').join(',');
-		const collectedRows = sqlite
-			.prepare(`SELECT DISTINCT card_id FROM collection_cards WHERE user_id = ? AND card_id IN (${placeholders})`)
-			.all(userId, ...pageCardIds) as Array<{ card_id: string }>;
-		collectedCardIds = new Set(collectedRows.map((r) => r.card_id));
-
-		const wishlistRows = sqlite
-			.prepare(`SELECT DISTINCT card_id FROM wishlist_cards WHERE user_id = ? AND card_id IN (${placeholders})`)
-			.all(userId, ...pageCardIds) as Array<{ card_id: string }>;
-		wishlistCardIds = new Set(wishlistRows.map((r) => r.card_id));
-	}
-
-	// "Unique only" lists cards, so its tiles open the card page (all printings).
-	if (unique) {
+	// A card tile opens the card page (all printings); a printing tile its printing page.
+	if (!printings) {
 		const slugs = cardSlugIndex(sqlite).byOracle;
 		for (const r of results) {
 			r.slug = r.oracle_id && r.layout !== 'art_series' ? slugs.get(r.oracle_id as string) ?? null : null;
@@ -172,7 +154,7 @@ export async function load({ url, locals }) {
 		page,
 		pageSize,
 		totalPages,
-		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir, unique, pageSize },
+		filters: { query, colors, colorMode, type, setCode, rarity, cmcMin, cmcMax, legality, sortBy, sortDir, printings, pageSize },
 		sets
 	};
 }

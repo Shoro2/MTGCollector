@@ -144,7 +144,7 @@
 		if (cmcMin) params.set('cmcMin', cmcMin);
 		if (cmcMax) params.set('cmcMax', cmcMax);
 		if (legality) params.set('legality', legality);
-		if (data.filters.unique) params.set('unique', '1');
+		if (data.filters.printings) params.set('printings', '1');
 		goto(`/cards?${params.toString()}`);
 	}
 
@@ -167,12 +167,12 @@
 		goto(`/cards?${params.toString()}`);
 	}
 
-	function toggleUnique() {
+	function togglePrintings() {
 		const params = new URLSearchParams(page.url.searchParams);
-		if (data.filters.unique) {
-			params.delete('unique');
+		if (data.filters.printings) {
+			params.delete('printings');
 		} else {
-			params.set('unique', '1');
+			params.set('printings', '1');
 		}
 		params.delete('page');
 		goto(`/cards?${params.toString()}`, { invalidateAll: true });
@@ -390,11 +390,12 @@
 			{/each}
 			<button
 				type="button"
-				onclick={toggleUnique}
-				aria-pressed={data.filters.unique}
-				class="segmented-option px-3 py-1.5 text-xs {data.filters.unique ? 'segmented-on' : ''}"
+				onclick={togglePrintings}
+				aria-pressed={data.filters.printings}
+				title="Show every printing instead of one tile per card"
+				class="segmented-option px-3 py-1.5 text-xs {data.filters.printings ? 'segmented-on' : ''}"
 			>
-				Unique only
+				All printings
 			</button>
 		</div>
 	</div>
