@@ -20,7 +20,8 @@ const oracleId = (k) => `a${String(k).padStart(7, '0')}-0000-4000-8000-000000000
 const insert = db.prepare(`INSERT INTO cards(id,oracle_id,name,set_code,set_name,collector_number,rarity,type_line,price_eur,layout,released_at)
 	VALUES (?,?,?,'tst','Test Set',?,'common','Creature',?,'normal','2020-01-01')`);
 db.transaction(() => {
-	for (let i = 1; i <= 81; i++) insert.run(printingId(i), oracleId(Math.ceil(i / 3)), 'Fixture Card', String(i), 1);
+	// 81 cards of one name (one printing each), so the catalogue's card view has three pages with equal names.
+	for (let i = 1; i <= 81; i++) insert.run(printingId(i), oracleId(i), 'Fixture Card', String(i), 1);
 	insert.run(printingId(82), oracleId(99), "Teferi's Protection", '82', 30);
 	insert.run(printingId(83), oracleId(99), "Teferi's Protection", '83', 12.5);
 	// Format legality as Scryfall stores it, with every status the legality grid distinguishes.
@@ -107,7 +108,7 @@ try {
 		const xml = await response.text();
 		urls.push(...locations(xml));
 	}
-	check(urls.length === 39 && new Set(urls).size === 39, 'all 29 cards, nine public pages and the one indexable deck appear exactly once');
+	check(urls.length === 93 && new Set(urls).size === 93, 'all 83 cards, nine public pages and the one indexable deck appear exactly once');
 	check(urls.includes(`${publicOrigin}/decks/${decks.indexed}`) && urls.includes(`${publicOrigin}/decks`)
 		&& !Object.values(decks).filter((id) => id !== decks.indexed).some((id) => urls.some((url) => url.includes(id))),
 		'the sitemap lists the public deck list and the indexable deck, never a small, unlisted, hidden or private one');
@@ -155,9 +156,15 @@ try {
 	await page.goto(origin + '/cards?q=NothingMatchesThisFixture');
 	check((await page.locator('body').innerText()).includes('page 1 of 1'), 'empty search has a coherent page count');
 	await page.goto(origin + '/cards?q=' + encodeURIComponent("Teferi's"));
-	check(await page.locator('a.card-shell').count() === 2, 'search finds a name with an apostrophe');
-	await page.goto(origin + '/cards?unique=1&q=Teferi');
-	check(await page.locator('a.card-shell').getAttribute('href') === '/cards/teferis-protection', 'unique catalogue tiles open the card page');
+	check(await page.locator('a.card-shell[href="/cards/teferis-protection"]').count() === 1, 'search finds a name with an apostrophe');
+	check(firstPageCards.every(href => !/^\/cards\/[0-9a-f]{8}-/.test(href)), 'indexable catalogue tiles open card pages, not printing pages');
+	await page.goto(origin + '/cards?q=Teferi');
+	check(await page.locator('a.card-shell').count() === 1 && await page.locator('a.card-shell').getAttribute('href') === '/cards/teferis-protection', 'the catalogue lists one tile per card, which opens the card page');
+	const legacy = await fetch(origin + '/cards?unique=1&q=Teferi', { redirect: 'manual' });
+	check(legacy.status === 301 && legacy.headers.get('location') === '/cards?q=Teferi', 'the retired unique switch redirects permanently to the card view');
+	await page.goto(origin + '/cards?printings=1&q=Teferi');
+	check(await page.locator('a.card-shell').count() === 2 && await page.locator(`a.card-shell[href="/cards/${printingId(83)}"]`).count() === 1, 'the every-printing view lists printings, which open printing pages');
+	check(await page.locator('meta[name="robots"]').getAttribute('content') === 'noindex, follow', 'the every-printing view is not indexed');
 	await page.goto(origin + '/cards/teferis-protection');
 	check(await page.locator('link[rel="canonical"]').getAttribute('href') === publicOrigin + '/cards/teferis-protection', 'card page is its own canonical');
 	check(await page.title() === "Teferi's Protection: MTG price from €12.50, 2 printings", 'card page title leads with the lowest price and the printings');
@@ -212,7 +219,7 @@ try {
 	for (const path of ['/portfolio-tracker', '/cards', '/scan']) {
 		check(await page.locator(`section[aria-label="Where to start"] a[href="${path}"]`).count() === 1, `home page offers a way in: ${path}`);
 	}
-	check((await page.locator('main').innerText()).includes('29 cards in every printing'), 'home page counts the cards in the database');
+	check((await page.locator('main').innerText()).includes('83 cards in every printing'), 'home page counts the cards in the database');
 	// The market value of every printing, from the two fixture price updates: €33 on October 1,
 	// €338 on October 9 (+€305: every fixture printing was priced on both days).
 	const market = page.locator('[data-market-panel]');
